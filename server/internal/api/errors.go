@@ -25,65 +25,68 @@ type Code string
 // The error codes. Each is registered in codes with its status, and
 // docs/error-codes.md is generated from the registry.
 const (
-	CodeInvalidRequest        Code = "invalid_request"
-	CodeInvalidID             Code = "invalid_id"
-	CodeInvalidCursor         Code = "invalid_cursor"
-	CodeUnauthenticated       Code = "unauthenticated"
-	CodeInvalidCredentials    Code = "invalid_credentials"
-	CodeCSRFFailed            Code = "csrf_failed"
-	CodeWrongPassword         Code = "wrong_password"
-	CodeInsufficientRole      Code = "insufficient_role"
-	CodeInsufficientScope     Code = "insufficient_scope"
-	CodeSessionRequired       Code = "session_required"
-	CodeOwnerRequired         Code = "owner_required"
-	CodeAuthorRequired        Code = "author_required"
-	CodeOwnerNotGrantable     Code = "owner_not_grantable"
-	CodeSignupClosed          Code = "signup_closed"
-	CodeInviteRequired        Code = "invite_required"
-	CodeSetupRequired         Code = "setup_required"
-	CodeInvalidSetupCode      Code = "invalid_setup_code"
-	CodeInstanceAdminRequired Code = "instance_admin_required"
-	CodeEmailNotConfigured    Code = "email_not_configured"
-	CodeEmailConfigured       Code = "email_configured"
-	CodeEmailUnverified       Code = "email_unverified"
-	CodeTokenInvalid          Code = "token_invalid"
-	CodeTokenUsed             Code = "token_used"
-	CodeTokenExpired          Code = "token_expired"
-	CodeInviteEmailMismatch   Code = "invite_email_mismatch"
-	CodeNotFound              Code = "not_found"
-	CodeSlugTaken             Code = "slug_taken"
-	CodeFolderNotEmpty        Code = "folder_not_empty"
-	CodeKeyTaken              Code = "key_taken"
-	CodeComponentTypeInUse    Code = "component_type_in_use"
-	CodeBoardReferenced       Code = "board_referenced"
-	CodeOutputConnected       Code = "branch_output_connected"
-	CodeVariableInUse         Code = "variable_in_use"
-	CodeComponentInUse        Code = "component_in_use"
-	CodeLastOwner             Code = "last_owner"
-	CodeAlreadyMember         Code = "already_member"
-	CodeInviteExists          Code = "invite_exists"
-	CodeLimitExceeded         Code = "limit_exceeded"
-	CodeStorageLimitExceeded  Code = "storage_limit_exceeded"
-	CodeRevisionConflict      Code = "revision_conflict"
-	CodeProjectArchived       Code = "project_archived"
-	CodeIdempotencyMismatch   Code = "idempotency_mismatch"
-	CodeInviteExpired         Code = "invite_expired"
-	CodeInviteRevoked         Code = "invite_revoked"
-	CodeInviteAccepted        Code = "invite_accepted"
-	CodeMethodNotAllowed      Code = "method_not_allowed"
-	CodeRequestTimeout        Code = "request_timeout"
-	CodeUpgradeRequired       Code = "upgrade_required"
-	CodeRequestTooLarge       Code = "request_too_large"
-	CodeUnsupportedMediaType  Code = "unsupported_media_type"
-	CodeValidationFailed      Code = "validation_failed"
-	CodeWeakPassword          Code = "weak_password"
-	CodeImageInvalid          Code = "image_invalid"
-	CodeSlugInvalid           Code = "slug_invalid"
-	CodeKeyInvalid            Code = "key_invalid"
-	CodeMentionNoAccess       Code = "mention_no_access"
-	CodeRateLimited           Code = "rate_limited"
-	CodeInternal              Code = "internal_error"
-	CodeNotReady              Code = "not_ready"
+	CodeInvalidRequest         Code = "invalid_request"
+	CodeInvalidID              Code = "invalid_id"
+	CodeInvalidCursor          Code = "invalid_cursor"
+	CodeUnauthenticated        Code = "unauthenticated"
+	CodeInvalidCredentials     Code = "invalid_credentials"
+	CodeCSRFFailed             Code = "csrf_failed"
+	CodeWrongPassword          Code = "wrong_password"
+	CodeInsufficientRole       Code = "insufficient_role"
+	CodeInsufficientScope      Code = "insufficient_scope"
+	CodeSessionRequired        Code = "session_required"
+	CodeOwnerRequired          Code = "owner_required"
+	CodeAuthorRequired         Code = "author_required"
+	CodeOwnerNotGrantable      Code = "owner_not_grantable"
+	CodeSignupClosed           Code = "signup_closed"
+	CodeInviteRequired         Code = "invite_required"
+	CodeSetupRequired          Code = "setup_required"
+	CodeInvalidSetupCode       Code = "invalid_setup_code"
+	CodeInstanceAdminRequired  Code = "instance_admin_required"
+	CodeEmailNotConfigured     Code = "email_not_configured"
+	CodeEmailConfigured        Code = "email_configured"
+	CodeEmailUnverified        Code = "email_unverified"
+	CodeTokenInvalid           Code = "token_invalid"
+	CodeTokenUsed              Code = "token_used"
+	CodeTokenExpired           Code = "token_expired"
+	CodeInviteEmailMismatch    Code = "invite_email_mismatch"
+	CodeNotFound               Code = "not_found"
+	CodeSlugTaken              Code = "slug_taken"
+	CodeFolderNotEmpty         Code = "folder_not_empty"
+	CodeKeyTaken               Code = "key_taken"
+	CodeComponentTypeInUse     Code = "component_type_in_use"
+	CodeBoardReferenced        Code = "board_referenced"
+	CodeOutputConnected        Code = "branch_output_connected"
+	CodeVariableInUse          Code = "variable_in_use"
+	CodeComponentInUse         Code = "component_in_use"
+	CodeLastOwner              Code = "last_owner"
+	CodeAlreadyMember          Code = "already_member"
+	CodeInviteExists           Code = "invite_exists"
+	CodeLimitExceeded          Code = "limit_exceeded"
+	CodeStorageLimitExceeded   Code = "storage_limit_exceeded"
+	CodeRevisionConflict       Code = "revision_conflict"
+	CodeProjectArchived        Code = "project_archived"
+	CodePublishBlocked         Code = "publish_blocked"
+	CodeWarningsUnacknowledged Code = "warnings_unacknowledged"
+	CodeVersionNotNewer        Code = "version_not_newer"
+	CodeIdempotencyMismatch    Code = "idempotency_mismatch"
+	CodeInviteExpired          Code = "invite_expired"
+	CodeInviteRevoked          Code = "invite_revoked"
+	CodeInviteAccepted         Code = "invite_accepted"
+	CodeMethodNotAllowed       Code = "method_not_allowed"
+	CodeRequestTimeout         Code = "request_timeout"
+	CodeUpgradeRequired        Code = "upgrade_required"
+	CodeRequestTooLarge        Code = "request_too_large"
+	CodeUnsupportedMediaType   Code = "unsupported_media_type"
+	CodeValidationFailed       Code = "validation_failed"
+	CodeWeakPassword           Code = "weak_password"
+	CodeImageInvalid           Code = "image_invalid"
+	CodeSlugInvalid            Code = "slug_invalid"
+	CodeKeyInvalid             Code = "key_invalid"
+	CodeMentionNoAccess        Code = "mention_no_access"
+	CodeRateLimited            Code = "rate_limited"
+	CodeInternal               Code = "internal_error"
+	CodeNotReady               Code = "not_ready"
 )
 
 // codeSpec registers a code.
@@ -360,6 +363,30 @@ var codes = []codeSpec{
 		"The project is archived, and an archived project is read-only, so nothing of the change is made (PRD " +
 			"FR-PROJ-01 AC2). Unarchiving it, deleting it, and restoring it from the trash are the changes that it " +
 			"takes. An owner or admin of the project unarchives it with `POST /api/v1/projects/{project_id}/unarchive`."},
+	{CodePublishBlocked, http.StatusConflict, i18n.K("error.publish_blocked"),
+		"The project's draft has validation errors, which block publishing (PRD FR-DEP-04 AC1): `POST " +
+			"/api/v1/projects/{project_id}/snapshots` validated the draft as it is now, as `GET " +
+			"/api/v1/projects/{project_id}/validation` does, and found at least one, so no snapshot is made. " +
+			"`details.seq` is the project's operation sequence as of the draft that it validated, and " +
+			"`details.findings` lists the errors, each as the validation report lists a finding, with a message in " +
+			"the request's locale. Fix them and publish again; a broken jumper and a condition that does not " +
+			"compile are errors (FR-EDIT-05 AC1, FR-EDIT-03 AC4)."},
+	{CodeWarningsUnacknowledged, http.StatusConflict, i18n.K("error.warnings_unacknowledged"),
+		"The project's draft has validation warnings that the publication does not acknowledge, and publishing " +
+			"needs each acknowledged (PRD FR-DEP-04): `POST /api/v1/projects/{project_id}/snapshots` validated the " +
+			"draft as it is now and found warnings, not muted, that its `acknowledged_warnings` does not name, as " +
+			"when the draft changed since the report that the publication acknowledged, so no snapshot is made. " +
+			"`details.seq` is the project's operation sequence as of the draft that it validated, and " +
+			"`details.findings` lists those warnings, each as the validation report lists a finding, with a message " +
+			"in the request's locale. Show them, and publish again with them acknowledged and `acknowledged_seq` " +
+			"set to `details.seq`. A muted warning needs no acknowledgement."},
+	{CodeVersionNotNewer, http.StatusConflict, i18n.K("error.version_not_newer"),
+		"The publication's version is not greater than the newest version of the project's snapshots that are " +
+			"building or ready, which each new one must be, so that a project's versions are unique and increase " +
+			"(PRD FR-SNAP-01 AC4), so no snapshot is made. A failed snapshot does not hold its version, which may " +
+			"be published again. `details.latest_version` is the newest version, and `details.proposed_version` " +
+			"its patch bump, which `GET /api/v1/projects/{project_id}/snapshots/next-version` proposes too. " +
+			"`details.errors` names the field, with its `location` and a `message`, as for `validation_failed`."},
 	{CodeInviteExpired, http.StatusGone, i18n.K("error.invite_expired"),
 		"The invitation has expired: it lasts 14 days from when it was made, sent anew, or emailed (PRD " +
 			"FR-TEN-02 AC1). An owner or admin of the workspace sends it anew."},

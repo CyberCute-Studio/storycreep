@@ -422,6 +422,7 @@ func (s *server) serverJobs() *jobs.Registry {
 	statistics.RegisterJobs(r, s.log)
 	commands.RegisterJobs(r)
 	s.assets.RegisterJobs(r)
+	s.snapshots.RegisterJobs(r)
 	return r
 }
 

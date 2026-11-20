@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"context"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -121,43 +120,7 @@ var order = func() map[Code]int {
 // (i18n.Localizer.Localize), each once, in the order of the messages, or l's
 // locale alone for a report without a finding.
 func (r *Result) Report(l *i18n.Localizer) (Report, string) {
-	out := Report{Seq: r.seq, Findings: []Finding{}, Muted: []Finding{}}
-	var languages []string
-	for _, f := range r.findings {
-		rule := byCode[f.code]
-		message, locale := l.Localize(i18n.Message{Key: rule.message, Args: f.args})
-		if language := locale.String(); !slices.Contains(languages, language) {
-			languages = append(languages, language)
-		}
-		api := Finding{Code: f.code, Severity: rule.Severity, Message: message, EntityType: f.entity.kind.String(),
-			EntityID: ids.Encode(f.entity.kind, f.entity.id), Field: f.field, BoardID: encode(ids.Board, f.board),
-			BoardName: nameOf(f.board, f.boardName), NodeID: encode(ids.Node, f.node), NodeTitle: nameOf(f.node, f.nodeTitle)}
-		if f.target != (ref{}) {
-			api.Target = &Target{Type: f.target.kind.String(), ID: ids.Encode(f.target.kind, f.target.id)}
-			if f.attribute != (ids.UUID{}) {
-				api.Target.Type, api.Target.AttributeID = "attribute", ids.Encode(ids.AttributeDef, f.attribute)
-			}
-		}
-		if m, ok := r.mutes[muteKey{f.entity.id, f.code}]; ok && rule.Mutable() && rule.Entity == f.entity.kind {
-			api.Mute = &Mute{Reason: m.reason, MutedBy: encode(ids.User, m.by), MutedAt: m.at.UTC()}
-			out.Muted = append(out.Muted, api)
-			out.Counts.Muted++
-			continue
-		}
-		out.Findings = append(out.Findings, api)
-		switch rule.Severity {
-		case Error:
-			out.Counts.Errors++
-		case Warning:
-			out.Counts.Warnings++
-		default:
-			out.Counts.Infos++
-		}
-	}
-	if len(languages) == 0 {
-		languages = []string{l.Locale().String()}
-	}
-	return out, strings.Join(languages, ", ")
+	return r.Stored().Report(l)
 }
 
 // nameOf returns name, the name of the board or the node id of a finding

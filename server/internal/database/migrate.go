@@ -80,11 +80,20 @@ const BlobLock int32 = 0x626c6f62
 // long as the store takes to answer. It spells "ownr".
 const StoreClaimLock int32 = 0x6f776e72
 
+// SnapshotLock is the class of the transaction-scoped advisory locks that
+// package snapshot takes of a project's snapshots, whose second integer is
+// the project's own (PRD FR-SNAP-01 AC4): a publication holds it while it
+// reads the project's newest version and adds a snapshot of a greater one,
+// so that two publications of a project take turns, without locking the
+// project's row, which every batch of its commands changes. It spells "snap".
+const SnapshotLock int32 = 0x736e6170
+
 // LockObject returns the second integer of the key of a lock of the class
-// UsageLock or BlobLock: a hash of the workspace and of name, the key that
-// it counts, or the hash of the blob's content, so that the locks of two
-// workspaces, or of two of a workspace's keys or blobs, may share one, which
-// only makes their changes take turns.
+// UsageLock, BlobLock, or SnapshotLock: a hash of the workspace and of name,
+// the key that it counts, the hash of the blob's content, or the project's
+// ID, so that the locks of two workspaces, or of two of a workspace's keys,
+// blobs, or projects, may share one, which only makes their changes take
+// turns.
 func LockObject(workspaceID ids.UUID, name []byte) int32 {
 	h := fnv.New32a()
 	h.Write(workspaceID[:])

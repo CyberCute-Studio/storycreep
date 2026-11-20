@@ -68,6 +68,12 @@ const (
 	// settings, and archiving and unarchiving it, which needs owner or admin
 	// as the effective role on the project (§5.6).
 	ChangeProjectSettings Capability = "project.settings"
+	// PublishSnapshots is publishing a snapshot of a project, a release (PRD
+	// FR-SNAP-01), which needs owner, admin, or editor as the effective role
+	// on the project, and admin or owner once its publish_min_role is admin
+	// (§5.6 "Publish a snapshot", authz.CheckPublish). Reading a snapshot is
+	// reading the project, ReadProject.
+	PublishSnapshots Capability = "project.publish"
 	// ManageWorkspaceTokens is creating, listing, and revoking a workspace's
 	// API tokens of the whole workspace: one's own, which needs owner,
 	// admin, or editor in the workspace, and other members', which needs
@@ -108,6 +114,7 @@ var capabilities = map[Capability]bool{
 	ApplyCommands:           true,
 	UploadAssets:            true,
 	ChangeProjectSettings:   true,
+	PublishSnapshots:        true,
 	ManageWorkspaceTokens:   true,
 	ManageProjectTokens:     true,
 	ManageInstance:          true,
