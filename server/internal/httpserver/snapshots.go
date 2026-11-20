@@ -95,8 +95,9 @@ const snapshotNotFoundDoc = " A snapshot that the project does not have is answe
 // answered.
 const exportDoc = " The zip holds a member of each file of the published layout (PRD §6.3), at its path, as " +
 	"storycreep.json or boards/harbour-intro.json, in the order of their paths, with no member of a directory, " +
-	"which the manifest lists with each file's SHA-256, and Content-Disposition names it, as an attachment. The " +
-	"same files always make the same zip. Asked with schema, the files are rendered at that version of the " +
+	"which the manifest lists with each file's SHA-256, and Content-Disposition names it, as an attachment. A " +
+	"release of the server always makes the same zip of the same files, and another release may compress them " +
+	"otherwise, so a client compares the files, by the manifest's hashes, not the zip's bytes. Asked with schema, the files are rendered at that version of the " +
 	"published format: down to an older version by the renderer of each version between, or up to a newer one by " +
 	"the migration to each, and they validate against that version's JSON Schemas (PRD FR-SYNC-01 AC2), with " +
 	"the manifest's hashes and content hash those of the files at that version. A version that the server does " +

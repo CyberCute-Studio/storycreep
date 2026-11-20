@@ -67,11 +67,12 @@ LIMIT @row_limit;
 
 -- name: SnapshotFiles :many
 -- SnapshotFiles returns the files of a snapshot of the workspace, each by its
--- path, with its bytes, in the order of their paths, which a ready snapshot
--- has, and a building or failed one has none of.
+-- path, with its bytes, in no order, which a ready snapshot has, and a
+-- building or failed one has none of: an export keeps them by their paths,
+-- and its zip orders them by the paths' bytes (snapshot.Export.Zip), which a
+-- collation's order may not be.
 SELECT path, bytes FROM snapshot_file
-WHERE workspace_id = @workspace_id AND snapshot_id = @snapshot_id
-ORDER BY path;
+WHERE workspace_id = @workspace_id AND snapshot_id = @snapshot_id;
 
 -- name: SnapshotReport :one
 -- SnapshotReport returns the report that the build of a snapshot of the

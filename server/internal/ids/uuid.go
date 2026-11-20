@@ -50,7 +50,11 @@ func NewV7(ms int64, r [10]byte) UUID {
 // orders by ID: New's, unless that does not sort after u, as when u was made
 // in the same millisecond, or by a server whose clock is ahead, and then one
 // of the millisecond after u's, of the system's random bytes, as hard to
-// guess as New's.
+// guess as New's. It needs u to be of a millisecond before the last that a
+// UUIDv7's 48 bits hold, of the year 10889, as every ID of New's until then
+// is, and as a snapshot's, which the server makes, always is: no UUIDv7 of a
+// later millisecond sorts after one of the last, and NewV7 keeps the low 48
+// bits of the millisecond after it, 0, so the ID made then sorts first.
 func NewAfter(u UUID) UUID {
 	if id := New(); bytes.Compare(id[:], u[:]) > 0 {
 		return id

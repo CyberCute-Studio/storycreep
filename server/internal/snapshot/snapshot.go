@@ -338,6 +338,9 @@ func (s *Service) Publish(ctx context.Context, actor commands.Actor, projectID i
 		}
 		// The new snapshot's ID sorts after every ID of the project's
 		// snapshots, as their list orders them newest first, by their IDs.
+		// Nothing in the database holds to that order, so code that adds a
+		// snapshot otherwise than Publish, as an import would, makes its ID
+		// so too, under the same lock (CONTRIBUTING.md).
 		last, err := q.NewestSnapshotID(ctx, queries.NewestSnapshotIDParams{WorkspaceID: w, ProjectID: p})
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("snapshot: read the project's newest snapshot: %w", err)

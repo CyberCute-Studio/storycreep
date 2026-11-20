@@ -21,3 +21,6 @@ func (s *Service) Work(ctx context.Context, workspaceID, snapshotID ids.UUID, at
 	return s.work(ctx, &jobs.Job[buildJob]{Attempt: attempt, MaxAttempts: maxAttempts,
 		Args: buildJob{WorkspaceID: workspaceID.String(), SnapshotID: snapshotID.String()}})
 }
+
+// Render is render, for the tests.
+var Render = render

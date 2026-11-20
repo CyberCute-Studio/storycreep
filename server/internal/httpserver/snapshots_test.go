@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
@@ -45,12 +46,20 @@ func (f *rolesFixture) snapshot(t *testing.T, project string) string {
 // projectID of the workspace ws, as admin, the superuser, which the user
 // publishedBy published, or nobody for the zero UUID, whose build stored a
 // report without a finding, and, if it is ready, files, of version 1 of the
-// published format, and returns its ID.
+// published format, and returns its ID, which sorts after every ID of the
+// project's snapshots, as Publish makes it (ids.NewAfter), so that the list
+// holds them in the order in which they were added, even two of one
+// millisecond.
 func addSnapshot(t *testing.T, admin *pgx.Conn, ws, projectID ids.UUID, version, status string,
 	publishedBy ids.UUID, files map[string][]byte) string {
 	t.Helper()
 	ctx := context.Background()
-	id := ids.New()
+	var last ids.UUID
+	if err := admin.QueryRow(ctx, `SELECT id FROM snapshot WHERE workspace_id = $1 AND project_id = $2
+		ORDER BY id DESC LIMIT 1`, ws, projectID).Scan(&last); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatal(err)
+	}
+	id := ids.NewAfter(last)
 	v, err := snapshot.ParseVersion(version)
 	if err != nil {
 		t.Fatal(err)

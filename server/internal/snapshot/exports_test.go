@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"slices"
@@ -133,6 +134,31 @@ func TestExportRelease(t *testing.T) {
 	}
 }
 
+// TestRenderUnreadVersion checks that the files of a snapshot stored at a
+// version that the server does not read are exported at that version alone,
+// as they are, and that their export at a version that it reads fails with
+// an error of the server's, and not an *schemaversion.UnsupportedError,
+// which the API would answer as though the version asked for were the one
+// that it does not read.
+func TestRenderUnreadVersion(t *testing.T) {
+	t.Parallel()
+	unread := schemaversion.Supported().Max + 1
+	files := schemaversion.Files{published.ManifestPath: []byte(fmt.Sprintf(`{"schemaVersion": %d}`, unread))}
+	for _, to := range []int{0, unread} {
+		out, version, err := snapshot.Render(files, unread, to)
+		if err != nil || version != unread || !maps.EqualFunc(out, files, bytes.Equal) {
+			t.Errorf("the export at %d of files of version %d: %v of version %d (%v), want the files as they are",
+				to, unread, out, version, err)
+		}
+	}
+	var unsupported *schemaversion.UnsupportedError
+	if _, _, err := snapshot.Render(files, unread, published.SchemaVersion); err == nil ||
+		errors.As(err, &unsupported) {
+		t.Errorf("the export at version %d of files of version %d: %v, want an error of the server's",
+			published.SchemaVersion, unread, err)
+	}
+}
+
 // TestListNewestFirst checks that the list holds the project's snapshots in
 // the reverse of the order in which they were published, a page at a time,
 // those of a status alone with it, and that a snapshot published after one
@@ -144,9 +170,9 @@ func TestListNewestFirst(t *testing.T) {
 	e := newEnv(t)
 	e.newStory(t)
 	ctx := context.Background()
-	var published []string
+	var order []string
 	for _, v := range []string{"0.1.0", "0.2.0", "0.3.0"} {
-		published = append(published, e.mustPublish(t, v).ID)
+		order = append(order, e.mustPublish(t, v).ID)
 	}
 	// A snapshot that a server whose clock is an hour ahead published.
 	ahead := ids.NewV7(time.Now().Add(time.Hour).UnixMilli(), [10]byte{})
@@ -156,11 +182,11 @@ func TestListNewestFirst(t *testing.T) {
 		e.project); err != nil {
 		t.Fatal(err)
 	}
-	published = append(published, ids.Encode(ids.Snapshot, ahead))
+	order = append(order, ids.Encode(ids.Snapshot, ahead))
 	for _, v := range []string{"0.5.0", "0.6.0"} {
-		published = append(published, e.mustPublish(t, v).ID)
+		order = append(order, e.mustPublish(t, v).ID)
 	}
-	slices.Reverse(published)
+	slices.Reverse(order)
 
 	var listed []string
 	after := ids.UUID{}
@@ -177,8 +203,8 @@ func TestListNewestFirst(t *testing.T) {
 		}
 		after = snapshotID(t, page[len(page)-1])
 	}
-	if !slices.Equal(listed, published) {
-		t.Errorf("the list is %v, want %v, the newest first", listed, published)
+	if !slices.Equal(listed, order) {
+		t.Errorf("the list is %v, want %v, the newest first", listed, order)
 	}
 	ready, err := e.snapshots.List(ctx, e.actor(), e.project, snapshot.Ready, ids.UUID{}, 10)
 	if err != nil || len(ready) != 0 {

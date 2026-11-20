@@ -301,7 +301,6 @@ func (q *Queries) SnapshotDrift(ctx context.Context, workspaceID pgtype.UUID) (i
 const snapshotFiles = `-- name: SnapshotFiles :many
 SELECT path, bytes FROM snapshot_file
 WHERE workspace_id = $1 AND snapshot_id = $2
-ORDER BY path
 `
 
 type SnapshotFilesParams struct {
@@ -315,8 +314,10 @@ type SnapshotFilesRow struct {
 }
 
 // SnapshotFiles returns the files of a snapshot of the workspace, each by its
-// path, with its bytes, in the order of their paths, which a ready snapshot
-// has, and a building or failed one has none of.
+// path, with its bytes, in no order, which a ready snapshot has, and a
+// building or failed one has none of: an export keeps them by their paths,
+// and its zip orders them by the paths' bytes (snapshot.Export.Zip), which a
+// collation's order may not be.
 func (q *Queries) SnapshotFiles(ctx context.Context, arg SnapshotFilesParams) ([]SnapshotFilesRow, error) {
 	rows, err := q.db.Query(ctx, snapshotFiles, arg.WorkspaceID, arg.SnapshotID)
 	if err != nil {
