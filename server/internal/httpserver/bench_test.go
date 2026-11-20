@@ -241,13 +241,22 @@ func BenchmarkValidation(b *testing.B) {
 // the large fixture's project, server-side.
 const snapshotBuildTarget = 20 * time.Second
 
+// snapshotBuilds is how many builds BenchmarkSnapshotBuild times, whatever
+// -benchtime asks: a build of large takes seconds, so the 300 iterations of
+// CI's benchmark job would take over 20 minutes, past the ten that a run of
+// every benchmark has, while ten builds take about a minute.
+const snapshotBuilds = 10
+
 // BenchmarkSnapshotBuild times the build of a snapshot of the large
 // fixture's project, as its job builds it: the read of the draft, its
 // validation, its serialization, the validation of its files against the
 // published format's schemas, and their storage. The owner publishes each
 // snapshot first through the API, as a client publishes it, acknowledging
 // the report's warnings, which the timed build leaves out, and the build
-// must make it ready.
+// must make it ready. It builds snapshotBuilds snapshots, or fewer if the
+// loop ends first, and the loop's later iterations do nothing, so it reports
+// the mean of the builds as its ns/op, which would otherwise be their total
+// spread over every iteration.
 //
 // Verifies: NFR-PERF-12
 func BenchmarkSnapshotBuild(b *testing.B) {
@@ -272,6 +281,9 @@ func BenchmarkSnapshotBuild(b *testing.B) {
 	var took []time.Duration
 	version := 0
 	for b.Loop() {
+		if len(took) == snapshotBuilds {
+			continue
+		}
 		version++
 		res := send(bs.s.main, http.MethodPost, snapshotsPath(bs.project),
 			publishBody(b, "1.0."+strconv.Itoa(version), report), "", bs.header)
@@ -294,8 +306,14 @@ func BenchmarkSnapshotBuild(b *testing.B) {
 			b.Fatalf("the built snapshot: %d %s, want ready", res.status, res.body)
 		}
 	}
+	var total time.Duration
+	for _, d := range took {
+		total += d
+	}
+	b.ReportMetric(float64(total)/float64(len(took)), "ns/op")
 	p95 := percentile(took, 95)
 	b.ReportMetric(float64(p95)/float64(time.Millisecond), "p95-ms")
+	b.Logf("timed %d builds", len(took))
 	if p95 >= snapshotBuildTarget {
 		b.Errorf("NFR-PERF-12: the p95 of the build is %v, want under %v", p95, snapshotBuildTarget)
 	}
