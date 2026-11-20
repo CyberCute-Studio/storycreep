@@ -3,15 +3,26 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"maps"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/published"
 	"github.com/CyberCute-Studio/storycreep/server/internal/snapshot"
 	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
 )
@@ -23,25 +34,101 @@ func snapshotsPath(project string) string { return projectPath(project) + "/snap
 var fixtureVersions atomic.Int32
 
 // snapshot adds a snapshot of the project, ready, whose build stored a
-// report without a finding, and returns its ID. It holds no files.
+// report without a finding, and the files of version 1's fixture project
+// (fixtureFiles), and returns its ID.
 func (f *rolesFixture) snapshot(t *testing.T, project string) string {
 	t.Helper()
+	return addSnapshot(t, f.admin, decode(t, ids.Workspace, f.ws), decode(t, ids.Project, project),
+		fmt.Sprintf("0.0.%d", fixtureVersions.Add(1)), "ready", ids.UUID{}, fixtureFiles(t))
+}
+
+// addSnapshot adds a snapshot of the version and the status to the project
+// projectID of the workspace ws, as admin, the superuser, which the user
+// publishedBy published, or nobody for the zero UUID, whose build stored a
+// report without a finding, and, if it is ready, files, of version 1 of the
+// published format, and returns its ID, which sorts after every ID of the
+// project's snapshots, as Publish makes it (ids.NewAfter), so that the list
+// holds them in the order in which they were added, even two of one
+// millisecond.
+func addSnapshot(t *testing.T, admin *pgx.Conn, ws, projectID ids.UUID, version, status string,
+	publishedBy ids.UUID, files map[string][]byte) string {
+	t.Helper()
 	ctx := context.Background()
-	id := ids.New()
-	if _, err := f.admin.Exec(ctx, `INSERT INTO snapshot (id, workspace_id, project_id, version, version_major,
-		version_minor, version_patch, note, acknowledged_seq, acknowledged_warnings)
-		VALUES ($1, $2, $3, '0.0.' || $4::integer, 0, 0, $4, 'Harbour intro', 0, '[]')`, id,
-		decode(t, ids.Workspace, f.ws), decode(t, ids.Project, project), fixtureVersions.Add(1)); err != nil {
+	var last ids.UUID
+	if err := admin.QueryRow(ctx, `SELECT id FROM snapshot WHERE workspace_id = $1 AND project_id = $2
+		ORDER BY id DESC LIMIT 1`, ws, projectID).Scan(&last); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatal(err)
 	}
-	if _, err := f.admin.Exec(ctx, `UPDATE snapshot SET status = 'ready', source_seq = 0,
-		validation_report = '{"seq": 0, "findings": []}', schema_version = 1,
-		content_hash = 'sha256:' || repeat('0', 64), counts = '{"boards": 0, "components": 0, "connections": 0,
-		"nodes": 0, "variables": 0}', built_at = now() WHERE id = $1`, id); err != nil {
+	id := ids.NewAfter(last)
+	v, err := snapshot.ParseVersion(version)
+	if err != nil {
 		t.Fatal(err)
+	}
+	by := pgtype.UUID{Bytes: publishedBy, Valid: publishedBy != ids.UUID{}}
+	if _, err := admin.Exec(ctx, `INSERT INTO snapshot (id, workspace_id, project_id, version, version_major,
+		version_minor, version_patch, note, acknowledged_seq, acknowledged_warnings, published_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'Harbour intro', 0, '[]', $8)`, id, ws, projectID, version, v.Major,
+		v.Minor, v.Patch, by); err != nil {
+		t.Fatal(err)
+	}
+	switch status {
+	case "building":
+	case "failed":
+		if _, err := admin.Exec(ctx, `UPDATE snapshot SET status = 'failed', failure_code = 'build_failed',
+			built_at = now() WHERE id = $1`, id); err != nil {
+			t.Fatal(err)
+		}
+	default:
+		hashes := map[string]published.Hash{}
+		for path, data := range files {
+			if path != published.ManifestPath {
+				hashes[path] = published.HashOf(data)
+			}
+			if _, err := admin.Exec(ctx, `INSERT INTO snapshot_file (id, workspace_id, snapshot_id, path, sha256,
+				bytes) VALUES ($1, $2, $3, $4, $5, $6)`, ids.New(), ws, id, path, string(published.HashOf(data)),
+				data); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := admin.Exec(ctx, `UPDATE snapshot SET status = 'ready', source_seq = 0,
+			validation_report = '{"seq": 0, "findings": []}', schema_version = 1, content_hash = $2,
+			counts = '{"boards": 3, "components": 2, "connections": 7, "nodes": 7, "variables": 9}',
+			built_at = now() WHERE id = $1`, id, string(published.ContentHash(hashes))); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return ids.Encode(ids.Snapshot, id)
 }
+
+// fixtureFiles returns the files of version 1's fixture project, in
+// /schema/fixtures/v1, by their paths, which validate against version 1.
+var fixtureFiles = func() func(t *testing.T) map[string][]byte {
+	read := sync.OnceValues(func() (map[string][]byte, error) {
+		root := filepath.Join("..", "..", "..", "schema", "fixtures", "v1")
+		files := map[string][]byte{}
+		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			data, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(root, p)
+			files[filepath.ToSlash(rel)] = data
+			return err
+		})
+		return files, err
+	})
+	return func(t *testing.T) map[string][]byte {
+		t.Helper()
+		files, err := read()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return maps.Clone(files)
+	}
+}()
 
 // publishBody returns the body of a publication of the version, which
 // acknowledges the report r, its seq and every warning of it.

@@ -126,8 +126,8 @@ jobs:
       - name: Go tests of the synthetic schema version
         working-directory: server
         run: |
-          go vet -tags synthetic_schema ./internal/schemaversion/...
-          go test -short -tags synthetic_schema ./internal/schemaversion/...
+          go vet -tags synthetic_schema ./internal/schemaversion/... ./internal/snapshot/...
+          go test -short -tags synthetic_schema ./internal/schemaversion/... ./internal/snapshot/...
 
       - name: PRD and plan checks
         run: pnpm docs:check
@@ -181,7 +181,7 @@ jobs:
         working-directory: server
         env:
           STORYCREEP_TEST_POSTGRES_IMAGE: postgres:${{ matrix.postgres }}-alpine
-        run: go test -tags synthetic_schema ./internal/schemaversion/...
+        run: go test -tags synthetic_schema ./internal/schemaversion/... ./internal/snapshot/...
 
   # PRD §10.6, NFR-A11Y-08, and NFR-SEC-09: the web app as the server serves
   # it, built with the app's bundle, in a desktop browser and on a touch

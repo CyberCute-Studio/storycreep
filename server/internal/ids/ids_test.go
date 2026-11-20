@@ -408,3 +408,33 @@ func FuzzDecodeAny(f *testing.F) {
 		}
 	})
 }
+
+// TestNewAfter checks that NewAfter makes a UUIDv7 that sorts after the one
+// that it is given: New's for a UUID of the past, and one of the millisecond
+// after the given one's for a UUID of the same millisecond as New's or of
+// one ahead of the clock, whose random bytes differ each time.
+func TestNewAfter(t *testing.T) {
+	t.Parallel()
+	past := NewV7(time.Now().Add(-time.Hour).UnixMilli(), [10]byte{})
+	ahead := NewV7(time.Now().Add(time.Hour).UnixMilli(), [10]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff})
+	for _, u := range []UUID{{}, past, New(), ahead} {
+		id := NewAfter(u)
+		if bytes.Compare(id[:], u[:]) <= 0 || !id.IsV7() {
+			t.Errorf("NewAfter(%s) = %s, which does not sort after it, or is no UUIDv7", u, id)
+		}
+	}
+	a, b := NewAfter(ahead), NewAfter(ahead)
+	if !bytes.Equal(a[:6], b[:6]) || a == b {
+		t.Errorf("NewAfter of a UUID ahead of the clock made %s and %s, want two of one millisecond", a, b)
+	}
+	ms := func(u UUID) (n int64) {
+		for _, b := range u[:6] {
+			n = n<<8 | int64(b)
+		}
+		return n
+	}
+	if ms(a) != ms(ahead)+1 {
+		t.Errorf("NewAfter of %s made %s, want one of the millisecond after its", ahead, a)
+	}
+}

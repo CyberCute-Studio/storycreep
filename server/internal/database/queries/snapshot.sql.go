@@ -78,13 +78,11 @@ func (q *Queries) FinishSnapshot(ctx context.Context, arg FinishSnapshotParams) 
 	return result.RowsAffected(), nil
 }
 
-const insertSnapshot = `-- name: InsertSnapshot :one
+const insertSnapshot = `-- name: InsertSnapshot :exec
 INSERT INTO snapshot (id, workspace_id, project_id, version, version_major, version_minor, version_patch, note,
     acknowledged_seq, acknowledged_warnings, published_by)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
     $9, $10, $11)
-RETURNING id, project_id, version, note, status, failure_code, acknowledged_seq, source_seq, schema_version,
-    content_hash, counts, published_by, published_at, built_at
 `
 
 type InsertSnapshotParams struct {
@@ -101,27 +99,10 @@ type InsertSnapshotParams struct {
 	PublishedBy          pgtype.UUID
 }
 
-type InsertSnapshotRow struct {
-	ID              pgtype.UUID
-	ProjectID       pgtype.UUID
-	Version         string
-	Note            string
-	Status          string
-	FailureCode     pgtype.Text
-	AcknowledgedSeq int64
-	SourceSeq       pgtype.Int8
-	SchemaVersion   pgtype.Int4
-	ContentHash     pgtype.Text
-	Counts          []byte
-	PublishedBy     pgtype.UUID
-	PublishedAt     pgtype.Timestamptz
-	BuiltAt         pgtype.Timestamptz
-}
-
-// InsertSnapshot adds a snapshot of a project, building, and returns it as
-// Snapshot does, without the acknowledged warnings that it was given.
-func (q *Queries) InsertSnapshot(ctx context.Context, arg InsertSnapshotParams) (InsertSnapshotRow, error) {
-	row := q.db.QueryRow(ctx, insertSnapshot,
+// InsertSnapshot adds a snapshot of a project, building, which Snapshot
+// then reads as the API shows it.
+func (q *Queries) InsertSnapshot(ctx context.Context, arg InsertSnapshotParams) error {
+	_, err := q.db.Exec(ctx, insertSnapshot,
 		arg.ID,
 		arg.WorkspaceID,
 		arg.ProjectID,
@@ -134,24 +115,7 @@ func (q *Queries) InsertSnapshot(ctx context.Context, arg InsertSnapshotParams) 
 		arg.AcknowledgedWarnings,
 		arg.PublishedBy,
 	)
-	var i InsertSnapshotRow
-	err := row.Scan(
-		&i.ID,
-		&i.ProjectID,
-		&i.Version,
-		&i.Note,
-		&i.Status,
-		&i.FailureCode,
-		&i.AcknowledgedSeq,
-		&i.SourceSeq,
-		&i.SchemaVersion,
-		&i.ContentHash,
-		&i.Counts,
-		&i.PublishedBy,
-		&i.PublishedAt,
-		&i.BuiltAt,
-	)
-	return i, err
+	return err
 }
 
 const insertSnapshotFiles = `-- name: InsertSnapshotFiles :exec
@@ -208,6 +172,27 @@ func (q *Queries) LockSnapshots(ctx context.Context, arg LockSnapshotsParams) er
 	return err
 }
 
+const newestSnapshotID = `-- name: NewestSnapshotID :one
+SELECT id FROM snapshot WHERE workspace_id = $1 AND project_id = $2 ORDER BY id DESC LIMIT 1
+`
+
+type NewestSnapshotIDParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+}
+
+// NewestSnapshotID returns the greatest ID of the project's snapshots, of
+// every status, or no row if it has none, after which a new snapshot's ID is
+// made (ids.NewAfter), under the lock of the project's snapshots, so that
+// their IDs, by which Snapshots lists them, follow the order in which they
+// were published, whatever the clocks of the servers that published them.
+func (q *Queries) NewestSnapshotID(ctx context.Context, arg NewestSnapshotIDParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, newestSnapshotID, arg.WorkspaceID, arg.ProjectID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const newestSnapshotVersion = `-- name: NewestSnapshotVersion :one
 SELECT version FROM snapshot
 WHERE workspace_id = $1 AND project_id = $2 AND status <> 'failed'
@@ -230,9 +215,11 @@ func (q *Queries) NewestSnapshotVersion(ctx context.Context, arg NewestSnapshotV
 }
 
 const snapshot = `-- name: Snapshot :one
-SELECT id, project_id, version, note, status, failure_code, acknowledged_seq, source_seq, schema_version,
-    content_hash, counts, published_by, published_at, built_at
-FROM snapshot WHERE workspace_id = $1 AND project_id = $2 AND id = $3
+SELECT s.id, s.project_id, s.version, s.note, s.status, s.failure_code, s.acknowledged_seq, s.source_seq,
+    s.schema_version, s.content_hash, s.counts, s.published_by, s.published_at, s.built_at,
+    u.display_name AS published_by_name
+FROM snapshot s LEFT JOIN "user" u ON u.id = s.published_by
+WHERE s.workspace_id = $1 AND s.project_id = $2 AND s.id = $3
 `
 
 type SnapshotParams struct {
@@ -256,12 +243,15 @@ type SnapshotRow struct {
 	PublishedBy     pgtype.UUID
 	PublishedAt     pgtype.Timestamptz
 	BuiltAt         pgtype.Timestamptz
+	PublishedByName pgtype.Text
 }
 
 // Snapshot returns a snapshot of the project, building, ready, or failed,
 // but for its acknowledged warnings and its report, which the API shows
-// nothing of with it, and which may be megabytes of a large draft's:
-// InsertSnapshot returns the same columns.
+// nothing of with it, and which may be megabytes of a large draft's, with
+// the display name of its publisher as it is now (PRD §6.2), which a
+// snapshot whose publisher's account is deleted has none of: Snapshots
+// returns the same columns.
 func (q *Queries) Snapshot(ctx context.Context, arg SnapshotParams) (SnapshotRow, error) {
 	row := q.db.QueryRow(ctx, snapshot, arg.WorkspaceID, arg.ProjectID, arg.ID)
 	var i SnapshotRow
@@ -280,6 +270,7 @@ func (q *Queries) Snapshot(ctx context.Context, arg SnapshotParams) (SnapshotRow
 		&i.PublishedBy,
 		&i.PublishedAt,
 		&i.BuiltAt,
+		&i.PublishedByName,
 	)
 	return i, err
 }
@@ -305,6 +296,46 @@ func (q *Queries) SnapshotDrift(ctx context.Context, workspaceID pgtype.UUID) (i
 	var drift int64
 	err := row.Scan(&drift)
 	return drift, err
+}
+
+const snapshotFiles = `-- name: SnapshotFiles :many
+SELECT path, bytes FROM snapshot_file
+WHERE workspace_id = $1 AND snapshot_id = $2
+`
+
+type SnapshotFilesParams struct {
+	WorkspaceID pgtype.UUID
+	SnapshotID  pgtype.UUID
+}
+
+type SnapshotFilesRow struct {
+	Path  string
+	Bytes []byte
+}
+
+// SnapshotFiles returns the files of a snapshot of the workspace, each by its
+// path, with its bytes, in no order, which a ready snapshot has, and a
+// building or failed one has none of: an export keeps them by their paths,
+// and its zip orders them by the paths' bytes (snapshot.Export.Zip), which a
+// collation's order may not be.
+func (q *Queries) SnapshotFiles(ctx context.Context, arg SnapshotFilesParams) ([]SnapshotFilesRow, error) {
+	rows, err := q.db.Query(ctx, snapshotFiles, arg.WorkspaceID, arg.SnapshotID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SnapshotFilesRow
+	for rows.Next() {
+		var i SnapshotFilesRow
+		if err := rows.Scan(&i.Path, &i.Bytes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const snapshotReport = `-- name: SnapshotReport :one
@@ -383,6 +414,92 @@ func (q *Queries) SnapshotToRead(ctx context.Context, arg SnapshotToReadParams) 
 		&i.BuiltAt,
 	)
 	return i, err
+}
+
+const snapshots = `-- name: Snapshots :many
+SELECT s.id, s.project_id, s.version, s.note, s.status, s.failure_code, s.acknowledged_seq, s.source_seq,
+    s.schema_version, s.content_hash, s.counts, s.published_by, s.published_at, s.built_at,
+    u.display_name AS published_by_name
+FROM snapshot s LEFT JOIN "user" u ON u.id = s.published_by
+WHERE s.workspace_id = $1 AND s.project_id = $2
+    AND ($3::text IS NULL OR s.status = $3::text)
+    AND ($4::uuid IS NULL OR s.id < $4::uuid)
+ORDER BY s.id DESC
+LIMIT $5
+`
+
+type SnapshotsParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Status      pgtype.Text
+	After       pgtype.UUID
+	RowLimit    int32
+}
+
+type SnapshotsRow struct {
+	ID              pgtype.UUID
+	ProjectID       pgtype.UUID
+	Version         string
+	Note            string
+	Status          string
+	FailureCode     pgtype.Text
+	AcknowledgedSeq int64
+	SourceSeq       pgtype.Int8
+	SchemaVersion   pgtype.Int4
+	ContentHash     pgtype.Text
+	Counts          []byte
+	PublishedBy     pgtype.UUID
+	PublishedAt     pgtype.Timestamptz
+	BuiltAt         pgtype.Timestamptz
+	PublishedByName pgtype.Text
+}
+
+// Snapshots returns a page of the project's snapshots, as Snapshot returns
+// each, newest first, by their IDs, which follow the order in which they
+// were published (NewestSnapshotID), those of the status alone, or of every status for a null
+// one, after the snapshot of the ID after in that order, or from the newest
+// for a null one (PRD FR-SNAP-02). The key (workspace_id, project_id, id)
+// reads them in that order.
+func (q *Queries) Snapshots(ctx context.Context, arg SnapshotsParams) ([]SnapshotsRow, error) {
+	rows, err := q.db.Query(ctx, snapshots,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Status,
+		arg.After,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SnapshotsRow
+	for rows.Next() {
+		var i SnapshotsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Version,
+			&i.Note,
+			&i.Status,
+			&i.FailureCode,
+			&i.AcknowledgedSeq,
+			&i.SourceSeq,
+			&i.SchemaVersion,
+			&i.ContentHash,
+			&i.Counts,
+			&i.PublishedBy,
+			&i.PublishedAt,
+			&i.BuiltAt,
+			&i.PublishedByName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const usersWithAccounts = `-- name: UsersWithAccounts :many
