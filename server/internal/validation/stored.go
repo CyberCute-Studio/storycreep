@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"iter"
 	"slices"
 	"strings"
 
@@ -73,29 +74,29 @@ func (f StoredFinding) Acknowledgement() Acknowledgement {
 func (r *Result) Stored() Stored {
 	out := Stored{Seq: r.seq, Findings: make([]StoredFinding, 0, len(r.findings))}
 	for _, f := range r.findings {
-		rule := byCode[f.code]
-		s := StoredFinding{Code: f.code, EntityType: f.entity.kind.String(),
-			EntityID: ids.Encode(f.entity.kind, f.entity.id), Field: f.field, BoardID: encode(ids.Board, f.board),
-			BoardName: nameOf(f.board, f.boardName), NodeID: encode(ids.Node, f.node),
-			NodeTitle: nameOf(f.node, f.nodeTitle), Args: f.args}
-		if f.target != (ref{}) {
-			s.Target = &Target{Type: f.target.kind.String(), ID: ids.Encode(f.target.kind, f.target.id)}
-			if f.attribute != (ids.UUID{}) {
-				s.Target.Type, s.Target.AttributeID = "attribute", ids.Encode(ids.AttributeDef, f.attribute)
-			}
-		}
-		if m, ok := r.mutes[muteKey{f.entity.id, f.code}]; ok && rule.Mutable() && rule.Entity == f.entity.kind {
-			s.Mute = &Mute{Reason: m.reason, MutedBy: encode(ids.User, m.by), MutedAt: m.at.UTC()}
-		}
-		out.Findings = append(out.Findings, s)
+		out.Findings = append(out.Findings, r.stored(f))
 	}
 	return out
 }
 
-// Seq returns the project's operation sequence as of the draft that r
-// validated.
-func (r *Result) Seq() int64 {
-	return r.seq
+// stored returns the finding f of r as a stored report holds it, with its
+// mute, if r has one of it.
+func (r *Result) stored(f finding) StoredFinding {
+	rule := byCode[f.code]
+	s := StoredFinding{Code: f.code, EntityType: f.entity.kind.String(),
+		EntityID: ids.Encode(f.entity.kind, f.entity.id), Field: f.field, BoardID: encode(ids.Board, f.board),
+		BoardName: nameOf(f.board, f.boardName), NodeID: encode(ids.Node, f.node),
+		NodeTitle: nameOf(f.node, f.nodeTitle), Args: f.args}
+	if f.target != (ref{}) {
+		s.Target = &Target{Type: f.target.kind.String(), ID: ids.Encode(f.target.kind, f.target.id)}
+		if f.attribute != (ids.UUID{}) {
+			s.Target.Type, s.Target.AttributeID = "attribute", ids.Encode(ids.AttributeDef, f.attribute)
+		}
+	}
+	if m, ok := r.mutes[muteKey{f.entity.id, f.code}]; ok && rule.Mutable() && rule.Entity == f.entity.kind {
+		s.Mute = &Mute{Reason: m.reason, MutedBy: encode(ids.User, m.by), MutedAt: m.at.UTC()}
+	}
+	return s
 }
 
 // Report returns s as the API shows it, as Result.Report shows the report
@@ -104,9 +105,17 @@ func (r *Result) Seq() int64 {
 // report holds while the rules only gain codes, is shown with its code as
 // its message, as an error.
 func (s Stored) Report(l *i18n.Localizer) (Report, string) {
-	out := Report{Seq: s.Seq, Findings: []Finding{}, Muted: []Finding{}}
+	return report(s.Seq, l, slices.Values(s.Findings))
+}
+
+// report returns the report of the findings, of the draft as of seq, as the
+// API shows it, its messages in l's locale, and the languages that they are
+// in, which Result.Report and Stored.Report both write, each finding as it
+// comes, so that the draft's report is never copied whole first.
+func report(seq int64, l *i18n.Localizer, findings iter.Seq[StoredFinding]) (Report, string) {
+	out := Report{Seq: seq, Findings: []Finding{}, Muted: []Finding{}}
 	var languages []string
-	for _, f := range s.Findings {
+	for f := range findings {
 		rule, ok := byCode[f.Code]
 		message, severity := string(f.Code), Error
 		if ok {
@@ -174,13 +183,26 @@ func (s Stored) Unacknowledged(acks []Acknowledgement) []StoredFinding {
 	return out
 }
 
-// Warnings returns the codes of the rules whose severity is a warning, in
-// the order of the rules, which an acknowledgement names (Acknowledgement).
-func Warnings() []Code {
-	var out []Code
-	for _, r := range rules {
-		if r.Severity == Warning {
-			out = append(out, r.Code)
+// Acknowledged returns the acknowledgements of the warnings of s, muted or
+// not, that acks name, each once, in the order of the report: of the warnings
+// that a publication acknowledges, those of the draft that its pre-check
+// validated, which are what its snapshot keeps (plan note N85), so that an
+// acknowledgement that names nothing of the draft, or one that the request
+// repeats, is never stored.
+func (s Stored) Acknowledged(acks []Acknowledgement) []Acknowledgement {
+	named := make(map[string]bool, len(acks))
+	for _, a := range acks {
+		named[a.key()] = true
+	}
+	out := []Acknowledgement{}
+	for _, f := range s.Findings {
+		rule, ok := byCode[f.Code]
+		if !ok || rule.Severity != Warning {
+			continue
+		}
+		if a := f.Acknowledgement(); named[a.key()] {
+			delete(named, a.key())
+			out = append(out, a)
 		}
 	}
 	return out

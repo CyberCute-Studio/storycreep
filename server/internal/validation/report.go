@@ -120,7 +120,13 @@ var order = func() map[Code]int {
 // (i18n.Localizer.Localize), each once, in the order of the messages, or l's
 // locale alone for a report without a finding.
 func (r *Result) Report(l *i18n.Localizer) (Report, string) {
-	return r.Stored().Report(l)
+	return report(r.seq, l, func(yield func(StoredFinding) bool) {
+		for _, f := range r.findings {
+			if !yield(r.stored(f)) {
+				return
+			}
+		}
+	})
 }
 
 // nameOf returns name, the name of the board or the node id of a finding

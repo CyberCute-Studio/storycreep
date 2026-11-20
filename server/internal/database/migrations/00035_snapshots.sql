@@ -15,11 +15,13 @@
 -- snapshot holds no files, and is kept, with the validation report that its
 -- build stored, as the record of the attempt (AC4).
 --
--- A snapshot holds nothing of anyone's account but who published it, by ID
+-- A snapshot holds nothing of anyone's account but IDs: who published it
 -- (published_by), which the API resolves to a display name, or to the
--- tombstone once the account is deleted, when the cascade sets it null: the
--- one change of a built snapshot that the trigger lets through. Its files hold
--- no personal data (§6.2). The application deletes no snapshot: a project's
+-- tombstone once the account is deleted, when the cascade sets it null, the
+-- one change of a built snapshot that the trigger lets through; and, in its
+-- stored report, who muted each muted finding, whom the API no longer names
+-- once their account is deleted (package snapshot, Report). Its files hold no
+-- personal data (§6.2). The application deletes no snapshot: a project's
 -- purge and its workspace's delete theirs by the cascades, which run with the
 -- privileges of the table's owner, and the retention of FR-SNAP-06 is a later
 -- phase's, which grants itself what it deletes with.
@@ -44,8 +46,9 @@ CREATE TABLE snapshot (
 	-- or the build itself failed (build_failed).
 	failure_code text CHECK (failure_code IN ('validation_failed', 'validation_changed', 'build_failed')),
 	-- The project's operation sequence of the report that the author
-	-- validated, and the warnings of it that they acknowledged, as the
-	-- request named them, which the build compares its own report with.
+	-- validated, and the warnings that they acknowledged, of those of the
+	-- draft that the pre-check validated, each once, as the report names
+	-- them, which the build compares its own report with.
 	acknowledged_seq bigint NOT NULL CHECK (acknowledged_seq >= 0),
 	acknowledged_warnings jsonb NOT NULL CHECK (jsonb_typeof(acknowledged_warnings) = 'array'),
 	-- What the build read, and wrote: the project's operation sequence as of
@@ -72,6 +75,9 @@ CREATE TABLE snapshot (
 	CHECK (status <> 'ready' OR (source_seq IS NOT NULL AND validation_report IS NOT NULL)),
 	CHECK (status <> 'building' OR (source_seq IS NULL AND validation_report IS NULL)),
 	UNIQUE (workspace_id, id),
+	-- A project's snapshots, by their IDs, which its list reads in their
+	-- order, and which a step of the migration log names its snapshot by.
+	UNIQUE (workspace_id, project_id, id),
 	FOREIGN KEY (workspace_id, project_id) REFERENCES project (workspace_id, id) ON DELETE CASCADE
 );
 -- A project's versions are unique among its snapshots that are building or
@@ -82,8 +88,6 @@ CREATE TABLE snapshot (
 -- snapshots reads.
 CREATE UNIQUE INDEX snapshot_version ON snapshot (workspace_id, project_id, version_major, version_minor,
 	version_patch) WHERE status <> 'failed';
--- A project's snapshots, by their IDs, which its list reads in their order.
-CREATE INDEX snapshot_project ON snapshot (workspace_id, project_id, id);
 CREATE INDEX snapshot_published_by ON snapshot (published_by);
 
 ALTER TABLE snapshot ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
@@ -163,7 +167,9 @@ GRANT SELECT, INSERT ON snapshot_file TO storycreep_app;
 GRANT SELECT ON snapshot_file TO storycreep_maintenance;
 
 -- A step of the migration log is of a snapshot of its project (migration
--- 00034, plan note N84), which deletes it with the snapshot.
-CREATE INDEX schema_migration_log_snapshot ON schema_migration_log (workspace_id, snapshot_id);
+-- 00034, plan note N84), which deletes it with the snapshot. Its unique key
+-- of the project, the snapshot, and the version leads with the columns of
+-- this key, which so needs no index of its own.
 ALTER TABLE schema_migration_log ADD CONSTRAINT schema_migration_log_snapshot_fkey
-	FOREIGN KEY (workspace_id, snapshot_id) REFERENCES snapshot (workspace_id, id) ON DELETE CASCADE;
+	FOREIGN KEY (workspace_id, project_id, snapshot_id) REFERENCES snapshot (workspace_id, project_id, id)
+	ON DELETE CASCADE;

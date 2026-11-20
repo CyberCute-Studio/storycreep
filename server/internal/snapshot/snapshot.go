@@ -35,6 +35,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -50,6 +51,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
+	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
 )
@@ -96,11 +98,12 @@ type Request struct {
 	// Version is the snapshot's version, which the author chose.
 	Version string
 	// Note is the snapshot's changelog note, of 1 to MaxNoteLength
-	// characters.
+	// characters, not all of them blank.
 	Note string
 	// AcknowledgedSeq is the project's operation sequence of the report that
 	// the author validated, and AcknowledgedWarnings the warnings of it that
-	// they acknowledged.
+	// they acknowledged, of which the snapshot keeps those of the draft that
+	// the pre-check validates (validation.Stored.Acknowledged).
 	AcknowledgedSeq      int64
 	AcknowledgedWarnings []validation.Acknowledgement
 }
@@ -237,9 +240,10 @@ func New(db DB, opts Options) *Service {
 // version and the note of r, which the actor asks for, and returns the
 // snapshot, building, whose job builds it (§7.3). It returns the errors of
 // project.Service.Get; input.FieldErrors for a version that is not of the
-// grammar VersionPattern, a note that is empty, longer than MaxNoteLength,
-// with white space around it, or a control character but a line feed or a
-// tab, or an acknowledged_seq past the project's operation sequence;
+// grammar VersionPattern, a note that is empty, blank, longer than
+// MaxNoteLength, with white space around it, or a control character but a
+// line feed or a tab, or an acknowledged_seq past the project's operation
+// sequence;
 // authz.ErrInsufficientRole unless the actor's role allows publishing, as
 // the project's publish_min_role says (FR-SNAP-01 AC3); project.ErrNotFound
 // for a project in the trash; commands.ErrProjectArchived for an archived
@@ -267,6 +271,7 @@ func (s *Service) Publish(ctx context.Context, actor commands.Actor, projectID i
 		return Snapshot{}, err
 	}
 	scope := database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}
+	var acks []validation.Acknowledgement
 	err = s.db.InSnapshot(ctx, scope, func(tx pgx.Tx) error {
 		if err := s.authorise(ctx, tx, actor, workspaceID, projectID); err != nil {
 			return err
@@ -286,14 +291,11 @@ func (s *Service) Publish(ctx context.Context, actor commands.Actor, projectID i
 		if warnings := report.Unacknowledged(r.AcknowledgedWarnings); len(warnings) > 0 {
 			return &UnacknowledgedError{Report: validation.Stored{Seq: report.Seq, Findings: warnings}}
 		}
+		acks = report.Acknowledged(r.AcknowledgedWarnings)
 		return nil
 	})
 	if err != nil {
 		return Snapshot{}, err
-	}
-	acks := r.AcknowledgedWarnings
-	if acks == nil {
-		acks = []validation.Acknowledgement{}
 	}
 	acknowledged, err := json.Marshal(acks)
 	if err != nil {
@@ -322,10 +324,11 @@ func (s *Service) Publish(ctx context.Context, actor commands.Actor, projectID i
 			return e
 		}
 		id := ids.New()
-		if _, err := q.InsertSnapshot(ctx, queries.InsertSnapshotParams{ID: nullUUID(id), WorkspaceID: w,
+		row, err := q.InsertSnapshot(ctx, queries.InsertSnapshotParams{ID: nullUUID(id), WorkspaceID: w,
 			ProjectID: p, Version: v.String(), VersionMajor: v.Major, VersionMinor: v.Minor, VersionPatch: v.Patch,
 			Note: r.Note, AcknowledgedSeq: r.AcknowledgedSeq, AcknowledgedWarnings: acknowledged,
-			PublishedBy: nullUUID(actor.UserID)}); err != nil {
+			PublishedBy: nullUUID(actor.UserID)})
+		if err != nil {
 			return fmt.Errorf("snapshot: add the snapshot: %w", err)
 		}
 		if err := usage.Record(ctx, tx, workspaceID, usage.Snapshots, 1); err != nil {
@@ -340,10 +343,6 @@ func (s *Service) Publish(ctx context.Context, actor commands.Actor, projectID i
 		if _, err := s.queue.Enqueue(ctx, tx, buildJob{WorkspaceID: workspaceID.String(), SnapshotID: id.String()},
 			&jobs.EnqueueOptions{MaxAttempts: buildAttempts}); err != nil {
 			return fmt.Errorf("snapshot: enqueue the build: %w", err)
-		}
-		row, err := q.Snapshot(ctx, queries.SnapshotParams{WorkspaceID: w, ProjectID: p, ID: nullUUID(id)})
-		if err != nil {
-			return fmt.Errorf("snapshot: read the snapshot: %w", err)
 		}
 		out = snapshotOf(row)
 		return nil
@@ -360,7 +359,9 @@ func checkRequest(r Request) (Version, error) {
 		fields = append(fields, input.FieldError{Field: "version", Message: fmt.Sprintf(
 			"is not a version MAJOR.MINOR.PATCH, each a number from 0 to %d without a leading zero", MaxVersionNumber)})
 	}
-	if r.Note == "" {
+	if strings.IndexFunc(r.Note, input.Printed) < 0 {
+		// A note of blank characters alone, as U+200B ZERO WIDTH SPACE, is
+		// empty, as a mute's reason is (package validation).
 		fields = append(fields, input.FieldError{Field: "note", Message: "is empty"})
 	} else if msg := input.CheckTrimmedText(r.Note, MaxNoteLength); msg != "" {
 		fields = append(fields, input.FieldError{Field: "note", Message: msg})
@@ -383,11 +384,7 @@ func (s *Service) authorise(ctx context.Context, tx pgx.Tx, actor commands.Actor
 	if err != nil {
 		return err
 	}
-	least, err := project.PublishMinRole(ctx, queries.New(tx), workspaceID, projectID)
-	if err != nil {
-		return err
-	}
-	if err := authz.CheckPublish(p.Role, least); err != nil {
+	if err := authz.CheckPublish(p.Role, role.Role(p.PublishMinRole)); err != nil {
 		return err
 	}
 	switch {
@@ -440,7 +437,9 @@ func (s *Service) Get(ctx context.Context, actor commands.Actor, projectID, snap
 // validation.Service.Report does, once the actor may read the project. It
 // returns the errors of Get, and ErrNotFound for a snapshot that holds no
 // report: one that is building, or that failed before its build read the
-// draft.
+// draft. A mute of the report names who muted it only while their account
+// exists, as the draft's report does (validation.Mute), although the
+// snapshot, which never changes, keeps their ID (forgetDeleted).
 func (s *Service) Report(ctx context.Context, actor commands.Actor, projectID, snapshotID ids.UUID) (
 	validation.Report, string, error) {
 	var stored validation.Stored
@@ -455,13 +454,46 @@ func (s *Service) Report(ctx context.Context, actor commands.Actor, projectID, s
 		if err := json.Unmarshal(row.ValidationReport, &stored); err != nil {
 			return fmt.Errorf("snapshot: read the stored report: %w", err)
 		}
-		return nil
+		return forgetDeleted(ctx, queries.New(tx), stored)
 	})
 	if err != nil {
 		return validation.Report{}, "", err
 	}
 	report, languages := stored.Report(i18n.FromContext(ctx))
 	return report, languages, nil
+}
+
+// forgetDeleted takes from each mute of the stored report s who muted it, if
+// their account is deleted, read with q, as the draft's report no longer
+// names them either, since the deletion's cascade takes the mute's author
+// from it.
+func forgetDeleted(ctx context.Context, q *queries.Queries, s validation.Stored) error {
+	var users []pgtype.UUID
+	for _, f := range s.Findings {
+		if f.Mute == nil || f.Mute.MutedBy == "" {
+			continue
+		}
+		if id, err := ids.Decode(ids.User, f.Mute.MutedBy); err == nil {
+			users = append(users, nullUUID(id))
+		}
+	}
+	if len(users) == 0 {
+		return nil
+	}
+	rows, err := q.UsersWithAccounts(ctx, users)
+	if err != nil {
+		return fmt.Errorf("snapshot: read who muted the stored report's findings: %w", err)
+	}
+	exist := make(map[string]bool, len(rows))
+	for _, id := range rows {
+		exist[ids.Encode(ids.User, id.Bytes)] = true
+	}
+	for _, f := range s.Findings {
+		if f.Mute != nil && !exist[f.Mute.MutedBy] {
+			f.Mute.MutedBy = ""
+		}
+	}
+	return nil
 }
 
 // NextVersion returns the version that the server proposes for the next

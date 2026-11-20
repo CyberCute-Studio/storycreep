@@ -3,12 +3,14 @@ package schemaversion_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"sync/atomic"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
@@ -139,7 +141,8 @@ func sameJSONValue(t *testing.T, a, b json.RawMessage) bool {
 // its project's migration log, with what it reported, a changed value and a
 // dropped one, or nothing, which Log reads back, by the snapshots' IDs; that
 // a later run of a step that the log holds already replaces its report; that
-// a project's log is its own; and that the log is deleted with its project.
+// a project's log is its own, of its own snapshots, which the database holds
+// to as well; and that the log is deleted with its project.
 //
 // Verifies: FR-DATA-03/AC2
 func TestLog(t *testing.T) {
@@ -179,6 +182,14 @@ func TestLog(t *testing.T) {
 	}
 	if got := e.log(t, other); len(got) != 0 {
 		t.Errorf("another project's log holds %+v; want none", got)
+	}
+	// A step of a snapshot of another project of the workspace is refused.
+	err := e.db.InTx(ctx, database.Scope{WorkspaceID: e.workspace, UserID: e.member}, func(tx pgx.Tx) error {
+		return schemaversion.Record(ctx, tx, e.workspace, other, first, []schemaversion.Step{{From: 1, To: 2}})
+	})
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23503" {
+		t.Errorf("a step of another project's snapshot is logged with %v; want refused by the foreign key", err)
 	}
 	// A snapshot's steps are deleted with it, as by the cascade of its
 	// project's purge.

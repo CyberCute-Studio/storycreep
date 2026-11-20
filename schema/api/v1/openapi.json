@@ -9445,7 +9445,7 @@
             "type": "integer"
           },
           "acknowledged_warnings": {
-            "description": "The warnings of that report that the author acknowledged, each by its code, its entity, its field, and its target, as the report's finding has them. Publishing needs every warning of the draft that is not muted acknowledged.",
+            "description": "The warnings of that report that the author acknowledged, each by its code, its entity, its field, and its target, as the report's finding has them. Publishing needs every warning of the draft that is not muted acknowledged. The snapshot keeps those that name a warning of the draft as the publish gate validates it, each once.",
             "items": {
               "$ref": "#/components/schemas/Acknowledgement"
             },
@@ -9455,7 +9455,7 @@
             ]
           },
           "note": {
-            "description": "The snapshot's changelog note, of 1 to 2,000 characters, without white space around it, its line breaks as line feeds, which the snapshot's manifest holds too (PRD FR-SNAP-01)",
+            "description": "The snapshot's changelog note, of 1 to 2,000 characters, not all of them blank, without white space around it, its line breaks as line feeds, which the snapshot's manifest holds too (PRD FR-SNAP-01)",
             "maxLength": 2000,
             "minLength": 1,
             "type": "string"
@@ -11161,7 +11161,7 @@
           },
           "snapshots": {
             "$ref": "#/components/schemas/MeteredUsageBody",
-            "description": "The snapshots of the workspace's projects"
+            "description": "The snapshots of the workspace's projects that are building or ready; a failed one, only the record of an attempt, does not count"
           },
           "storage_bytes": {
             "$ref": "#/components/schemas/LimitUsageBody",

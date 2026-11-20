@@ -24,9 +24,11 @@ import (
 
 // buildAttempts is how many attempts the job of a build has: the queue's
 // default, whose retries span about 13 hours (package jobs), so that a
-// database that fails for a while has answered again before the last, after
-// which the build fails the snapshot, which would otherwise hold its version
-// while it is building.
+// database that fails for a while has answered again before the last. The
+// last does not build: it fails the snapshot, which would otherwise hold its
+// version while it is building, so that no failure of a build itself, as one
+// whose time runs out, or a process that a build takes down, which leaves its
+// job to River's rescuer, keeps the snapshot building after its job ends.
 const buildAttempts = 25
 
 // buildJob is the job that builds a snapshot (FR-JOBS-01, §7.3). Its jobs
@@ -42,31 +44,40 @@ type buildJob struct {
 func (buildJob) Kind() string { return "snapshot_build" }
 
 // RegisterJobs registers the job that builds a snapshot in r, which Publish
-// enqueues, and which runs one at a time. On the last attempt that the job
-// has, a build that fails still fails the snapshot, with build_failed.
+// enqueues, and which runs one at a time.
 func (s *Service) RegisterJobs(r *jobs.Registry) {
-	jobs.Register(r, func(ctx context.Context, job *jobs.Job[buildJob]) error {
-		workspaceID, err := ids.ParseUUID(job.Args.WorkspaceID)
-		if err != nil {
-			return jobs.Cancel(fmt.Errorf("snapshot: the job's workspace: %w", err))
-		}
-		snapshotID, err := ids.ParseUUID(job.Args.SnapshotID)
-		if err != nil {
-			return jobs.Cancel(fmt.Errorf("snapshot: the job's snapshot: %w", err))
-		}
-		svc := s.withDB(job.DB)
-		err = svc.Build(ctx, workspaceID, snapshotID)
-		if err == nil || ctx.Err() != nil || job.Attempt < job.MaxAttempts {
-			return err
-		}
-		svc.log.ErrorContext(ctx, "the snapshot's build failed on the last attempt of its job, so the snapshot "+
-			"fails", "snapshot_id", ids.Encode(ids.Snapshot, snapshotID), "error", err)
-		if ferr := svc.finish(ctx, workspaceID, snapshotID, &outcome{code: FailureBuild}); ferr != nil {
-			return errors.Join(err, ferr)
-		}
-		return jobs.Cancel(err)
-	})
+	jobs.Register(r, s.work)
 	jobs.Serial(r, buildJob{})
+}
+
+// work is an attempt at the job that builds a snapshot. Each attempt but the
+// last builds it (Build), and returns Build's error, which the queue attempts
+// again after; the last attempt, which only one whose builds all failed
+// reaches, fails the snapshot with build_failed if it is building still, and
+// ends the job (buildAttempts). A server that stops during that attempt has
+// it run again later, as it has every attempt whose context it cancels.
+func (s *Service) work(ctx context.Context, job *jobs.Job[buildJob]) error {
+	workspaceID, err := ids.ParseUUID(job.Args.WorkspaceID)
+	if err != nil {
+		return jobs.Cancel(fmt.Errorf("snapshot: the job's workspace: %w", err))
+	}
+	snapshotID, err := ids.ParseUUID(job.Args.SnapshotID)
+	if err != nil {
+		return jobs.Cancel(fmt.Errorf("snapshot: the job's snapshot: %w", err))
+	}
+	svc := s.withDB(job.DB)
+	if job.Attempt < job.MaxAttempts {
+		return svc.Build(ctx, workspaceID, snapshotID)
+	}
+	failed, err := svc.finish(ctx, workspaceID, snapshotID, &outcome{code: FailureBuild})
+	if err != nil || !failed {
+		return err
+	}
+	err = fmt.Errorf("snapshot: the build failed on each attempt of its job before the last, %d, which fails "+
+		"the snapshot", job.MaxAttempts)
+	svc.log.ErrorContext(ctx, "the snapshot's build failed on every attempt of its job, so the snapshot fails",
+		"snapshot_id", ids.Encode(ids.Snapshot, snapshotID), "error", err)
+	return jobs.Cancel(err)
 }
 
 // withDB returns a Service like s that reads and writes db, as a job does on
@@ -97,59 +108,60 @@ type outcome struct {
 }
 
 // Build builds the snapshot snapshotID of the workspace workspaceID, if it is
-// building still (§7.3): it reads the snapshot's project's draft in one
-// transaction that only reads, as of one moment, validates it there, and
-// serializes it at the current version of the published format, whose files
-// it validates against the format's schemas (FR-DATA-04 AC1). The snapshot
-// becomes failed, with validation_failed, on an error of the validation;
-// with validation_changed, on a warning that is neither muted nor among
-// those that its author acknowledged, if the draft's sequence is not the one
-// whose report they acknowledged; and with build_failed, on a draft that the
-// serializer refuses, or a file that does not validate; and ready, with its
-// files, otherwise. The snapshot's report is the one that the build
-// computed, of the draft as of its source_seq, as its files are (FR-DEP-04
-// AC4).
+// building still (§7.3): it reads the snapshot, and its project's draft, in
+// one transaction that only reads, as of one moment, validates the draft
+// there, and serializes it at the current version of the published format,
+// whose files it validates against the format's schemas (FR-DATA-04 AC1).
+// The snapshot becomes failed, with validation_failed, on an error of the
+// validation; with validation_changed, on a warning that is neither muted nor
+// among those that its author acknowledged, if the draft's sequence is not
+// the one whose report they acknowledged; and with build_failed, on a draft
+// that the serializer refuses, a file that does not validate, or a project
+// that is in its workspace's trash; and ready, with its files, otherwise. The
+// snapshot's report is the one that the build computed, of the draft as of
+// its source_seq, as its files are (FR-DEP-04 AC4).
 //
 // It returns an error, changing nothing, for a failure that another attempt
 // may not meet, as of the database, and nil for a snapshot that is no longer
 // building, or no longer exists, as with its project, so it is safe to
 // repeat: one attempt alone finishes the snapshot, under its lock.
 func (s *Service) Build(ctx context.Context, workspaceID, snapshotID ids.UUID) error {
-	scope := database.Scope{WorkspaceID: workspaceID}
-	var row queries.Snapshot
-	err := s.db.InTx(ctx, scope, func(tx pgx.Tx) error {
-		var err error
-		row, err = queries.New(tx).SnapshotToBuild(ctx, queries.SnapshotToBuildParams{
-			WorkspaceID: nullUUID(workspaceID), ID: nullUUID(snapshotID)})
-		return err
-	})
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		return nil
-	case err != nil:
-		return fmt.Errorf("snapshot: read the snapshot to build: %w", err)
-	case Status(row.Status) != Building:
-		return nil
-	}
-	o, err := s.read(ctx, row)
-	if err != nil {
+	o, err := s.read(ctx, workspaceID, snapshotID)
+	if err != nil || o == nil {
 		return err
 	}
-	return s.finish(ctx, workspaceID, snapshotID, o)
+	_, err = s.finish(ctx, workspaceID, snapshotID, o)
+	return err
 }
 
-// read reads the draft of the project of the snapshot row in one
-// transaction that only reads, as of one moment, and returns what its build
-// found of it, or an error for a failure of the database, or a context's.
-func (s *Service) read(ctx context.Context, row queries.Snapshot) (*outcome, error) {
-	var acks []validation.Acknowledgement
-	if err := json.Unmarshal(row.AcknowledgedWarnings, &acks); err != nil {
-		return &outcome{code: FailureBuild}, s.failure(ctx, row, "its acknowledged warnings do not decode", err)
-	}
-	workspaceID, projectID := ids.UUID(row.WorkspaceID.Bytes), ids.UUID(row.ProjectID.Bytes)
-	o := &outcome{}
+// read reads the snapshot snapshotID of the workspace workspaceID, and the
+// draft of its project, in one transaction that only reads, as of one
+// moment, and returns what its build found of it; nil for a snapshot that is
+// no longer building, or no longer exists; or an error for a failure of the
+// database, or a context's.
+func (s *Service) read(ctx context.Context, workspaceID, snapshotID ids.UUID) (*outcome, error) {
+	var row queries.Snapshot
+	var o *outcome
 	var draft *serializer.Draft
 	err := s.db.InSnapshot(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
+		var err error
+		row, err = queries.New(tx).SnapshotToRead(ctx, queries.SnapshotToReadParams{
+			WorkspaceID: nullUUID(workspaceID), ID: nullUUID(snapshotID)})
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			return nil
+		case err != nil:
+			return fmt.Errorf("snapshot: read the snapshot to build: %w", err)
+		case Status(row.Status) != Building:
+			return nil
+		}
+		o = &outcome{}
+		var acks []validation.Acknowledgement
+		if err := json.Unmarshal(row.AcknowledgedWarnings, &acks); err != nil {
+			o.code = FailureBuild
+			return s.failure(ctx, row, "its acknowledged warnings do not decode", err)
+		}
+		projectID := ids.UUID(row.ProjectID.Bytes)
 		res, err := validation.Run(ctx, tx, workspaceID, projectID)
 		if err != nil {
 			return err
@@ -168,15 +180,21 @@ func (s *Service) read(ctx context.Context, row queries.Snapshot) (*outcome, err
 		}
 		draft, err = serializer.Load(ctx, tx, workspaceID, projectID)
 		if errors.Is(err, pgx.ErrNoRows) {
-			// The project is in its workspace's trash, which the
-			// serializer reads nothing of.
+			// The project was moved to its workspace's trash since it was
+			// published, which the serializer reads nothing of: its
+			// member's choice, not a defect of the server's.
 			o.code = FailureBuild
-			return s.failure(ctx, row, "its project is in the trash", err)
+			s.log.InfoContext(ctx, "the snapshot's build failed, since its project is in the trash",
+				"snapshot_id", ids.Encode(ids.Snapshot, row.ID.Bytes))
+			return nil
 		}
 		return err
 	})
-	if err != nil || o.code != "" {
-		return o, err
+	if err != nil {
+		return nil, err
+	}
+	if o == nil || o.code != "" {
+		return o, nil
 	}
 	stamp := serializer.Stamp{Generator: serializer.Generator(), At: row.PublishedAt.Time,
 		Release: &serializer.Release{ID: ids.Encode(ids.Snapshot, row.ID.Bytes), Version: row.Version, Note: row.Note}}
@@ -210,9 +228,13 @@ func (s *Service) failure(ctx context.Context, row queries.Snapshot, why string,
 // ready, with its files, its report, and what its manifest says of it, or
 // failed, with o's code, and the report of the draft that the build read, if
 // it read one, which takes it away from the workspace's usage of snapshots,
-// since a failed snapshot is only the record of an attempt.
-func (s *Service) finish(ctx context.Context, workspaceID, snapshotID ids.UUID, o *outcome) error {
-	return s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
+// since a failed snapshot is only the record of an attempt. It reports
+// whether it changed the snapshot, which it does not to one that is no
+// longer building, or no longer exists.
+func (s *Service) finish(ctx context.Context, workspaceID, snapshotID ids.UUID, o *outcome) (bool, error) {
+	changed := false
+	err := s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
+		changed = false
 		q := queries.New(tx)
 		w, id := nullUUID(workspaceID), nullUUID(snapshotID)
 		row, err := q.SnapshotToBuild(ctx, queries.SnapshotToBuildParams{WorkspaceID: w, ID: id})
@@ -239,6 +261,7 @@ func (s *Service) finish(ctx context.Context, workspaceID, snapshotID ids.UUID, 
 				ValidationReport: report}); err != nil {
 				return fmt.Errorf("snapshot: fail the snapshot: %w", err)
 			}
+			changed = true
 			return usage.Record(ctx, tx, workspaceID, usage.Snapshots, -1)
 		}
 		paths := slices.Sorted(maps.Keys(o.files))
@@ -264,8 +287,10 @@ func (s *Service) finish(ctx context.Context, workspaceID, snapshotID ids.UUID, 
 			ContentHash: pgtype.Text{String: string(o.contentHash), Valid: true}, Counts: counts}); err != nil {
 			return fmt.Errorf("snapshot: make the snapshot ready: %w", err)
 		}
+		changed = true
 		return nil
 	})
+	return changed && err == nil, err
 }
 
 // hooks are what the tests run within a build (export_test.go): validated

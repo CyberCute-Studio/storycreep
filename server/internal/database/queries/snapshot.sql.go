@@ -83,7 +83,7 @@ INSERT INTO snapshot (id, workspace_id, project_id, version, version_major, vers
     acknowledged_seq, acknowledged_warnings, published_by)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
     $9, $10, $11)
-RETURNING published_at
+RETURNING id, workspace_id, project_id, version, version_major, version_minor, version_patch, note, status, failure_code, acknowledged_seq, acknowledged_warnings, source_seq, validation_report, schema_version, content_hash, counts, published_by, published_at, built_at
 `
 
 type InsertSnapshotParams struct {
@@ -100,9 +100,8 @@ type InsertSnapshotParams struct {
 	PublishedBy          pgtype.UUID
 }
 
-// InsertSnapshot adds a snapshot of a project, building, and returns when it
-// was published.
-func (q *Queries) InsertSnapshot(ctx context.Context, arg InsertSnapshotParams) (pgtype.Timestamptz, error) {
+// InsertSnapshot adds a snapshot of a project, building, and returns it.
+func (q *Queries) InsertSnapshot(ctx context.Context, arg InsertSnapshotParams) (Snapshot, error) {
 	row := q.db.QueryRow(ctx, insertSnapshot,
 		arg.ID,
 		arg.WorkspaceID,
@@ -116,9 +115,30 @@ func (q *Queries) InsertSnapshot(ctx context.Context, arg InsertSnapshotParams) 
 		arg.AcknowledgedWarnings,
 		arg.PublishedBy,
 	)
-	var published_at pgtype.Timestamptz
-	err := row.Scan(&published_at)
-	return published_at, err
+	var i Snapshot
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Version,
+		&i.VersionMajor,
+		&i.VersionMinor,
+		&i.VersionPatch,
+		&i.Note,
+		&i.Status,
+		&i.FailureCode,
+		&i.AcknowledgedSeq,
+		&i.AcknowledgedWarnings,
+		&i.SourceSeq,
+		&i.ValidationReport,
+		&i.SchemaVersion,
+		&i.ContentHash,
+		&i.Counts,
+		&i.PublishedBy,
+		&i.PublishedAt,
+		&i.BuiltAt,
+	)
+	return i, err
 }
 
 const insertSnapshotFiles = `-- name: InsertSnapshotFiles :exec
@@ -334,4 +354,71 @@ func (q *Queries) SnapshotToBuild(ctx context.Context, arg SnapshotToBuildParams
 		&i.BuiltAt,
 	)
 	return i, err
+}
+
+const snapshotToRead = `-- name: SnapshotToRead :one
+SELECT id, workspace_id, project_id, version, version_major, version_minor, version_patch, note, status, failure_code, acknowledged_seq, acknowledged_warnings, source_seq, validation_report, schema_version, content_hash, counts, published_by, published_at, built_at FROM snapshot WHERE workspace_id = $1 AND id = $2
+`
+
+type SnapshotToReadParams struct {
+	WorkspaceID pgtype.UUID
+	ID          pgtype.UUID
+}
+
+// SnapshotToRead returns a snapshot of the workspace, of any project, which
+// its build reads in the transaction that reads the draft, which only reads.
+func (q *Queries) SnapshotToRead(ctx context.Context, arg SnapshotToReadParams) (Snapshot, error) {
+	row := q.db.QueryRow(ctx, snapshotToRead, arg.WorkspaceID, arg.ID)
+	var i Snapshot
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Version,
+		&i.VersionMajor,
+		&i.VersionMinor,
+		&i.VersionPatch,
+		&i.Note,
+		&i.Status,
+		&i.FailureCode,
+		&i.AcknowledgedSeq,
+		&i.AcknowledgedWarnings,
+		&i.SourceSeq,
+		&i.ValidationReport,
+		&i.SchemaVersion,
+		&i.ContentHash,
+		&i.Counts,
+		&i.PublishedBy,
+		&i.PublishedAt,
+		&i.BuiltAt,
+	)
+	return i, err
+}
+
+const usersWithAccounts = `-- name: UsersWithAccounts :many
+SELECT id FROM "user" WHERE id = ANY($1::uuid[])
+`
+
+// UsersWithAccounts returns the users among user_ids that have an account,
+// whom a snapshot's stored report names as those who muted its findings, and
+// no longer names once their account is deleted, as the draft's report does
+// not, whose mutes the deletion's cascade takes their author from.
+func (q *Queries) UsersWithAccounts(ctx context.Context, userIds []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, usersWithAccounts, userIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

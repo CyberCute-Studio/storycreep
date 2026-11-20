@@ -3014,9 +3014,9 @@ export interface Proposal {
 export interface PublishInputBody {
   /** The seq of the validation report that the author validated, GET /api/v1/projects/{project_id}/validation's, which may not be past the project's operation sequence */
   acknowledged_seq: number;
-  /** The warnings of that report that the author acknowledged, each by its code, its entity, its field, and its target, as the report's finding has them. Publishing needs every warning of the draft that is not muted acknowledged. */
+  /** The warnings of that report that the author acknowledged, each by its code, its entity, its field, and its target, as the report's finding has them. Publishing needs every warning of the draft that is not muted acknowledged. The snapshot keeps those that name a warning of the draft as the publish gate validates it, each once. */
   acknowledged_warnings?: Array<Acknowledgement> | null;
-  /** The snapshot's changelog note, of 1 to 2,000 characters, without white space around it, its line breaks as line feeds, which the snapshot's manifest holds too (PRD FR-SNAP-01) */
+  /** The snapshot's changelog note, of 1 to 2,000 characters, not all of them blank, without white space around it, its line breaks as line feeds, which the snapshot's manifest holds too (PRD FR-SNAP-01) */
   note: string;
   /** The snapshot's version, MAJOR.MINOR.PATCH, each a number from 0 to 999,999,999 without a leading zero, which must be greater than every version of the project's snapshots that are building or ready. GET /api/v1/projects/{project_id}/snapshots/next-version proposes one. */
   version: string;
@@ -3584,7 +3584,7 @@ export interface UsageBody {
   nodes: MeteredUsageBody;
   /** The workspace's projects that count towards its limit: those that are neither archived nor in its trash */
   projects: LimitUsageBody;
-  /** The snapshots of the workspace's projects */
+  /** The snapshots of the workspace's projects that are building or ready; a failed one, only the record of an attempt, does not count */
   snapshots: MeteredUsageBody;
   /** The bytes that the workspace's stored files take up. Uploads that run at once may take it past its limit by what they add together. */
   storage_bytes: LimitUsageBody;

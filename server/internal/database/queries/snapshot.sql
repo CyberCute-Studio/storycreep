@@ -20,17 +20,21 @@ ORDER BY version_major DESC, version_minor DESC, version_patch DESC
 LIMIT 1;
 
 -- name: InsertSnapshot :one
--- InsertSnapshot adds a snapshot of a project, building, and returns when it
--- was published.
+-- InsertSnapshot adds a snapshot of a project, building, and returns it.
 INSERT INTO snapshot (id, workspace_id, project_id, version, version_major, version_minor, version_patch, note,
     acknowledged_seq, acknowledged_warnings, published_by)
 VALUES (@id, @workspace_id, @project_id, @version, @version_major, @version_minor, @version_patch, @note,
     @acknowledged_seq, @acknowledged_warnings, @published_by)
-RETURNING published_at;
+RETURNING *;
 
 -- name: Snapshot :one
 -- Snapshot returns a snapshot of the project, building, ready, or failed.
 SELECT * FROM snapshot WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id;
+
+-- name: SnapshotToRead :one
+-- SnapshotToRead returns a snapshot of the workspace, of any project, which
+-- its build reads in the transaction that reads the draft, which only reads.
+SELECT * FROM snapshot WHERE workspace_id = @workspace_id AND id = @id;
 
 -- name: SnapshotToBuild :one
 -- SnapshotToBuild returns a snapshot of the workspace, of any project, and
@@ -68,6 +72,13 @@ SELECT unnest(@ids::uuid[]), @workspace_id::uuid, @snapshot_id::uuid, unnest(@pa
 SELECT path, sha256, bytes FROM snapshot_file
 WHERE workspace_id = @workspace_id AND snapshot_id = @snapshot_id
 ORDER BY path;
+
+-- name: UsersWithAccounts :many
+-- UsersWithAccounts returns the users among user_ids that have an account,
+-- whom a snapshot's stored report names as those who muted its findings, and
+-- no longer names once their account is deleted, as the draft's report does
+-- not, whose mutes the deletion's cascade takes their author from.
+SELECT id FROM "user" WHERE id = ANY(@user_ids::uuid[]);
 
 -- name: SnapshotDrift :one
 -- SnapshotDrift returns how many snapshots the workspace's projects have that

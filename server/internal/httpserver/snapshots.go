@@ -19,12 +19,12 @@ type publishInput struct {
 	ProjectID string `path:"project_id" doc:"The project's ID"`
 	Body      struct {
 		Version string `json:"version" pattern:"^(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$" doc:"The snapshot's version, MAJOR.MINOR.PATCH, each a number from 0 to 999,999,999 without a leading zero, which must be greater than every version of the project's snapshots that are building or ready. GET /api/v1/projects/{project_id}/snapshots/next-version proposes one."`
-		Note    string `json:"note" minLength:"1" maxLength:"2000" doc:"The snapshot's changelog note, of 1 to 2,000 characters, without white space around it, its line breaks as line feeds, which the snapshot's manifest holds too (PRD FR-SNAP-01)"`
+		Note    string `json:"note" minLength:"1" maxLength:"2000" doc:"The snapshot's changelog note, of 1 to 2,000 characters, not all of them blank, without white space around it, its line breaks as line feeds, which the snapshot's manifest holds too (PRD FR-SNAP-01)"`
 		// AcknowledgedSeq and AcknowledgedWarnings are the report that the
 		// author validated, and the warnings of it that they acknowledged
 		// (PRD §7.3).
 		AcknowledgedSeq      int64                        `json:"acknowledged_seq" minimum:"0" doc:"The seq of the validation report that the author validated, GET /api/v1/projects/{project_id}/validation's, which may not be past the project's operation sequence"`
-		AcknowledgedWarnings []validation.Acknowledgement `json:"acknowledged_warnings,omitempty" doc:"The warnings of that report that the author acknowledged, each by its code, its entity, its field, and its target, as the report's finding has them. Publishing needs every warning of the draft that is not muted acknowledged."`
+		AcknowledgedWarnings []validation.Acknowledgement `json:"acknowledged_warnings,omitempty" doc:"The warnings of that report that the author acknowledged, each by its code, its entity, its field, and its target, as the report's finding has them. Publishing needs every warning of the draft that is not muted acknowledged. The snapshot keeps those that name a warning of the draft as the publish gate validates it, each once."`
 	}
 }
 

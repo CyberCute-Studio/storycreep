@@ -562,6 +562,9 @@ func TestPublishGate(t *testing.T) {
 			"version"},
 		{"no note", snapshot.Request{Version: "2.0.0", AcknowledgedSeq: r.Seq}, "note"},
 		{"a blank note", snapshot.Request{Version: "2.0.0", Note: " ", AcknowledgedSeq: r.Seq}, "note"},
+		{"an invisible note", snapshot.Request{Version: "2.0.0", Note: "\u200b", AcknowledgedSeq: r.Seq}, "note"},
+		{"a filler note", snapshot.Request{Version: "2.0.0", Note: "\u3164\u3164", AcknowledgedSeq: r.Seq},
+			"note"},
 		{"a long note", snapshot.Request{Version: "2.0.0", Note: strings.Repeat("a", snapshot.MaxNoteLength+1),
 			AcknowledgedSeq: r.Seq}, "note"},
 		{"a future seq", snapshot.Request{Version: "2.0.0", Note: "Lamp", AcknowledgedSeq: r.Seq + 1,
@@ -576,6 +579,151 @@ func TestPublishGate(t *testing.T) {
 	var made int
 	if err := e.d.Admin(t).QueryRow(ctx, "SELECT count(*) FROM snapshot").Scan(&made); err != nil || made != 1 {
 		t.Errorf("the refusals left %d snapshots, %v; want the one publication's", made, err)
+	}
+}
+
+// TestAcknowledgementsKept checks that a snapshot keeps, of the warnings that
+// its publication acknowledges, those of the draft that the publish gate
+// validated, each once, in the order of its report, and none that names
+// nothing of the draft.
+func TestAcknowledgementsKept(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	e := newEnv(t)
+	s := e.newStory(t)
+	e.apply(t, "node.create", map[string]any{"id": id(ids.Node), "board_id": s.board, "type": "element",
+		"kind": "narration", "title": "Lighthouse", "text": text("The lamp is dark."),
+		"position": map[string]any{"x": 0, "y": 400}})
+	r := e.stored(t)
+	acks := acknowledged(r)
+	if len(acks) < 2 {
+		t.Fatalf("the draft warns of %+v, want of the stray node and the board", acks)
+	}
+	request := append(slices.Clone(acks), acks[0],
+		validation.Acknowledgement{Code: validation.DeadEnd, EntityID: id(ids.Node)})
+	slices.Reverse(request)
+	p, err := e.snapshots.Publish(ctx, e.actor(), e.project, snapshot.Request{Version: "1.0.0", Note: "Lamp",
+		AcknowledgedSeq: r.Seq, AcknowledgedWarnings: request})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data []byte
+	if err := e.d.Admin(t).QueryRow(ctx, "SELECT acknowledged_warnings FROM snapshot WHERE id = $1",
+		snapshotID(t, p)).Scan(&data); err != nil {
+		t.Fatal(err)
+	}
+	var kept []validation.Acknowledgement
+	if err := json.Unmarshal(data, &kept); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := mustJSON(t, kept), mustJSON(t, acks); got != want {
+		t.Errorf("the snapshot keeps the acknowledgements %s, want the draft's warnings', %s", got, want)
+	}
+	if b := e.build(t, p); b.Status != snapshot.Ready {
+		t.Errorf("the snapshot is %+v, want ready", b)
+	}
+}
+
+// TestLastAttempt checks that every attempt at a build's job but the last
+// builds the snapshot, and that the last does not, but fails the snapshot
+// with build_failed, without a report, and takes it from the workspace's
+// usage of snapshots, so that no build that failed on every attempt before,
+// as one whose time ran out each time, leaves its snapshot building once its
+// job ends; and that the last changes nothing of a snapshot that is built.
+func TestLastAttempt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	e := newEnv(t)
+	e.newStory(t)
+	s := e.mustPublish(t, "1.0.0")
+	if err := e.snapshots.Work(ctx, e.workspace, snapshotID(t, s), 25, 25); err == nil {
+		t.Error("the last attempt ends without an error, want one that ends its job")
+	}
+	f := e.get(t, s)
+	if f.Status != snapshot.Failed || f.FailureCode != snapshot.FailureBuild || f.SourceSeq != nil ||
+		f.BuiltAt == nil {
+		t.Fatalf("the snapshot is %+v once its job's last attempt ran, want failed with build_failed, without "+
+			"a report", f)
+	}
+	if _, _, err := e.snapshots.Report(ctx, e.actor(), e.project, snapshotID(t, s)); !errors.Is(err,
+		snapshot.ErrNotFound) {
+		t.Errorf("the failed snapshot's report answers %v, want not found", err)
+	}
+	if got := e.snapshotsUsage(t); got != 0 {
+		t.Errorf("the workspace's usage of snapshots is %d once the snapshot failed, want 0", got)
+	}
+	r := e.mustPublish(t, "1.0.0")
+	if err := e.snapshots.Work(ctx, e.workspace, snapshotID(t, r), 24, 25); err != nil {
+		t.Fatal(err)
+	}
+	b := e.get(t, r)
+	if b.Status != snapshot.Ready {
+		t.Fatalf("the snapshot is %+v once the attempt before its job's last ran, want ready", b)
+	}
+	if err := e.snapshots.Work(ctx, e.workspace, snapshotID(t, r), 25, 25); err != nil {
+		t.Errorf("the last attempt at a built snapshot's job answers %v, want nothing", err)
+	}
+	if again := e.get(t, r); again.Status != snapshot.Ready || !again.BuiltAt.Equal(*b.BuiltAt) {
+		t.Errorf("the last attempt made the built snapshot %+v", again)
+	}
+}
+
+// TestReportForgetsWhoMuted checks that a snapshot's stored report names who
+// muted a finding while their account exists, and no longer once it is
+// deleted, as the draft's report does, although the snapshot, which never
+// changes, keeps their ID.
+func TestReportForgetsWhoMuted(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	e := newEnv(t)
+	s := e.newStory(t)
+	e.apply(t, "node.create", map[string]any{"id": id(ids.Node), "board_id": s.board, "type": "element",
+		"kind": "narration", "title": "Lighthouse", "text": text("The lamp is dark."),
+		"position": map[string]any{"x": 0, "y": 400}})
+	warning := e.stored(t).Unacknowledged(nil)[0]
+	e.apply(t, "validation.mute", map[string]any{"entity_id": warning.EntityID, "code": warning.Code,
+		"reason": "The lighthouse is a set piece."})
+	b := e.build(t, e.mustPublish(t, "1.0.0"))
+	if b.Status != snapshot.Ready {
+		t.Fatalf("the snapshot is %+v, want ready", b)
+	}
+	// Another owner of the workspace reads the report once the first's
+	// account is deleted.
+	reader, admin := ids.New(), e.d.Admin(t)
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO "user" (id, email, display_name) VALUES ($1, 'tomas@example.com', 'Tomas')`, []any{reader}},
+		{`INSERT INTO membership (id, workspace_id, user_id, role) VALUES ($1, $2, $3, 'owner')`,
+			[]any{ids.New(), e.workspace, reader}},
+	} {
+		if _, err := admin.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mutedBy := func() string {
+		t.Helper()
+		r, _, err := e.snapshots.Report(ctx, commands.Actor{UserID: reader}, e.project, snapshotID(t, b))
+		if err != nil || len(r.Muted) != 1 || r.Muted[0].Mute == nil {
+			t.Fatalf("the snapshot's report mutes %+v, %v; want the warning", r.Muted, err)
+		}
+		return r.Muted[0].Mute.MutedBy
+	}
+	owner := ids.Encode(ids.User, e.owner)
+	if got := mutedBy(); got != owner {
+		t.Errorf("the report names %q as who muted the warning, want its owner, %s", got, owner)
+	}
+	if _, err := admin.Exec(ctx, `DELETE FROM "user" WHERE id = $1`, e.owner); err != nil {
+		t.Fatalf("the deletion of the owner's account: %v", err)
+	}
+	if got := mutedBy(); got != "" {
+		t.Errorf("the report names %q as who muted the warning once their account is deleted, want no one", got)
+	}
+	if f := e.report(t, b).Findings; !slices.ContainsFunc(f, func(f validation.StoredFinding) bool {
+		return f.Mute != nil && f.Mute.MutedBy == owner
+	}) {
+		t.Errorf("the stored report holds %+v, want it as it was, with the owner's ID", f)
 	}
 }
 
