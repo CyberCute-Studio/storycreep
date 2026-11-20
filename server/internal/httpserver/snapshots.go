@@ -3,7 +3,9 @@ package httpserver
 import (
 	"context"
 	"errors"
+	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -11,6 +13,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/schemaversion"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 	"github.com/CyberCute-Studio/storycreep/server/internal/snapshot"
 	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
@@ -59,14 +62,151 @@ type nextVersionOutput struct {
 	Body snapshot.Proposal
 }
 
+type snapshotsInput struct {
+	ProjectID string `path:"project_id" doc:"The project's ID"`
+	Status    string `query:"status" enum:"building,ready,failed" doc:"A status: only the snapshots of that status are listed, as ready for the project's releases, the newest first. Without it, those of every status."`
+	api.PageParams
+}
+
+type snapshotsOutput struct {
+	Body api.Page[snapshot.Snapshot]
+}
+
+// exportInput and draftExportInput take, as schema, the version of the
+// published format that an export is rendered at, or 0, which no request may
+// ask for, for the files' own.
+type exportInput struct {
+	ProjectID  string `path:"project_id" doc:"The project's ID"`
+	SnapshotID string `path:"snapshot_id" doc:"The snapshot's ID"`
+	Schema     int    `query:"schema" minimum:"1" doc:"The version of the published game format, its schemaVersion, that the files are rendered at: one of the versions that the server reads, which /version declares as published_schema, as the newest that the client reads too. Without it, the snapshot's own version."`
+}
+
+type draftExportInput struct {
+	ProjectID string `path:"project_id" doc:"The project's ID"`
+	Schema    int    `query:"schema" minimum:"1" doc:"The version of the published game format, its schemaVersion, that the files are rendered at: one of the versions that the server reads, which /version declares as published_schema, as the newest that the client reads too. Without it, the version that the server writes."`
+}
+
 // snapshotNotFoundDoc says, in the description of an operation on a
 // snapshot, how a snapshot that the project lacks is answered.
 const snapshotNotFoundDoc = " A snapshot that the project does not have is answered with 404 not_found."
 
+// exportDoc says, in the description of an export, what the zip holds, and
+// how a version of the published format that it cannot be rendered at is
+// answered.
+const exportDoc = " The zip holds a member of each file of the published layout (PRD §6.3), at its path, as " +
+	"storycreep.json or boards/harbour-intro.json, in the order of their paths, with no member of a directory, " +
+	"which the manifest lists with each file's SHA-256, and Content-Disposition names it, as an attachment. The " +
+	"same files always make the same zip. Asked with schema, the files are rendered at that version of the " +
+	"published format: down to an older version by the renderer of each version between, or up to a newer one by " +
+	"the migration to each, and they validate against that version's JSON Schemas (PRD FR-SYNC-01 AC2), with " +
+	"the manifest's hashes and content hash those of the files at that version. A version that the server does " +
+	"not read is answered with 409 schema_unsupported, with details.min and details.max, the oldest and the " +
+	"newest that it reads (AC3), and an older version that cannot express what the files hold with 409 " +
+	"schema_unrepresentable, which lists each value that it cannot express, so that nothing is dropped silently " +
+	"(PRD §6.4)."
+
 // registerSnapshots registers the routes that publish a project's draft as a
-// snapshot, a release, and read a snapshot (PRD FR-SNAP-01, FR-DEP-04). The
-// list of a project's snapshots, and their files, are item 79's.
+// snapshot, a release, list and read its snapshots, and export a snapshot's
+// files and the draft's as a zip of the published layout (PRD FR-SNAP-01,
+// FR-SNAP-02, FR-DEP-04, FR-SYNC-01).
 func registerSnapshots(m *api.Mux, snapshots *snapshot.Service) {
+	api.Register(m, api.ReadProject, huma.Operation{
+		OperationID: "listSnapshots",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/projects/{project_id}/snapshots",
+		Summary:     "List a project's snapshots",
+		Description: "Lists the project's snapshots, its releases, newest first, by their IDs, which follow the order " +
+			"in which they were published (PRD FR-SNAP-02), each with its metadata, as GET " +
+			"/api/v1/projects/{project_id}/snapshots/{snapshot_id} returns it: its version, its note, who published " +
+			"it and when, with their display name as it is now, and where it is in its lifecycle, building, ready, " +
+			"with its content hash, its schema version, and its entity counts, or failed, with its failure_code. " +
+			"With status, only the snapshots of that status are listed: a client that checks whether a newer " +
+			"release exists reads the newest ready one, with status=ready and limit=1 (PRD §7.5), whose version is " +
+			"the greatest of the project's releases." + projectNotFoundDoc + tokenNotFoundDoc +
+			tokenAuthDoc(scope.SnapshotRead),
+		Tags: []string{"Snapshots"},
+	}, func(ctx context.Context, in *snapshotsInput) (*snapshotsOutput, error) {
+		id, actor, err := projectActor(ctx, in.ProjectID)
+		if err != nil {
+			return nil, err
+		}
+		after, err := cursorID(in.Cursor)
+		if err != nil {
+			return nil, err
+		}
+		list, err := snapshots.List(ctx, actor, id, snapshot.Status(in.Status), after, in.Fetch())
+		if err != nil {
+			return nil, snapshotError(ctx, err)
+		}
+		page, err := api.NewPage(in.PageParams, list, func(s snapshot.Snapshot) idKey {
+			return uuidKey(ids.Snapshot, s.ID)
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &snapshotsOutput{Body: page}, nil
+	}, api.TokenScope(scope.SnapshotRead))
+
+	api.Register(m, api.ReadProject, huma.Operation{
+		OperationID: "exportSnapshot",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/projects/{project_id}/snapshots/{snapshot_id}/export",
+		Summary:     "Export a snapshot",
+		Description: "Returns a ready snapshot's files as a zip of the published layout, at the version of the " +
+			"published game format that schema asks for, or, without it, at the snapshot's own version, as its " +
+			"schema_version names it, the files that its build stored, byte for byte (PRD FR-SNAP-02, FR-SYNC-01 " +
+			"AC1): what a game pulls (PRD §7.5), and what a release's download is. A snapshot that is building, or " +
+			"that failed, has no files, and is answered with 409 snapshot_not_ready, whose details.status says " +
+			"which." + exportDoc + projectNotFoundDoc + tokenNotFoundDoc + snapshotNotFoundDoc +
+			tokenAuthDoc(scope.SnapshotRead),
+		Tags:      []string{"Snapshots"},
+		Responses: exportResponses("The snapshot's files, as a zip of the published layout"),
+	}, func(ctx context.Context, in *exportInput) (*huma.StreamResponse, error) {
+		id, actor, err := projectActor(ctx, in.ProjectID)
+		if err != nil {
+			return nil, err
+		}
+		snapshotID, err := ids.Decode(ids.Snapshot, in.SnapshotID)
+		if err != nil {
+			return nil, err
+		}
+		e, err := snapshots.Export(ctx, actor, id, snapshotID, in.Schema)
+		if err != nil {
+			return nil, snapshotError(ctx, err)
+		}
+		return serveExport(e)
+	}, api.TokenScope(scope.SnapshotRead), api.RateLimit(api.BucketExport))
+
+	api.Register(m, api.ReadProject, huma.Operation{
+		OperationID: "exportDraft",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/projects/{project_id}/draft/export",
+		Summary:     "Export the draft",
+		Description: "Returns the files of the project's draft as it is now, as a zip of the published layout, at " +
+			"the version of the published game format that schema asks for, or, without it, at the version that " +
+			"the server writes, read as of one moment (PRD FR-SYNC-01, §7.8), as a game's draft pull fetches it. " +
+			"It is always marked as the draft's: its manifest's snapshot has the channel draft, the draft's " +
+			"content hash, and when it was exported, as pulledAt, and neither an ID nor a version, which a draft " +
+			"has none of, and Content-Disposition names it as the draft's. What the draft holds that no release " +
+			"may, as a condition that does not compile, it stands in for as play mode does, so that it is " +
+			"exported whatever validation would say of publishing it. The draft is not a release, so an API " +
+			"token needs project:read, and one that holds snapshot:read alone is answered with 403 " +
+			"insufficient_scope (PRD FR-SYNC-01 AC4)." + exportDoc + projectNotFoundDoc + tokenNotFoundDoc +
+			tokenAuthDoc(scope.ProjectRead),
+		Tags:      []string{"Snapshots"},
+		Responses: exportResponses("The draft's files, as a zip of the published layout"),
+	}, func(ctx context.Context, in *draftExportInput) (*huma.StreamResponse, error) {
+		id, actor, err := projectActor(ctx, in.ProjectID)
+		if err != nil {
+			return nil, err
+		}
+		e, err := snapshots.ExportDraft(ctx, actor, id, in.Schema)
+		if err != nil {
+			return nil, snapshotError(ctx, err)
+		}
+		return serveExport(e)
+	}, api.TokenScope(scope.ProjectRead), api.RateLimit(api.BucketExport))
+
 	api.Register(m, api.PublishSnapshots, huma.Operation{
 		OperationID: "publishSnapshot",
 		Method:      http.MethodPost,
@@ -192,17 +332,79 @@ func snapshotPath(s snapshot.Snapshot) string {
 	return "/api/v1/projects/" + s.ProjectID + "/snapshots/" + s.ID
 }
 
+// zipType is the media type of an export, a zip of the published layout.
+const zipType = "application/zip"
+
+// exportResponses documents the answer of an export, whose zip doc
+// describes.
+func exportResponses(doc string) map[string]*huma.Response {
+	header := func(doc string) *huma.Header {
+		return &huma.Header{Schema: &huma.Schema{Type: huma.TypeString, Description: doc}}
+	}
+	return map[string]*huma.Response{"200": {
+		Description: doc,
+		Headers: map[string]*huma.Header{
+			"Content-Disposition":    header("attachment, with the zip's name: the project's slug and the snapshot's version, or draft, as harbour-1.0.0.zip"),
+			"X-Content-Type-Options": header("nosniff"),
+		},
+		Content: map[string]*huma.MediaType{zipType: {Schema: &huma.Schema{Type: huma.TypeString, Format: "binary"}}},
+	}}
+}
+
+// serveExport answers with the zip of the export e, whose length it gives,
+// as an attachment named as e is, and with the zip alone to a GET, which a
+// HEAD request, which the route answers as GET (middleware.GetHead), is
+// answered without.
+func serveExport(e snapshot.Export) (*huma.StreamResponse, error) {
+	data, err := e.Zip()
+	if err != nil {
+		return nil, err
+	}
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": e.Name})
+	return &huma.StreamResponse{Body: func(hc huma.Context) {
+		hc.SetHeader("Content-Type", zipType)
+		hc.SetHeader("Content-Length", strconv.Itoa(len(data)))
+		hc.SetHeader("Content-Disposition", disposition)
+		hc.SetHeader("X-Content-Type-Options", "nosniff")
+		hc.SetStatus(http.StatusOK)
+		if hc.Method() == http.MethodHead {
+			return
+		}
+		// The status and the headers are sent, so a failure from here on can
+		// only end the answer early, which the client sees as a body shorter
+		// than its Content-Length.
+		_, _ = hc.BodyWriter().Write(data)
+	}}, nil
+}
+
 // snapshotError returns the error that the API answers err with, an error of
-// package snapshot or of the project that it publishes (projectError), or
-// err itself if it is none of them. The findings of a refusal of the publish
-// gate are in the locale of ctx's localizer, as the report's are.
+// package snapshot, of the versions of the published format that it exports
+// at (package schemaversion), or of the project that it publishes
+// (projectError), or err itself if it is none of them. The findings of a
+// refusal of the publish gate are in the locale of ctx's localizer, as the
+// report's are.
 func snapshotError(ctx context.Context, err error) error {
 	var blocked *snapshot.BlockedError
 	var unacknowledged *snapshot.UnacknowledgedError
 	var notNewer *snapshot.NotNewerError
+	var notReady *snapshot.NotReadyError
+	var unsupported *schemaversion.UnsupportedError
+	var unrepresentable *schemaversion.UnrepresentableError
 	switch {
 	case errors.Is(err, snapshot.ErrNotFound):
 		return api.NewError(api.CodeNotFound)
+	case errors.As(err, &notReady):
+		return &api.Error{Code: api.CodeSnapshotNotReady, Details: map[string]any{"status": notReady.Status}}
+	case errors.As(err, &unsupported):
+		return &api.Error{Code: api.CodeSchemaUnsupported, Details: map[string]any{
+			"min": unsupported.Supported.Min, "max": unsupported.Supported.Max}}
+	case errors.As(err, &unrepresentable):
+		constructs := make([]unrepresentableConstruct, len(unrepresentable.Constructs))
+		for i, c := range unrepresentable.Constructs {
+			constructs[i] = unrepresentableConstruct{File: c.File, Entity: c.Entity, Field: c.Field, Message: c.Why}
+		}
+		return &api.Error{Code: api.CodeSchemaUnrepresentable, Details: map[string]any{"schema": unrepresentable.To,
+			"constructs": constructs}}
 	case errors.As(err, &blocked):
 		return gateError(ctx, api.CodePublishBlocked, blocked.Report)
 	case errors.As(err, &unacknowledged):
@@ -217,6 +419,18 @@ func snapshotError(ctx context.Context, err error) error {
 		return &api.Error{Code: api.CodeVersionNotNewer, Details: details}
 	}
 	return projectError(err)
+}
+
+// unrepresentableConstruct is a value that an older version of the published
+// format cannot express, as an answer of schema_unrepresentable lists it
+// (schemaversion.Construct): its file, its entity's ID, which a value of the
+// file's own has none of, its field, and why, in English, as the renderer
+// says.
+type unrepresentableConstruct struct {
+	File    string `json:"file"`
+	Entity  string `json:"entity,omitempty"`
+	Field   string `json:"field"`
+	Message string `json:"message"`
 }
 
 // gateError returns the error of the code that the publish gate refuses a

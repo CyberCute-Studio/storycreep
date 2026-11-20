@@ -2592,6 +2592,12 @@ export interface PageSessionBody {
   next_cursor: string | null;
 }
 
+export interface PageSnapshot {
+  items: Array<Snapshot>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
 export interface PageSummary {
   items: Array<Summary>;
   /** The cursor of the next page, or null if this is the last page */
@@ -3397,6 +3403,8 @@ export interface Snapshot {
   published_at: string;
   /** The ID of the user who published it, whom it no longer names once their account is deleted */
   published_by?: string;
+  /** The display name of the user who published it, as it is now, which none of its files holds (PRD §6.2): a snapshot whose publisher's account is deleted has none, and a client shows it as a former member's */
+  published_by_name?: string;
   /** The version of the published format that its files are of, which a ready snapshot has */
   schema_version?: number;
   /** The project's operation sequence as of the draft that its build read, validated, and serialized, of which its stored report and its files are (PRD FR-DEP-04 AC4), which a ready snapshot has, and a failed one whose build read the draft */
@@ -4217,6 +4225,48 @@ export interface Operations {
     };
     responses: {
       204: undefined;
+    };
+  };
+  /**
+   * Export the draft
+   *
+   * Returns the files of the project's draft as it is now, as a zip of the published layout, at the version of the published game format that schema asks for, or, without it, at the version that the server writes, read as of one moment (PRD FR-SYNC-01, §7.8), as a game's draft pull fetches it. It is always marked as the draft's: its manifest's snapshot has the channel draft, the draft's content hash, and when it was exported, as pulledAt, and neither an ID nor a version, which a draft has none of, and Content-Disposition names it as the draft's. What the draft holds that no release may, as a condition that does not compile, it stands in for as play mode does, so that it is exported whatever validation would say of publishing it. The draft is not a release, so an API token needs project:read, and one that holds snapshot:read alone is answered with 403 insufficient_scope (PRD FR-SYNC-01 AC4). The zip holds a member of each file of the published layout (PRD §6.3), at its path, as storycreep.json or boards/harbour-intro.json, in the order of their paths, with no member of a directory, which the manifest lists with each file's SHA-256, and Content-Disposition names it, as an attachment. The same files always make the same zip. Asked with schema, the files are rendered at that version of the published format: down to an older version by the renderer of each version between, or up to a newer one by the migration to each, and they validate against that version's JSON Schemas (PRD FR-SYNC-01 AC2), with the manifest's hashes and content hash those of the files at that version. A version that the server does not read is answered with 409 schema_unsupported, with details.min and details.max, the oldest and the newest that it reads (AC3), and an older version that cannot express what the files hold with 409 schema_unrepresentable, which lists each value that it cannot express, so that nothing is dropped silently (PRD §6.4). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Exports share a rate limit of 60 an hour for each IP address, 30 for each account, and 30 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.
+   */
+  exportDraft: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The version of the published game format, its schemaVersion, that the files are rendered at: one of the versions that the server reads, which /version declares as published_schema, as the newest that the client reads too. Without it, the version that the server writes. */
+        schema?: number;
+      };
+    };
+    responses: {
+      200: Blob;
+    };
+  };
+  /**
+   * Export a snapshot
+   *
+   * Returns a ready snapshot's files as a zip of the published layout, at the version of the published game format that schema asks for, or, without it, at the snapshot's own version, as its schema_version names it, the files that its build stored, byte for byte (PRD FR-SNAP-02, FR-SYNC-01 AC1): what a game pulls (PRD §7.5), and what a release's download is. A snapshot that is building, or that failed, has no files, and is answered with 409 snapshot_not_ready, whose details.status says which. The zip holds a member of each file of the published layout (PRD §6.3), at its path, as storycreep.json or boards/harbour-intro.json, in the order of their paths, with no member of a directory, which the manifest lists with each file's SHA-256, and Content-Disposition names it, as an attachment. The same files always make the same zip. Asked with schema, the files are rendered at that version of the published format: down to an older version by the renderer of each version between, or up to a newer one by the migration to each, and they validate against that version's JSON Schemas (PRD FR-SYNC-01 AC2), with the manifest's hashes and content hash those of the files at that version. A version that the server does not read is answered with 409 schema_unsupported, with details.min and details.max, the oldest and the newest that it reads (AC3), and an older version that cannot express what the files hold with 409 schema_unrepresentable, which lists each value that it cannot express, so that nothing is dropped silently (PRD §6.4). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A snapshot that the project does not have is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope snapshot:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Exports share a rate limit of 60 an hour for each IP address, 30 for each account, and 30 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.
+   */
+  exportSnapshot: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+        /** The snapshot's ID */
+        snapshot_id: string;
+      };
+      query?: {
+        /** The version of the published game format, its schemaVersion, that the files are rendered at: one of the versions that the server reads, which /version declares as published_schema, as the newest that the client reads too. Without it, the snapshot's own version. */
+        schema?: number;
+      };
+    };
+    responses: {
+      200: Blob;
     };
   };
   /**
@@ -5210,6 +5260,30 @@ export interface Operations {
     };
   };
   /**
+   * List a project's snapshots
+   *
+   * Lists the project's snapshots, its releases, newest first, by their IDs, which follow the order in which they were published (PRD FR-SNAP-02), each with its metadata, as GET /api/v1/projects/{project_id}/snapshots/{snapshot_id} returns it: its version, its note, who published it and when, with their display name as it is now, and where it is in its lifecycle, building, ready, with its content hash, its schema version, and its entity counts, or failed, with its failure_code. With status, only the snapshots of that status are listed: a client that checks whether a newer release exists reads the newest ready one, with status=ready and limit=1 (PRD §7.5), whose version is the greatest of the project's releases. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope snapshot:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listSnapshots: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+        /** A status: only the snapshots of that status are listed, as ready for the project's releases, the newest first. Without it, those of every status. */
+        status?: "building" | "ready" | "failed";
+      };
+    };
+    responses: {
+      200: PageSnapshot;
+    };
+  };
+  /**
    * Suggest a project's tags
    *
    * Lists the tags of the project's nodes that are not in its trash that start with the prefix, compared without regard to case, as tags are, each once, as the most of the nodes that have it write it, with how many nodes have it, the most used first, so that a client suggests the spelling that the project uses as a tag is typed (PRD FR-EDIT-06). They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type node.* create, change, move, duplicate, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
@@ -6032,6 +6106,8 @@ export const routes = {
   createWorkspace: { method: "POST", path: "/api/v1/workspaces" },
   createWorkspaceToken: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/tokens" },
   deleteProject: { method: "DELETE", path: "/api/v1/projects/{project_id}" },
+  exportDraft: { method: "GET", path: "/api/v1/projects/{project_id}/draft/export", blob: true },
+  exportSnapshot: { method: "GET", path: "/api/v1/projects/{project_id}/snapshots/{snapshot_id}/export", blob: true },
   getAccount: { method: "GET", path: "/api/v1/auth/account" },
   getAsset: { method: "GET", path: "/api/v1/projects/{project_id}/assets/{asset_id}" },
   getAssetContent: { method: "GET", path: "/api/v1/projects/{project_id}/assets/{asset_id}/content", blob: true },
@@ -6083,6 +6159,7 @@ export const routes = {
   listProjectTokens: { method: "GET", path: "/api/v1/projects/{project_id}/tokens" },
   listProjects: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/projects" },
   listSessions: { method: "GET", path: "/api/v1/auth/sessions" },
+  listSnapshots: { method: "GET", path: "/api/v1/projects/{project_id}/snapshots" },
   listTags: { method: "GET", path: "/api/v1/projects/{project_id}/tags" },
   listTrash: { method: "GET", path: "/api/v1/projects/{project_id}/trash" },
   listTrashedProjects: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/trash/projects" },

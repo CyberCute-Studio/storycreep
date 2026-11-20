@@ -19,24 +19,51 @@ WHERE workspace_id = @workspace_id AND project_id = @project_id AND status <> 'f
 ORDER BY version_major DESC, version_minor DESC, version_patch DESC
 LIMIT 1;
 
--- name: InsertSnapshot :one
--- InsertSnapshot adds a snapshot of a project, building, and returns it as
--- Snapshot does, without the acknowledged warnings that it was given.
+-- name: InsertSnapshot :exec
+-- InsertSnapshot adds a snapshot of a project, building, which Snapshot
+-- then reads as the API shows it.
 INSERT INTO snapshot (id, workspace_id, project_id, version, version_major, version_minor, version_patch, note,
     acknowledged_seq, acknowledged_warnings, published_by)
 VALUES (@id, @workspace_id, @project_id, @version, @version_major, @version_minor, @version_patch, @note,
-    @acknowledged_seq, @acknowledged_warnings, @published_by)
-RETURNING id, project_id, version, note, status, failure_code, acknowledged_seq, source_seq, schema_version,
-    content_hash, counts, published_by, published_at, built_at;
+    @acknowledged_seq, @acknowledged_warnings, @published_by);
 
 -- name: Snapshot :one
 -- Snapshot returns a snapshot of the project, building, ready, or failed,
 -- but for its acknowledged warnings and its report, which the API shows
--- nothing of with it, and which may be megabytes of a large draft's:
--- InsertSnapshot returns the same columns.
-SELECT id, project_id, version, note, status, failure_code, acknowledged_seq, source_seq, schema_version,
-    content_hash, counts, published_by, published_at, built_at
-FROM snapshot WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id;
+-- nothing of with it, and which may be megabytes of a large draft's, with
+-- the display name of its publisher as it is now (PRD §6.2), which a
+-- snapshot whose publisher's account is deleted has none of: Snapshots
+-- returns the same columns.
+SELECT s.id, s.project_id, s.version, s.note, s.status, s.failure_code, s.acknowledged_seq, s.source_seq,
+    s.schema_version, s.content_hash, s.counts, s.published_by, s.published_at, s.built_at,
+    u.display_name AS published_by_name
+FROM snapshot s LEFT JOIN "user" u ON u.id = s.published_by
+WHERE s.workspace_id = @workspace_id AND s.project_id = @project_id AND s.id = @id;
+
+-- name: Snapshots :many
+-- Snapshots returns a page of the project's snapshots, as Snapshot returns
+-- each, newest first, by their IDs, which follow the order in which they
+-- were published, those of the status alone, or of every status for a null
+-- one, after the snapshot of the ID after in that order, or from the newest
+-- for a null one (PRD FR-SNAP-02). The key (workspace_id, project_id, id)
+-- reads them in that order.
+SELECT s.id, s.project_id, s.version, s.note, s.status, s.failure_code, s.acknowledged_seq, s.source_seq,
+    s.schema_version, s.content_hash, s.counts, s.published_by, s.published_at, s.built_at,
+    u.display_name AS published_by_name
+FROM snapshot s LEFT JOIN "user" u ON u.id = s.published_by
+WHERE s.workspace_id = @workspace_id AND s.project_id = @project_id
+    AND (sqlc.narg(status)::text IS NULL OR s.status = sqlc.narg(status)::text)
+    AND (sqlc.narg(after)::uuid IS NULL OR s.id < sqlc.narg(after)::uuid)
+ORDER BY s.id DESC
+LIMIT @row_limit;
+
+-- name: SnapshotFiles :many
+-- SnapshotFiles returns the files of a snapshot of the workspace, each by its
+-- path, with its bytes, in the order of their paths, which a ready snapshot
+-- has, and a building or failed one has none of.
+SELECT path, bytes FROM snapshot_file
+WHERE workspace_id = @workspace_id AND snapshot_id = @snapshot_id
+ORDER BY path;
 
 -- name: SnapshotReport :one
 -- SnapshotReport returns the report that the build of a snapshot of the

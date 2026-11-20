@@ -70,6 +70,9 @@ const (
 	CodePublishBlocked         Code = "publish_blocked"
 	CodeWarningsUnacknowledged Code = "warnings_unacknowledged"
 	CodeVersionNotNewer        Code = "version_not_newer"
+	CodeSnapshotNotReady       Code = "snapshot_not_ready"
+	CodeSchemaUnsupported      Code = "schema_unsupported"
+	CodeSchemaUnrepresentable  Code = "schema_unrepresentable"
 	CodeIdempotencyMismatch    Code = "idempotency_mismatch"
 	CodeInviteExpired          Code = "invite_expired"
 	CodeInviteRevoked          Code = "invite_revoked"
@@ -390,6 +393,25 @@ var codes = []codeSpec{
 			"be published again. `details.latest_version` is the newest version, and `details.proposed_version` " +
 			"its patch bump, which `GET /api/v1/projects/{project_id}/snapshots/next-version` proposes too. " +
 			"`details.errors` names the field, with its `location` and a `message`, as for `validation_failed`."},
+	{CodeSnapshotNotReady, http.StatusConflict, i18n.K("error.snapshot_not_ready"),
+		"The snapshot is not ready, and only a ready snapshot has files to export (PRD FR-SYNC-01, §7.3): " +
+			"`GET /api/v1/projects/{project_id}/snapshots/{snapshot_id}/export` was asked for a snapshot that is " +
+			"`building`, whose build has not ended yet, or `failed`, which never has files. `details.status` is " +
+			"the snapshot's status: a client waits for a building snapshot's build, reading the snapshot until " +
+			"its status changes, and gives up on a failed one."},
+	{CodeSchemaUnsupported, http.StatusConflict, i18n.K("error.schema_unsupported"),
+		"The export was asked for a version of the published game format, its `schemaVersion`, that the server " +
+			"does not read, so it cannot render the files at it (PRD FR-SYNC-01 AC3, §6.4). `details.min` and " +
+			"`details.max` are the oldest and the newest versions that the server reads, which `/version` " +
+			"declares as `published_schema`: ask for one of them, the newest that the client reads too, or " +
+			"upgrade whichever side reads none in common (FR-SYNC-07)."},
+	{CodeSchemaUnrepresentable, http.StatusConflict, i18n.K("error.schema_unrepresentable"),
+		"The export was asked for an older version of the published game format that cannot express what the " +
+			"snapshot, or the draft, holds, so it is not rendered at that version, and nothing of it is dropped " +
+			"silently (PRD §6.4, FR-DATA-03 AC3). `details.schema` is the version asked for, and " +
+			"`details.constructs` lists each value that it cannot express, in the order of their files' paths: " +
+			"its `file`, its `entity`'s ID, which a value of the file's own has none of, its `field`, and a " +
+			"`message` that says why, in English. Ask for a newer version, or change the content."},
 	{CodeInviteExpired, http.StatusGone, i18n.K("error.invite_expired"),
 		"The invitation has expired: it lasts 14 days from when it was made, sent anew, or emailed (PRD " +
 			"FR-TEN-02 AC1). An owner or admin of the workspace sends it anew."},

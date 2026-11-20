@@ -8207,6 +8207,29 @@
         ],
         "type": "object"
       },
+      "PageSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Snapshot"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "The cursor of the next page, or null if this is the last page",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
       "PageSummary": {
         "additionalProperties": false,
         "properties": {
@@ -10638,6 +10661,10 @@
           },
           "published_by": {
             "description": "The ID of the user who published it, whom it no longer names once their account is deleted",
+            "type": "string"
+          },
+          "published_by_name": {
+            "description": "The display name of the user who published it, as it is now, which none of its files holds (PRD §6.2): a snapshot whose publisher's account is deleted has none, and a client shows it as a former member's",
             "type": "string"
           },
           "schema_version": {
@@ -19173,6 +19200,137 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/draft/export": {
+      "get": {
+        "description": "Returns the files of the project's draft as it is now, as a zip of the published layout, at the version of the published game format that schema asks for, or, without it, at the version that the server writes, read as of one moment (PRD FR-SYNC-01, §7.8), as a game's draft pull fetches it. It is always marked as the draft's: its manifest's snapshot has the channel draft, the draft's content hash, and when it was exported, as pulledAt, and neither an ID nor a version, which a draft has none of, and Content-Disposition names it as the draft's. What the draft holds that no release may, as a condition that does not compile, it stands in for as play mode does, so that it is exported whatever validation would say of publishing it. The draft is not a release, so an API token needs project:read, and one that holds snapshot:read alone is answered with 403 insufficient_scope (PRD FR-SYNC-01 AC4). The zip holds a member of each file of the published layout (PRD §6.3), at its path, as storycreep.json or boards/harbour-intro.json, in the order of their paths, with no member of a directory, which the manifest lists with each file's SHA-256, and Content-Disposition names it, as an attachment. The same files always make the same zip. Asked with schema, the files are rendered at that version of the published format: down to an older version by the renderer of each version between, or up to a newer one by the migration to each, and they validate against that version's JSON Schemas (PRD FR-SYNC-01 AC2), with the manifest's hashes and content hash those of the files at that version. A version that the server does not read is answered with 409 schema_unsupported, with details.min and details.max, the oldest and the newest that it reads (AC3), and an older version that cannot express what the files hold with 409 schema_unrepresentable, which lists each value that it cannot express, so that nothing is dropped silently (PRD §6.4). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Exports share a rate limit of 60 an hour for each IP address, 30 for each account, and 30 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "exportDraft",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The version of the published game format, its schemaVersion, that the files are rendered at: one of the versions that the server reads, which /version declares as published_schema, as the newest that the client reads too. Without it, the version that the server writes.",
+            "explode": false,
+            "in": "query",
+            "name": "schema",
+            "schema": {
+              "description": "The version of the published game format, its schemaVersion, that the files are rendered at: one of the versions that the server reads, which /version declares as published_schema, as the newest that the client reads too. Without it, the version that the server writes.",
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The draft's files, as a zip of the published layout",
+            "headers": {
+              "Content-Disposition": {
+                "schema": {
+                  "description": "attachment, with the zip's name: the project's slug and the snapshot's version, or draft, as harbour-1.0.0.zip",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "X-Content-Type-Options": {
+                "schema": {
+                  "description": "nosniff",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Export the draft",
+        "tags": [
+          "Snapshots"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/folders": {
       "get": {
         "description": "Lists the project's folders that are not deleted, of boards, variables, and components, or of the kind that kind names, in the order of their IDs, oldest first. Each names its parent and its place among the parent's children, from which a client builds each kind's tree. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the types board.* and folder.* create, rename, move, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
@@ -20720,6 +20878,149 @@
       }
     },
     "/api/v1/projects/{project_id}/snapshots": {
+      "get": {
+        "description": "Lists the project's snapshots, its releases, newest first, by their IDs, which follow the order in which they were published (PRD FR-SNAP-02), each with its metadata, as GET /api/v1/projects/{project_id}/snapshots/{snapshot_id} returns it: its version, its note, who published it and when, with their display name as it is now, and where it is in its lifecycle, building, ready, with its content hash, its schema version, and its entity counts, or failed, with its failure_code. With status, only the snapshots of that status are listed: a client that checks whether a newer release exists reads the newest ready one, with status=ready and limit=1 (PRD §7.5), whose version is the greatest of the project's releases. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope snapshot:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "listSnapshots",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "A status: only the snapshots of that status are listed, as ready for the project's releases, the newest first. Without it, those of every status.",
+            "explode": false,
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "description": "A status: only the snapshots of that status are listed, as ready for the project's releases, the newest first. Without it, those of every status.",
+              "enum": [
+                "building",
+                "ready",
+                "failed"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageSnapshot"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List a project's snapshots",
+        "tags": [
+          "Snapshots"
+        ]
+      },
       "post": {
         "description": "Publishes the project's draft as a snapshot, a release, of the version and the note that the author chose (PRD FR-SNAP-01, §7.3), and answers 202 with the snapshot, building, whose URL Location names. The publish gate first validates the draft as it is now, as GET /api/v1/projects/{project_id}/validation does (PRD FR-DEP-04): a draft with an error is answered with 409 publish_blocked, which lists the errors, and one with a warning that is neither muted nor among acknowledged_warnings with 409 warnings_unacknowledged, which lists those warnings, so that the author acknowledges them with the report's seq as acknowledged_seq. The version must be greater than every version of the project's snapshots that are building or ready, or the answer is 409 version_not_newer, with the newest; a failed snapshot's version may be published again. A job then builds the snapshot: it reads the draft as of one moment, whose seq the snapshot records as its source_seq, validates it again, which alone decides, and serializes it into the published layout, whose files it validates against the schemas of the published format. The snapshot becomes ready, and never changes again, or failed, with its failure_code: validation_failed for an error, validation_changed for a warning that was not acknowledged of a draft that changed since acknowledged_seq, or build_failed. Its build's report is stored with it either way, at GET /api/v1/projects/{project_id}/snapshots/{snapshot_id}/validation. An owner, an admin, or an editor of the project may publish, unless the project's publish_min_role is admin, which leaves editors out, and anyone else with a role on it is answered with 403 insufficient_role (PRD FR-SNAP-01 AC3). The publication is recorded in the audit log. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). An archived project is read-only, and the change is answered with 409 project_archived. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope snapshot:write, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. It changes something, so a request made with the session cookie also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token needs none. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.",
         "operationId": "publishSnapshot",
@@ -21055,6 +21356,147 @@
           }
         },
         "summary": "Get a snapshot",
+        "tags": [
+          "Snapshots"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/snapshots/{snapshot_id}/export": {
+      "get": {
+        "description": "Returns a ready snapshot's files as a zip of the published layout, at the version of the published game format that schema asks for, or, without it, at the snapshot's own version, as its schema_version names it, the files that its build stored, byte for byte (PRD FR-SNAP-02, FR-SYNC-01 AC1): what a game pulls (PRD §7.5), and what a release's download is. A snapshot that is building, or that failed, has no files, and is answered with 409 snapshot_not_ready, whose details.status says which. The zip holds a member of each file of the published layout (PRD §6.3), at its path, as storycreep.json or boards/harbour-intro.json, in the order of their paths, with no member of a directory, which the manifest lists with each file's SHA-256, and Content-Disposition names it, as an attachment. The same files always make the same zip. Asked with schema, the files are rendered at that version of the published format: down to an older version by the renderer of each version between, or up to a newer one by the migration to each, and they validate against that version's JSON Schemas (PRD FR-SYNC-01 AC2), with the manifest's hashes and content hash those of the files at that version. A version that the server does not read is answered with 409 schema_unsupported, with details.min and details.max, the oldest and the newest that it reads (AC3), and an older version that cannot express what the files hold with 409 schema_unrepresentable, which lists each value that it cannot express, so that nothing is dropped silently (PRD §6.4). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A snapshot that the project does not have is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope snapshot:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Exports share a rate limit of 60 an hour for each IP address, 30 for each account, and 30 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "exportSnapshot",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The snapshot's ID",
+            "in": "path",
+            "name": "snapshot_id",
+            "required": true,
+            "schema": {
+              "description": "The snapshot's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The version of the published game format, its schemaVersion, that the files are rendered at: one of the versions that the server reads, which /version declares as published_schema, as the newest that the client reads too. Without it, the snapshot's own version.",
+            "explode": false,
+            "in": "query",
+            "name": "schema",
+            "schema": {
+              "description": "The version of the published game format, its schemaVersion, that the files are rendered at: one of the versions that the server reads, which /version declares as published_schema, as the newest that the client reads too. Without it, the snapshot's own version.",
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The snapshot's files, as a zip of the published layout",
+            "headers": {
+              "Content-Disposition": {
+                "schema": {
+                  "description": "attachment, with the zip's name: the project's slug and the snapshot's version, or draft, as harbour-1.0.0.zip",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "X-Content-Type-Options": {
+                "schema": {
+                  "description": "nosniff",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Export a snapshot",
         "tags": [
           "Snapshots"
         ]

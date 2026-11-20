@@ -27,6 +27,13 @@
 // the report that the build computed is stored with the snapshot, which
 // describes exactly what it read (FR-DEP-04 AC2, AC4), and the snapshot never
 // changes again, which the database holds to as well (migration 00035).
+//
+// The snapshots are listed newest first (List, FR-SNAP-02, plan item 79,
+// note N86), and a ready snapshot's files are exported as a zip of the
+// published layout (Export, Export.Zip, FR-SYNC-01), at the version of the
+// published format that a client asks for, rendered by package
+// schemaversion, as the draft's are (ExportDraft), which its manifest marks
+// as the draft's (§7.8).
 package snapshot
 
 import (
@@ -118,8 +125,11 @@ type Snapshot struct {
 	Status      Status      `json:"status" enum:"building,ready,failed" doc:"Where it is in its lifecycle (PRD §7.3): building until its build ends, then ready, with its files, which never change, or failed, without files, kept as the record of the attempt, whose version is free again"`
 	FailureCode FailureCode `json:"failure_code,omitempty" enum:"validation_failed,validation_changed,build_failed" doc:"Why it failed, which a failed snapshot has, and no other: validation_failed, an error of its build's validation; validation_changed, a warning that its author did not acknowledge, of a draft that changed since the report that they acknowledged; or build_failed, a failure of the build itself"`
 	PublishedBy string      `json:"published_by,omitempty" doc:"The ID of the user who published it, whom it no longer names once their account is deleted"`
-	PublishedAt time.Time   `json:"published_at" doc:"When it was published, which its manifest names to the second"`
-	BuiltAt     *time.Time  `json:"built_at,omitempty" doc:"When its build ended, which a snapshot that is ready or failed has"`
+	// PublishedByName is the publisher's display name as it is now, which
+	// no published file holds (§6.2).
+	PublishedByName string     `json:"published_by_name,omitempty" doc:"The display name of the user who published it, as it is now, which none of its files holds (PRD §6.2): a snapshot whose publisher's account is deleted has none, and a client shows it as a former member's"`
+	PublishedAt     time.Time  `json:"published_at" doc:"When it was published, which its manifest names to the second"`
+	BuiltAt         *time.Time `json:"built_at,omitempty" doc:"When its build ended, which a snapshot that is ready or failed has"`
 	// AcknowledgedSeq and SourceSeq are the sequences of the drafts that
 	// its author validated and that its build read.
 	AcknowledgedSeq int64         `json:"acknowledged_seq" doc:"The project's operation sequence of the validation report that its author acknowledged when they published it"`
@@ -327,12 +337,15 @@ func (s *Service) Publish(ctx context.Context, actor commands.Actor, projectID i
 			return e
 		}
 		id := ids.New()
-		row, err := q.InsertSnapshot(ctx, queries.InsertSnapshotParams{ID: nullUUID(id), WorkspaceID: w,
+		if err := q.InsertSnapshot(ctx, queries.InsertSnapshotParams{ID: nullUUID(id), WorkspaceID: w,
 			ProjectID: p, Version: v.String(), VersionMajor: v.Major, VersionMinor: v.Minor, VersionPatch: v.Patch,
 			Note: r.Note, AcknowledgedSeq: r.AcknowledgedSeq, AcknowledgedWarnings: acknowledged,
-			PublishedBy: nullUUID(actor.UserID)})
-		if err != nil {
+			PublishedBy: nullUUID(actor.UserID)}); err != nil {
 			return fmt.Errorf("snapshot: add the snapshot: %w", err)
+		}
+		row, err := get(ctx, tx, workspaceID, projectID, id)
+		if err != nil {
+			return err
 		}
 		if err := usage.Record(ctx, tx, workspaceID, usage.Snapshots, 1); err != nil {
 			return err
@@ -347,7 +360,7 @@ func (s *Service) Publish(ctx context.Context, actor commands.Actor, projectID i
 			&jobs.EnqueueOptions{MaxAttempts: buildAttempts}); err != nil {
 			return fmt.Errorf("snapshot: enqueue the build: %w", err)
 		}
-		out = snapshotOf(queries.SnapshotRow(row))
+		out = snapshotOf(row)
 		return nil
 	})
 	return out, err
@@ -547,7 +560,7 @@ func snapshotOf(row queries.SnapshotRow) Snapshot {
 		Version: row.Version, Note: row.Note, Status: Status(row.Status), FailureCode: FailureCode(row.FailureCode.String),
 		PublishedAt: row.PublishedAt.Time.UTC(), AcknowledgedSeq: row.AcknowledgedSeq, ContentHash: row.ContentHash.String}
 	if row.PublishedBy.Valid {
-		out.PublishedBy = ids.Encode(ids.User, row.PublishedBy.Bytes)
+		out.PublishedBy, out.PublishedByName = ids.Encode(ids.User, row.PublishedBy.Bytes), row.PublishedByName.String
 	}
 	if row.BuiltAt.Valid {
 		t := row.BuiltAt.Time.UTC()
