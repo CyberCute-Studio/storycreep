@@ -7,12 +7,16 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/diff"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 	"github.com/CyberCute-Studio/storycreep/server/internal/snapshot"
 )
 
@@ -142,12 +146,13 @@ func TestDiffSnapshots(t *testing.T) {
 // changed, named as the draft's, with its content hash as its export's
 // manifest has it, and the changes that the commands made alone; and that a
 // token that holds snapshot:read alone is refused it with 403
-// insufficient_scope, which one of project:read is not (PRD §5.6).
+// insufficient_scope, which one of project:read is not (PRD FR-AUTH-04), and
+// its refusal recorded in the audit log, as a route's is (FR-TEN-07).
 //
 // Verifies: FR-SYNC-02/AC1
 func TestDiffDraft(t *testing.T) {
 	t.Parallel()
-	s, _, owner, ws := inviteServer(t, "open", nil)
+	s, d, owner, ws := inviteServer(t, "open", nil)
 	h := s.main
 	p := createProject(t, h, owner, ws, "Harbour").ID
 	board, quay := ids.Encode(ids.Board, ids.New()), ids.Encode(ids.Node, ids.New())
@@ -186,14 +191,58 @@ func TestDiffDraft(t *testing.T) {
 			got.Summary, got.Boards, got.Project.Variables)
 	}
 
-	releases := bearer(makeToken(t, h, owner, workspaceTokensPath(ws), "snapshot:read").Secret)
-	wantCode(t, "the diff into the draft with a snapshot:read token", call(h, http.MethodPost, diffPath(p),
-		diffBody(t, release.ID, "draft", 0), releases), http.StatusForbidden, api.CodeInsufficientScope)
-	content := bearer(makeToken(t, h, owner, workspaceTokensPath(ws), "project:read").Secret)
-	if res := call(h, http.MethodPost, diffPath(p), diffBody(t, release.ID, "draft", 0), content); res.status !=
-		http.StatusOK {
-		t.Errorf("the diff into the draft with a project:read token: %d %s", res.status, res.body)
+	// Every scope alone (FR-AUTH-04 AC7): project:read, and project:write,
+	// which implies it, diff into the draft, and every other is refused with
+	// 403 insufficient_scope, which names what it lacks, in its details and in
+	// the Bearer scheme's challenge: project:read of one that holds
+	// snapshot:read, itself or by snapshot:write, which the route takes, and
+	// snapshot:read of export:read, which the route does not. The audit log
+	// records each refusal, with its reason and the scope.
+	admin := d.Admin(t)
+	body := diffBody(t, release.ID, "draft", 0)
+	for _, held := range scope.All() {
+		tok := makeToken(t, h, owner, workspaceTokensPath(ws), string(held))
+		res := call(h, http.MethodPost, diffPath(p), body, bearer(tok.Secret))
+		where := "the diff into the draft with a " + string(held) + " token"
+		if scope.Grants([]scope.Scope{held}, scope.ProjectRead) {
+			if res.status != http.StatusOK {
+				t.Errorf("%s: %d %s", where, res.status, res.body)
+			}
+			continue
+		}
+		needed := scope.ProjectRead
+		if !scope.Grants([]scope.Scope{held}, scope.SnapshotRead) {
+			needed = scope.SnapshotRead
+		}
+		wantCode(t, where, res, http.StatusForbidden, api.CodeInsufficientScope)
+		if got := res.details(t)["scope"]; got != string(needed) {
+			t.Errorf("%s: details.scope is %v, want %s", where, got, needed)
+		}
+		if got, want := res.header.Get("WWW-Authenticate"), `Bearer realm="storycreep", `+
+			`error="insufficient_scope", scope="`+string(needed)+`"`; got != want {
+			t.Errorf("%s: WWW-Authenticate is %q, want %q", where, got, want)
+		}
+		rows, err := admin.Query(context.Background(), `SELECT concat_ws(' ', action, result,
+			metadata->>'reason', metadata->>'scope') FROM audit_entry WHERE subject_id = $1 ORDER BY created_at, id`,
+			decode(t, ids.APIToken, tok.ID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{"token.create success", "token.use_denied denied insufficient_scope " +
+			string(needed)}; !slices.Equal(got, want) {
+			t.Errorf("%s: the audit log of the token is %q, want %q", where, got, want)
+		}
 	}
+	// A token narrowed to another project does not cover this one, which is
+	// answered as one that does not exist (FR-AUTH-04 AC3).
+	other := createProject(t, h, owner, ws, "Lighthouse").ID
+	elsewhere := bearer(makeToken(t, h, owner, projectTokensPath(other), "project:read").Secret)
+	wantCode(t, "the diff into the draft with a token narrowed to another project", call(h, http.MethodPost,
+		diffPath(p), body, elsewhere), http.StatusNotFound, api.CodeNotFound)
 }
 
 // TestDiffTruncated checks that a diff of more changes than its limit lists

@@ -56,8 +56,7 @@ func (d *Diff) Truncate(limit int) (*Diff, error) {
 		return taken, 0, nil
 	}
 	out.Project.Omitted = 0
-	for _, l := range []*[]EntityChange{&out.Project.Variables, &out.Project.ComponentTypes, &out.Project.Attributes,
-		&out.Project.Components} {
+	for _, l := range out.Project.lists() {
 		taken, omitted, err := take(*l)
 		if err != nil {
 			return nil, err

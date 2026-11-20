@@ -87,6 +87,14 @@ type ProjectChanges struct {
 	Variables      []EntityChange `json:"variables" nullable:"false" doc:"The changes of the variables, global and of each board, sorted by ID, [] for none."`
 }
 
+// lists returns the project's lists of changes, in the order in which the
+// diff lists them (schema/diff-corpus/README.md), its variables, component
+// types, attribute definitions, and components, so that fill and Truncate
+// walk them alike.
+func (p *ProjectChanges) lists() []*[]EntityChange {
+	return []*[]EntityChange{&p.Variables, &p.ComponentTypes, &p.Attributes, &p.Components}
+}
+
 // BoardChanges are the changes of a board: of the board itself, and of its
 // nodes, branch outputs, and connections.
 type BoardChanges struct {
@@ -176,10 +184,9 @@ func (e *EntityChange) fill() {
 
 // fill computes the Words of every change of d that holds plain texts.
 func (d *Diff) fill() {
-	for _, l := range [][]EntityChange{d.Project.Variables, d.Project.ComponentTypes, d.Project.Attributes,
-		d.Project.Components} {
-		for i := range l {
-			l[i].fill()
+	for _, l := range d.Project.lists() {
+		for i := range *l {
+			(*l)[i].fill()
 		}
 	}
 	for _, b := range d.Boards {

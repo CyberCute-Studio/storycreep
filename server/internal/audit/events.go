@@ -178,12 +178,14 @@ const (
 	// when its owner is no longer a member of its workspace, session_required,
 	// on a route that takes no token, or for a batch of commands with one that
 	// only a session may apply, or insufficient_scope, on one that needs a
-	// scope that it does not hold, or for a batch with a command that does,
-	// which its scope names (NFR-SEC-05). It belongs to the token's
+	// scope that it does not hold, for a batch with a command that does, or
+	// for a diff into the draft, which needs project:read, which its scope
+	// names (NFR-SEC-05). It belongs to the token's
 	// workspace, and its subject is the token. A token's refusals are recorded
 	// once a minute at most, the first of each minute, so that a client that
 	// repeats a refused request does not flood the log (packages apitoken and
-	// commands). A request with a secret that is no token's
+	// commands, commands.DenyToken for a service's refusal). A request with a
+	// secret that is no token's
 	// is recorded nowhere, because it belongs to no workspace that the server
 	// knows of.
 	ActionTokenUseDenied Action = "token.use_denied"

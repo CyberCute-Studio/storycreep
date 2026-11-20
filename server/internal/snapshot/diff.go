@@ -6,6 +6,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/diff"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
@@ -67,12 +68,22 @@ func (s *Service) Diff(ctx context.Context, actor commands.Actor, projectID, fro
 //
 // The draft is not a release, so a diff into it needs an API token's
 // project:read, and is refused with a *scope.InsufficientError for one that
-// holds snapshot:read alone, before anything is read, as the draft's export is
-// (PRD §5.6). It returns Diff's errors, of from.
+// holds snapshot:read alone, before anything of the project is read, as the
+// draft's export is (PRD FR-AUTH-04), which refusal it records in the audit
+// log, as token.use_denied, as the authentication of a token records a
+// route's refusal of it (commands.DenyToken, FR-TEN-07). It returns Diff's
+// errors, of from.
 func (s *Service) DiffDraft(ctx context.Context, actor commands.Actor, projectID, from ids.UUID, limit int) (
 	*diff.Diff, error) {
 	if !actor.Token.Allows(scope.ProjectRead) {
-		return nil, &scope.InsufficientError{Scope: scope.ProjectRead}
+		denied := &scope.InsufficientError{Scope: scope.ProjectRead}
+		// The refusal belongs to the token's workspace, and changes nothing
+		// else, so its transaction commits.
+		if err := s.db.InTx(ctx, database.Scope{WorkspaceID: actor.Token.WorkspaceID, UserID: actor.UserID},
+			func(tx pgx.Tx) error { return commands.DenyToken(ctx, tx, actor, denied) }); err != nil {
+			return nil, err
+		}
+		return nil, denied
 	}
 	var f diffSide
 	var draft *serializer.Draft

@@ -14,10 +14,9 @@ import (
 // changesOf returns the changes that d lists, in its order.
 func changesOf(d *Diff) []EntityChange {
 	var out []EntityChange
-	out = append(out, d.Project.Variables...)
-	out = append(out, d.Project.ComponentTypes...)
-	out = append(out, d.Project.Attributes...)
-	out = append(out, d.Project.Components...)
+	for _, l := range d.Project.lists() {
+		out = append(out, *l...)
+	}
 	for _, b := range d.Boards {
 		out = append(out, b.Changes...)
 	}

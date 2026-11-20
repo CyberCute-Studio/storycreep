@@ -68,7 +68,9 @@ func registerDiffs(m *api.Mux, snapshots *snapshot.Service) {
 			"insufficient_scope. A snapshot stored at a newer version of the format than the server writes, as " +
 			"only a server that reads both versions holds, whose content the server's version cannot express, is " +
 			"answered with 409 schema_unrepresentable, whose details.schema is the server's version and " +
-			"details.constructs lists each value that it cannot express (PRD §6.4)." + projectNotFoundDoc +
+			"details.constructs lists each value that it cannot express (PRD §6.4). A from, or a to other than " +
+			"draft, that is not a snapshot's ID, as one that does not decode, the ID of another kind of entity, or " +
+			"draft in another case, is answered with 400 invalid_id." + projectNotFoundDoc +
 			tokenNotFoundDoc + snapshotNotFoundDoc + tokenPostReadDoc(scope.SnapshotRead),
 		Tags: []string{"Snapshots"},
 	}, func(ctx context.Context, in *diffInput) (*diffOutput, error) {
