@@ -770,7 +770,7 @@ func fillEnvelope(ctx huma.Context, _ string, v any) (any, error) {
 		return v, nil
 	}
 	env, locale := env.forRequest(ctx.Context())
-	ctx.SetHeader("Content-Language", locale.String())
+	ctx.SetHeader("Content-Language", env.contentLanguage(locale))
 	ctx.AppendHeader("Vary", "Accept-Language")
 	return env, nil
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -28,14 +29,29 @@ import (
 // last does not build: it fails the snapshot, which would otherwise hold its
 // version while it is building, so that no failure of a build itself, as one
 // whose time runs out, or a process that a build takes down, which leaves its
-// job to River's rescuer, keeps the snapshot building after its job ends.
+// job to River's rescuer, keeps the snapshot building after its job ends. The
+// last attempt is one transaction, which builds nothing, and one that cannot
+// write either, as when the database still fails then, or its process is
+// killed during it, leaves the snapshot building: a limit that note N85
+// accepts.
 const buildAttempts = 25
+
+// buildTimeout is how long each attempt at a build has before its context is
+// cancelled (jobs.Timeout), rather than a job's minute: a build reads,
+// validates, serializes, and stores a project whole, at once, which takes
+// longer the larger the project, and PRD §9.1 caps no project at the
+// documented scale, the large fixture, whose build NFR-PERF-12 gives 20
+// seconds, so that a project many times larger still builds. It is within the
+// hour after which River's rescuer would take a build that still runs for
+// stuck.
+const buildTimeout = 10 * time.Minute
 
 // buildJob is the job that builds a snapshot (FR-JOBS-01, §7.3). Its jobs
 // run one at a time in a process, on a queue of their own (jobs.Serial),
 // since a build holds a project's draft and its files in memory, so that
 // builds of large projects at once do not take the process's memory, nor
-// hold the workers of the other jobs while they wait for their turn.
+// hold the workers of the other jobs while they wait for their turn; each
+// attempt has buildTimeout.
 type buildJob struct {
 	WorkspaceID string `json:"workspace_id"`
 	SnapshotID  string `json:"snapshot_id"`
@@ -44,10 +60,11 @@ type buildJob struct {
 func (buildJob) Kind() string { return "snapshot_build" }
 
 // RegisterJobs registers the job that builds a snapshot in r, which Publish
-// enqueues, and which runs one at a time.
+// enqueues, and which runs one at a time, each attempt with buildTimeout.
 func (s *Service) RegisterJobs(r *jobs.Registry) {
 	jobs.Register(r, s.work)
 	jobs.Serial(r, buildJob{})
+	jobs.Timeout(r, buildJob{}, buildTimeout)
 }
 
 // work is an attempt at the job that builds a snapshot. Each attempt but the
@@ -237,14 +254,14 @@ func (s *Service) finish(ctx context.Context, workspaceID, snapshotID ids.UUID, 
 		changed = false
 		q := queries.New(tx)
 		w, id := nullUUID(workspaceID), nullUUID(snapshotID)
-		row, err := q.SnapshotToBuild(ctx, queries.SnapshotToBuildParams{WorkspaceID: w, ID: id})
+		status, err := q.SnapshotToBuild(ctx, queries.SnapshotToBuildParams{WorkspaceID: w, ID: id})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
 			return fmt.Errorf("snapshot: lock the snapshot to finish: %w", err)
 		}
-		if Status(row.Status) != Building {
+		if Status(status) != Building {
 			return nil
 		}
 		var report []byte
@@ -269,16 +286,20 @@ func (s *Service) finish(ctx context.Context, workspaceID, snapshotID ids.UUID, 
 			Ids: make([]pgtype.UUID, len(paths)), Hashes: make([]string, len(paths)),
 			Contents: make([][]byte, len(paths))}
 		for i, path := range paths {
+			// The manifest holds the hash of each file but itself, which the
+			// serializer computed of these bytes.
+			hash, ok := o.manifest.Files[path]
+			if !ok {
+				hash = published.HashOf(o.files[path])
+			}
 			files.Ids[i] = nullUUID(ids.New())
-			files.Hashes[i] = string(published.HashOf(o.files[path]))
+			files.Hashes[i] = string(hash)
 			files.Contents[i] = o.files[path]
 		}
 		if err := q.InsertSnapshotFiles(ctx, files); err != nil {
 			return fmt.Errorf("snapshot: store the files: %w", err)
 		}
-		c := o.manifest.Counts
-		counts, err := json.Marshal(EntityCounts{Boards: int64(c.Boards), Components: int64(c.Components),
-			Connections: int64(c.Connections), Nodes: int64(c.Nodes), Variables: int64(c.Variables)})
+		counts, err := json.Marshal(EntityCounts(o.manifest.Counts))
 		if err != nil {
 			return fmt.Errorf("snapshot: encode the counts: %w", err)
 		}

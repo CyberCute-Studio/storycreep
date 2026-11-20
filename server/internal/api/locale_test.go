@@ -127,6 +127,44 @@ func TestLocalizedErrors(t *testing.T) {
 	}
 }
 
+// TestDetailLanguages checks that the Content-Language of an envelope whose
+// details hold messages that its handler wrote (Error.Languages) names the
+// language of its message, and then each of theirs that is another, once,
+// whichever way the envelope is written.
+func TestDetailLanguages(t *testing.T) {
+	m, _ := localeMux(t, language.English)
+	var languages []string
+	Register(m, Public, huma.Operation{OperationID: "detailed", Method: http.MethodGet, Path: "/detailed"},
+		func(context.Context, *struct{}) (*itemOutput, error) {
+			return nil, &Error{Code: CodeNotFound, Languages: languages}
+		})
+	for _, tt := range []struct {
+		accept    string
+		languages []string
+		want      string
+	}{
+		{"cs", []string{"cs", "en"}, "cs, en"},
+		{"cs", []string{"en", "cs", "en"}, "cs, en"},
+		{"en", []string{"en"}, "en"},
+		{"cs", nil, "cs"},
+	} {
+		languages = tt.languages
+		res := serveLanguage(m, http.MethodGet, "/detailed", []string{tt.accept}, "")
+		if got := res.header.Get("Content-Language"); res.status != http.StatusNotFound || got != tt.want {
+			t.Errorf("Accept-Language %s, details in %q: status %d, Content-Language %q, want 404, %q", tt.accept,
+				tt.languages, res.status, got, tt.want)
+		}
+	}
+	// WriteError writes an envelope as a route's handler does not, in the
+	// request's locale, here the source locale.
+	w := httptest.NewRecorder()
+	WriteError(w, httptest.NewRequest(http.MethodGet, "/", nil),
+		&Error{Code: CodeNotFound, Languages: []string{"cs", "en"}})
+	if got := w.Header().Get("Content-Language"); got != "en, cs" {
+		t.Errorf("WriteError, details in cs and en: Content-Language %q, want %q", got, "en, cs")
+	}
+}
+
 // TestUnknownLocaleErrors checks that a request whose Accept-Language names
 // only locales that the server has no catalog for, or is not valid, is
 // answered in English, with nothing logged.

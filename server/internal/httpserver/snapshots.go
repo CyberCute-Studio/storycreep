@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -221,8 +222,10 @@ func snapshotError(ctx context.Context, err error) error {
 // gateError returns the error of the code that the publish gate refuses a
 // publication with, whose details hold the seq of the draft that it
 // validated and the findings of report that refuse it, as the report lists
-// them, in the locale of ctx's localizer.
+// them, in the locale of ctx's localizer, whose languages Content-Language
+// lists.
 func gateError(ctx context.Context, code api.Code, report validation.Stored) error {
-	r, _ := report.Report(i18n.FromContext(ctx))
-	return &api.Error{Code: code, Details: map[string]any{"seq": report.Seq, "findings": r.Findings}}
+	r, languages := report.Report(i18n.FromContext(ctx))
+	return &api.Error{Code: code, Details: map[string]any{"seq": report.Seq, "findings": r.Findings},
+		Languages: strings.Split(languages, ", ")}
 }

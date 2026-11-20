@@ -83,7 +83,8 @@ INSERT INTO snapshot (id, workspace_id, project_id, version, version_major, vers
     acknowledged_seq, acknowledged_warnings, published_by)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
     $9, $10, $11)
-RETURNING id, workspace_id, project_id, version, version_major, version_minor, version_patch, note, status, failure_code, acknowledged_seq, acknowledged_warnings, source_seq, validation_report, schema_version, content_hash, counts, published_by, published_at, built_at
+RETURNING id, project_id, version, note, status, failure_code, acknowledged_seq, source_seq, schema_version,
+    content_hash, counts, published_by, published_at, built_at
 `
 
 type InsertSnapshotParams struct {
@@ -100,8 +101,26 @@ type InsertSnapshotParams struct {
 	PublishedBy          pgtype.UUID
 }
 
-// InsertSnapshot adds a snapshot of a project, building, and returns it.
-func (q *Queries) InsertSnapshot(ctx context.Context, arg InsertSnapshotParams) (Snapshot, error) {
+type InsertSnapshotRow struct {
+	ID              pgtype.UUID
+	ProjectID       pgtype.UUID
+	Version         string
+	Note            string
+	Status          string
+	FailureCode     pgtype.Text
+	AcknowledgedSeq int64
+	SourceSeq       pgtype.Int8
+	SchemaVersion   pgtype.Int4
+	ContentHash     pgtype.Text
+	Counts          []byte
+	PublishedBy     pgtype.UUID
+	PublishedAt     pgtype.Timestamptz
+	BuiltAt         pgtype.Timestamptz
+}
+
+// InsertSnapshot adds a snapshot of a project, building, and returns it as
+// Snapshot does, without the acknowledged warnings that it was given.
+func (q *Queries) InsertSnapshot(ctx context.Context, arg InsertSnapshotParams) (InsertSnapshotRow, error) {
 	row := q.db.QueryRow(ctx, insertSnapshot,
 		arg.ID,
 		arg.WorkspaceID,
@@ -115,22 +134,16 @@ func (q *Queries) InsertSnapshot(ctx context.Context, arg InsertSnapshotParams) 
 		arg.AcknowledgedWarnings,
 		arg.PublishedBy,
 	)
-	var i Snapshot
+	var i InsertSnapshotRow
 	err := row.Scan(
 		&i.ID,
-		&i.WorkspaceID,
 		&i.ProjectID,
 		&i.Version,
-		&i.VersionMajor,
-		&i.VersionMinor,
-		&i.VersionPatch,
 		&i.Note,
 		&i.Status,
 		&i.FailureCode,
 		&i.AcknowledgedSeq,
-		&i.AcknowledgedWarnings,
 		&i.SourceSeq,
-		&i.ValidationReport,
 		&i.SchemaVersion,
 		&i.ContentHash,
 		&i.Counts,
@@ -217,7 +230,9 @@ func (q *Queries) NewestSnapshotVersion(ctx context.Context, arg NewestSnapshotV
 }
 
 const snapshot = `-- name: Snapshot :one
-SELECT id, workspace_id, project_id, version, version_major, version_minor, version_patch, note, status, failure_code, acknowledged_seq, acknowledged_warnings, source_seq, validation_report, schema_version, content_hash, counts, published_by, published_at, built_at FROM snapshot WHERE workspace_id = $1 AND project_id = $2 AND id = $3
+SELECT id, project_id, version, note, status, failure_code, acknowledged_seq, source_seq, schema_version,
+    content_hash, counts, published_by, published_at, built_at
+FROM snapshot WHERE workspace_id = $1 AND project_id = $2 AND id = $3
 `
 
 type SnapshotParams struct {
@@ -226,25 +241,39 @@ type SnapshotParams struct {
 	ID          pgtype.UUID
 }
 
-// Snapshot returns a snapshot of the project, building, ready, or failed.
-func (q *Queries) Snapshot(ctx context.Context, arg SnapshotParams) (Snapshot, error) {
+type SnapshotRow struct {
+	ID              pgtype.UUID
+	ProjectID       pgtype.UUID
+	Version         string
+	Note            string
+	Status          string
+	FailureCode     pgtype.Text
+	AcknowledgedSeq int64
+	SourceSeq       pgtype.Int8
+	SchemaVersion   pgtype.Int4
+	ContentHash     pgtype.Text
+	Counts          []byte
+	PublishedBy     pgtype.UUID
+	PublishedAt     pgtype.Timestamptz
+	BuiltAt         pgtype.Timestamptz
+}
+
+// Snapshot returns a snapshot of the project, building, ready, or failed,
+// but for its acknowledged warnings and its report, which the API shows
+// nothing of with it, and which may be megabytes of a large draft's:
+// InsertSnapshot returns the same columns.
+func (q *Queries) Snapshot(ctx context.Context, arg SnapshotParams) (SnapshotRow, error) {
 	row := q.db.QueryRow(ctx, snapshot, arg.WorkspaceID, arg.ProjectID, arg.ID)
-	var i Snapshot
+	var i SnapshotRow
 	err := row.Scan(
 		&i.ID,
-		&i.WorkspaceID,
 		&i.ProjectID,
 		&i.Version,
-		&i.VersionMajor,
-		&i.VersionMinor,
-		&i.VersionPatch,
 		&i.Note,
 		&i.Status,
 		&i.FailureCode,
 		&i.AcknowledgedSeq,
-		&i.AcknowledgedWarnings,
 		&i.SourceSeq,
-		&i.ValidationReport,
 		&i.SchemaVersion,
 		&i.ContentHash,
 		&i.Counts,
@@ -278,46 +307,28 @@ func (q *Queries) SnapshotDrift(ctx context.Context, workspaceID pgtype.UUID) (i
 	return drift, err
 }
 
-const snapshotFiles = `-- name: SnapshotFiles :many
-SELECT path, sha256, bytes FROM snapshot_file
-WHERE workspace_id = $1 AND snapshot_id = $2
-ORDER BY path
+const snapshotReport = `-- name: SnapshotReport :one
+SELECT validation_report FROM snapshot
+WHERE workspace_id = $1 AND project_id = $2 AND id = $3
 `
 
-type SnapshotFilesParams struct {
+type SnapshotReportParams struct {
 	WorkspaceID pgtype.UUID
-	SnapshotID  pgtype.UUID
+	ProjectID   pgtype.UUID
+	ID          pgtype.UUID
 }
 
-type SnapshotFilesRow struct {
-	Path   string
-	Sha256 string
-	Bytes  []byte
-}
-
-// SnapshotFiles returns the files of a snapshot, in the order of their paths.
-func (q *Queries) SnapshotFiles(ctx context.Context, arg SnapshotFilesParams) ([]SnapshotFilesRow, error) {
-	rows, err := q.db.Query(ctx, snapshotFiles, arg.WorkspaceID, arg.SnapshotID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []SnapshotFilesRow
-	for rows.Next() {
-		var i SnapshotFilesRow
-		if err := rows.Scan(&i.Path, &i.Sha256, &i.Bytes); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+// SnapshotReport returns the report that the build of a snapshot of the
+// project stored, null for a snapshot that holds none.
+func (q *Queries) SnapshotReport(ctx context.Context, arg SnapshotReportParams) ([]byte, error) {
+	row := q.db.QueryRow(ctx, snapshotReport, arg.WorkspaceID, arg.ProjectID, arg.ID)
+	var validation_report []byte
+	err := row.Scan(&validation_report)
+	return validation_report, err
 }
 
 const snapshotToBuild = `-- name: SnapshotToBuild :one
-SELECT id, workspace_id, project_id, version, version_major, version_minor, version_patch, note, status, failure_code, acknowledged_seq, acknowledged_warnings, source_seq, validation_report, schema_version, content_hash, counts, published_by, published_at, built_at FROM snapshot WHERE workspace_id = $1 AND id = $2 FOR UPDATE
+SELECT status FROM snapshot WHERE workspace_id = $1 AND id = $2 FOR UPDATE
 `
 
 type SnapshotToBuildParams struct {
@@ -325,35 +336,14 @@ type SnapshotToBuildParams struct {
 	ID          pgtype.UUID
 }
 
-// SnapshotToBuild returns a snapshot of the workspace, of any project, and
-// locks it until the transaction ends, so that one build at a time finishes
-// it.
-func (q *Queries) SnapshotToBuild(ctx context.Context, arg SnapshotToBuildParams) (Snapshot, error) {
+// SnapshotToBuild returns the status of a snapshot of the workspace, of any
+// project, and locks it until the transaction ends, so that one build at a
+// time finishes it.
+func (q *Queries) SnapshotToBuild(ctx context.Context, arg SnapshotToBuildParams) (string, error) {
 	row := q.db.QueryRow(ctx, snapshotToBuild, arg.WorkspaceID, arg.ID)
-	var i Snapshot
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.ProjectID,
-		&i.Version,
-		&i.VersionMajor,
-		&i.VersionMinor,
-		&i.VersionPatch,
-		&i.Note,
-		&i.Status,
-		&i.FailureCode,
-		&i.AcknowledgedSeq,
-		&i.AcknowledgedWarnings,
-		&i.SourceSeq,
-		&i.ValidationReport,
-		&i.SchemaVersion,
-		&i.ContentHash,
-		&i.Counts,
-		&i.PublishedBy,
-		&i.PublishedAt,
-		&i.BuiltAt,
-	)
-	return i, err
+	var status string
+	err := row.Scan(&status)
+	return status, err
 }
 
 const snapshotToRead = `-- name: SnapshotToRead :one

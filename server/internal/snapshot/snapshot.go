@@ -51,6 +51,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
+	"github.com/CyberCute-Studio/storycreep/server/internal/published"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
@@ -129,13 +130,15 @@ type Snapshot struct {
 }
 
 // EntityCounts are how many of each entity a snapshot holds, as its manifest
-// counts them.
+// counts them: the fields of published.Counts, which the build converts to
+// EntityCounts, so that a count that the manifest gains does not compile
+// until EntityCounts, and so the API, has it too.
 type EntityCounts struct {
-	Boards      int64 `json:"boards"`
-	Components  int64 `json:"components"`
-	Connections int64 `json:"connections"`
-	Nodes       int64 `json:"nodes" doc:"The nodes of every type: elements, branches, and jumpers"`
-	Variables   int64 `json:"variables" doc:"The variables, global and of each board"`
+	Boards      published.Int `json:"boards"`
+	Components  published.Int `json:"components"`
+	Connections published.Int `json:"connections"`
+	Nodes       published.Int `json:"nodes" doc:"The nodes of every type: elements, branches, and jumpers"`
+	Variables   published.Int `json:"variables" doc:"The variables, global and of each board"`
 }
 
 // Proposal is the version that the server proposes for a project's next
@@ -344,7 +347,7 @@ func (s *Service) Publish(ctx context.Context, actor commands.Actor, projectID i
 			&jobs.EnqueueOptions{MaxAttempts: buildAttempts}); err != nil {
 			return fmt.Errorf("snapshot: enqueue the build: %w", err)
 		}
-		out = snapshotOf(row)
+		out = snapshotOf(queries.SnapshotRow(row))
 		return nil
 	})
 	return out, err
@@ -377,7 +380,8 @@ func checkRequest(r Request) (Version, error) {
 
 // authorise returns nil if the actor may publish a snapshot of the project
 // projectID, read in tx, a transaction of its workspace workspaceID, and the
-// error that Publish refuses it with otherwise.
+// error that Publish refuses it with otherwise: project.Service.GetIn's,
+// which is project.ErrNotFound for a project in the trash, too.
 func (s *Service) authorise(ctx context.Context, tx pgx.Tx, actor commands.Actor, workspaceID,
 	projectID ids.UUID) error {
 	p, err := s.projects.GetIn(ctx, tx, actor, workspaceID, projectID)
@@ -387,10 +391,7 @@ func (s *Service) authorise(ctx context.Context, tx pgx.Tx, actor commands.Actor
 	if err := authz.CheckPublish(p.Role, role.Role(p.PublishMinRole)); err != nil {
 		return err
 	}
-	switch {
-	case p.DeletedAt != nil:
-		return project.ErrNotFound
-	case p.ArchivedAt != nil:
+	if p.ArchivedAt != nil {
 		return commands.ErrProjectArchived
 	}
 	return nil
@@ -444,17 +445,21 @@ func (s *Service) Report(ctx context.Context, actor commands.Actor, projectID, s
 	validation.Report, string, error) {
 	var stored validation.Stored
 	err := s.projects.ReadContent(ctx, s.db, actor, projectID, func(tx pgx.Tx, ws ids.UUID) error {
-		row, err := get(ctx, tx, ws, projectID, snapshotID)
-		if err != nil {
-			return err
-		}
-		if row.ValidationReport == nil {
+		q := queries.New(tx)
+		data, err := q.SnapshotReport(ctx, queries.SnapshotReportParams{WorkspaceID: nullUUID(ws),
+			ProjectID: nullUUID(projectID), ID: nullUUID(snapshotID)})
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			return ErrNotFound
+		case err != nil:
+			return fmt.Errorf("snapshot: read the stored report: %w", err)
+		case data == nil:
 			return ErrNotFound
 		}
-		if err := json.Unmarshal(row.ValidationReport, &stored); err != nil {
+		if err := json.Unmarshal(data, &stored); err != nil {
 			return fmt.Errorf("snapshot: read the stored report: %w", err)
 		}
-		return forgetDeleted(ctx, queries.New(tx), stored)
+		return forgetDeleted(ctx, q, stored)
 	})
 	if err != nil {
 		return validation.Report{}, "", err
@@ -524,20 +529,20 @@ func (s *Service) NextVersion(ctx context.Context, actor commands.Actor, project
 
 // get returns the snapshot snapshotID of the project projectID of the
 // workspace ws, read in tx, or ErrNotFound.
-func get(ctx context.Context, tx pgx.Tx, ws, projectID, snapshotID ids.UUID) (queries.Snapshot, error) {
+func get(ctx context.Context, tx pgx.Tx, ws, projectID, snapshotID ids.UUID) (queries.SnapshotRow, error) {
 	row, err := queries.New(tx).Snapshot(ctx, queries.SnapshotParams{WorkspaceID: nullUUID(ws),
 		ProjectID: nullUUID(projectID), ID: nullUUID(snapshotID)})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return queries.Snapshot{}, ErrNotFound
+		return queries.SnapshotRow{}, ErrNotFound
 	}
 	if err != nil {
-		return queries.Snapshot{}, fmt.Errorf("snapshot: read the snapshot: %w", err)
+		return queries.SnapshotRow{}, fmt.Errorf("snapshot: read the snapshot: %w", err)
 	}
 	return row, nil
 }
 
 // snapshotOf returns the snapshot of row as the API shows it.
-func snapshotOf(row queries.Snapshot) Snapshot {
+func snapshotOf(row queries.SnapshotRow) Snapshot {
 	out := Snapshot{ID: ids.Encode(ids.Snapshot, row.ID.Bytes), ProjectID: ids.Encode(ids.Project, row.ProjectID.Bytes),
 		Version: row.Version, Note: row.Note, Status: Status(row.Status), FailureCode: FailureCode(row.FailureCode.String),
 		PublishedAt: row.PublishedAt.Time.UTC(), AcknowledgedSeq: row.AcknowledgedSeq, ContentHash: row.ContentHash.String}

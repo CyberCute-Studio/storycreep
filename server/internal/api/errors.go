@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"golang.org/x/text/language"
@@ -369,8 +370,9 @@ var codes = []codeSpec{
 			"/api/v1/projects/{project_id}/validation` does, and found at least one, so no snapshot is made. " +
 			"`details.seq` is the project's operation sequence as of the draft that it validated, and " +
 			"`details.findings` lists the errors, each as the validation report lists a finding, with a message in " +
-			"the request's locale. Fix them and publish again; a broken jumper and a condition that does not " +
-			"compile are errors (FR-EDIT-05 AC1, FR-EDIT-03 AC4)."},
+			"the request's locale, or in English where its catalog lacks one, the languages that `Content-Language` " +
+			"lists. Fix them and publish again; a broken jumper and a condition that does not compile are errors " +
+			"(FR-EDIT-05 AC1, FR-EDIT-03 AC4)."},
 	{CodeWarningsUnacknowledged, http.StatusConflict, i18n.K("error.warnings_unacknowledged"),
 		"The project's draft has validation warnings that the publication does not acknowledge, and publishing " +
 			"needs each acknowledged (PRD FR-DEP-04): `POST /api/v1/projects/{project_id}/snapshots` validated the " +
@@ -378,7 +380,8 @@ var codes = []codeSpec{
 			"when the draft changed since the report that the publication acknowledged, so no snapshot is made. " +
 			"`details.seq` is the project's operation sequence as of the draft that it validated, and " +
 			"`details.findings` lists those warnings, each as the validation report lists a finding, with a message " +
-			"in the request's locale. Show them, and publish again with them acknowledged and `acknowledged_seq` " +
+			"in the request's locale, or in English where its catalog lacks one, the languages that " +
+			"`Content-Language` lists. Show them, and publish again with them acknowledged and `acknowledged_seq` " +
 			"set to `details.seq`. A muted warning needs no acknowledgement."},
 	{CodeVersionNotNewer, http.StatusConflict, i18n.K("error.version_not_newer"),
 		"The publication's version is not greater than the newest version of the project's snapshots that are " +
@@ -558,6 +561,12 @@ type Error struct {
 	// Details are the envelope's details, which must encode as a JSON
 	// object. They are for programs, so their keys are stable.
 	Details map[string]any
+	// Languages are the languages, as BCP 47 tags, of the messages that
+	// Details hold, which the handler wrote in the request's locale, or in
+	// English where its catalog lacks one, as the findings of a validation
+	// report: Content-Language lists them after the language of the
+	// envelope's message, each once.
+	Languages []string
 }
 
 // NewError returns an error with the code's message and no details.
@@ -589,6 +598,9 @@ type ErrorEnvelope struct {
 	// formatted when the envelope is written, in the request's locale,
 	// because huma builds some envelopes without the request.
 	message i18n.Message
+	// languages are the languages of the messages of its details
+	// (Error.Languages).
+	languages []string
 }
 
 // ErrorBody is the envelope's object.
@@ -655,7 +667,9 @@ func toEnvelope(ctx context.Context, err error) *ErrorEnvelope {
 	case errors.As(err, &env):
 		return env
 	case errors.As(err, &apiErr):
-		return envelopeFor(apiErr.Code, apiErr.Message, apiErr.Details)
+		env := envelopeFor(apiErr.Code, apiErr.Message, apiErr.Details)
+		env.languages = apiErr.Languages
+		return env
 	case errors.As(err, &idErr):
 		return envelopeFor(CodeInvalidID, idMessage(idErr), map[string]any{"reason": idErr.Reason})
 	}
@@ -825,16 +839,30 @@ func writeEnvelope(w http.ResponseWriter, r *http.Request, env *ErrorEnvelope) {
 		b, _ = json.Marshal(env)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	setLanguage(w.Header(), locale)
+	setLanguage(w.Header(), env.contentLanguage(locale))
 	w.WriteHeader(env.status)
 	_, _ = w.Write(append(b, '\n'))
 }
 
-// setLanguage sets the headers of an envelope whose message is in locale:
-// Content-Language names the locale, and Vary says that the message depends
-// on the request's Accept-Language (RFC 9110 §8.5, §12.5.5).
-func setLanguage(h http.Header, locale language.Tag) {
-	h.Set("Content-Language", locale.String())
+// contentLanguage returns the Content-Language of e, whose message is in
+// locale: locale, and then each language of the messages of its details that
+// is another (Error.Languages), each once.
+func (e *ErrorEnvelope) contentLanguage(locale language.Tag) string {
+	languages := []string{locale.String()}
+	for _, l := range e.languages {
+		if !slices.Contains(languages, l) {
+			languages = append(languages, l)
+		}
+	}
+	return strings.Join(languages, ", ")
+}
+
+// setLanguage sets the headers of an envelope whose messages are in the
+// languages of contentLanguage: Content-Language names them, and Vary says
+// that the messages depend on the request's Accept-Language (RFC 9110 §8.5,
+// §12.5.5).
+func setLanguage(h http.Header, contentLanguage string) {
+	h.Set("Content-Language", contentLanguage)
 	h.Add("Vary", "Accept-Language")
 }
 

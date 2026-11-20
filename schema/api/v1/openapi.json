@@ -12295,7 +12295,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -12410,7 +12410,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -12503,7 +12503,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -12616,7 +12616,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -12714,7 +12714,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -12823,7 +12823,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -12927,7 +12927,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -13048,7 +13048,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -13144,7 +13144,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -13240,7 +13240,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -13336,7 +13336,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -13429,7 +13429,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -13534,7 +13534,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -13652,7 +13652,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -13766,7 +13766,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -13862,7 +13862,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -13955,7 +13955,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -14070,7 +14070,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -14173,7 +14173,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -14269,7 +14269,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -14389,7 +14389,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -14497,7 +14497,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -14590,7 +14590,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -14698,7 +14698,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -14853,7 +14853,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -14961,7 +14961,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -15064,7 +15064,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -15186,7 +15186,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -15300,7 +15300,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -15501,7 +15501,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -15616,7 +15616,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -15876,7 +15876,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -16136,7 +16136,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -16266,7 +16266,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -16381,7 +16381,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -16521,7 +16521,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -16661,7 +16661,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -16801,7 +16801,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -16925,7 +16925,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -17049,7 +17049,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -17199,7 +17199,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -17373,7 +17373,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -17503,7 +17503,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -17643,7 +17643,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -17773,7 +17773,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -17888,7 +17888,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -18068,7 +18068,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -18219,7 +18219,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -18334,7 +18334,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -18500,7 +18500,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -18657,7 +18657,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -18772,7 +18772,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -18933,7 +18933,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -19130,7 +19130,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -19275,7 +19275,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -19405,7 +19405,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -19523,7 +19523,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -19656,7 +19656,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -19786,7 +19786,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -19901,7 +19901,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -20041,7 +20041,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -20156,7 +20156,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -20286,7 +20286,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -20401,7 +20401,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -20516,7 +20516,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -20676,7 +20676,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -20797,7 +20797,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -20902,7 +20902,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -21017,7 +21017,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -21144,7 +21144,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -21249,7 +21249,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -21379,7 +21379,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -21509,7 +21509,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -21632,7 +21632,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -21750,7 +21750,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -21880,7 +21880,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -21994,7 +21994,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -22111,7 +22111,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -22241,7 +22241,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -22356,7 +22356,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -22522,7 +22522,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -22677,7 +22677,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -22770,7 +22770,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -22871,7 +22871,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -22991,7 +22991,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -23110,7 +23110,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -23215,7 +23215,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -23338,7 +23338,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -23468,7 +23468,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -23591,7 +23591,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -23709,7 +23709,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -23834,7 +23834,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -23964,7 +23964,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -24082,7 +24082,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -24215,7 +24215,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -24355,7 +24355,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -24485,7 +24485,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -24614,7 +24614,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -24744,7 +24744,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -24867,7 +24867,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -24985,7 +24985,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -25115,7 +25115,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -25220,7 +25220,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -25306,7 +25306,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -25375,7 +25375,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -25445,7 +25445,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },
@@ -25514,7 +25514,7 @@
             "headers": {
               "Content-Language": {
                 "schema": {
-                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
                   "type": "string"
                 }
               },

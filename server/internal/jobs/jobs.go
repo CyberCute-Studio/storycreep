@@ -21,7 +21,8 @@
 // as when its process is killed, leaves the job running in the database, and
 // River's rescuer attempts it again an hour later, so a job's work must be
 // safe to repeat. A job also has a minute to run before its context is
-// cancelled, which counts as a failed attempt.
+// cancelled, or the longer time that its kind is given (Timeout), which counts
+// as a failed attempt.
 //
 // River's tables span workspaces and have no row-level security (PRD §5.4),
 // so a job's arguments hold identifiers, never content, and its work reads and
@@ -133,6 +134,9 @@ type Registry struct {
 	periodicKinds []string
 	// serial are the serial kinds (Serial).
 	serial []string
+	// timeouts are the times that the kinds that have a timeout of their own
+	// have to run (Timeout), by their kinds.
+	timeouts map[string]time.Duration
 }
 
 // NewRegistry returns an empty registry.
@@ -151,11 +155,67 @@ func NewRegistry() *Registry {
 // Register panics if kind T has a worker already.
 func Register[T Args](r *Registry, work func(ctx context.Context, job *Job[T]) error) {
 	var args T
-	river.AddWorker(r.workers, river.WorkFunc(func(ctx context.Context, j *river.Job[T]) error {
-		db, _ := ctx.Value(workersDB{}).(*database.DB)
-		return work(ctx, &Job[T]{ID: j.ID, Attempt: j.Attempt, MaxAttempts: j.MaxAttempts, Args: j.Args, DB: db})
-	}))
-	r.kinds = append(r.kinds, args.Kind())
+	kind := args.Kind()
+	river.AddWorker(r.workers, &worker[T]{work: work, timeout: func() time.Duration {
+		// The kind's timeout is read once the registry is complete, which it
+		// is by the time that a job of the kind runs.
+		return r.timeouts[kind]
+	}})
+	r.kinds = append(r.kinds, kind)
+}
+
+// worker is River's worker of the jobs of kind T, which Register makes of
+// their work.
+type worker[T Args] struct {
+	river.WorkerDefaults[T]
+	work func(ctx context.Context, job *Job[T]) error
+	// timeout returns the kind's timeout (Timeout), or zero for River's
+	// default, a minute.
+	timeout func() time.Duration
+}
+
+// Work runs the kind's work on j, with the workers' pool that the queue's
+// middleware puts in ctx.
+func (w *worker[T]) Work(ctx context.Context, j *river.Job[T]) error {
+	db, _ := ctx.Value(workersDB{}).(*database.DB)
+	return w.work(ctx, &Job[T]{ID: j.ID, Attempt: j.Attempt, MaxAttempts: j.MaxAttempts, Args: j.Args, DB: db})
+}
+
+// Timeout returns how long a job of the kind has to run, for River, zero
+// meaning its default.
+func (w *worker[T]) Timeout(*river.Job[T]) time.Duration {
+	return w.timeout()
+}
+
+// maxTimeout bounds the time that a kind of job may be given to run
+// (Timeout): River's rescuer takes a job that has run for an hour, its
+// default, which the queue keeps, for stuck, and attempts it again, so a job
+// that ran longer would run twice at once.
+const maxTimeout = time.Hour
+
+// Timeout gives the jobs of args's kind d to run before their context is
+// cancelled, rather than a minute: for work that cannot stop part of the way
+// and go on with the rest in another run (Snooze), and takes longer the more
+// it has to do, as a snapshot's build, which reads and writes a project
+// whole. d is positive and less than an hour, after which River's rescuer
+// would take a job that still runs for stuck. Timeout panics unless args's
+// kind has a worker, if the kind has a timeout already, and if d is not in
+// that range.
+func Timeout(r *Registry, args Args, d time.Duration) {
+	kind := args.Kind()
+	switch {
+	case !slices.Contains(r.kinds, kind):
+		panic(fmt.Sprintf("jobs: the job %s has no worker to give a timeout to; Register one first", kind))
+	case r.timeouts[kind] != 0:
+		panic(fmt.Sprintf("jobs: the kind %s has a timeout already", kind))
+	case d <= 0 || d >= maxTimeout:
+		panic(fmt.Sprintf("jobs: the timeout of the job %s, %s, is not positive and less than %s", kind, d,
+			maxTimeout))
+	}
+	if r.timeouts == nil {
+		r.timeouts = map[string]time.Duration{}
+	}
+	r.timeouts[kind] = d
 }
 
 // Cancel returns err as the error of work that ends its job: work that

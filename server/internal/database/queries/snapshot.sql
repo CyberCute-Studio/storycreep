@@ -20,16 +20,29 @@ ORDER BY version_major DESC, version_minor DESC, version_patch DESC
 LIMIT 1;
 
 -- name: InsertSnapshot :one
--- InsertSnapshot adds a snapshot of a project, building, and returns it.
+-- InsertSnapshot adds a snapshot of a project, building, and returns it as
+-- Snapshot does, without the acknowledged warnings that it was given.
 INSERT INTO snapshot (id, workspace_id, project_id, version, version_major, version_minor, version_patch, note,
     acknowledged_seq, acknowledged_warnings, published_by)
 VALUES (@id, @workspace_id, @project_id, @version, @version_major, @version_minor, @version_patch, @note,
     @acknowledged_seq, @acknowledged_warnings, @published_by)
-RETURNING *;
+RETURNING id, project_id, version, note, status, failure_code, acknowledged_seq, source_seq, schema_version,
+    content_hash, counts, published_by, published_at, built_at;
 
 -- name: Snapshot :one
--- Snapshot returns a snapshot of the project, building, ready, or failed.
-SELECT * FROM snapshot WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id;
+-- Snapshot returns a snapshot of the project, building, ready, or failed,
+-- but for its acknowledged warnings and its report, which the API shows
+-- nothing of with it, and which may be megabytes of a large draft's:
+-- InsertSnapshot returns the same columns.
+SELECT id, project_id, version, note, status, failure_code, acknowledged_seq, source_seq, schema_version,
+    content_hash, counts, published_by, published_at, built_at
+FROM snapshot WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id;
+
+-- name: SnapshotReport :one
+-- SnapshotReport returns the report that the build of a snapshot of the
+-- project stored, null for a snapshot that holds none.
+SELECT validation_report FROM snapshot
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id;
 
 -- name: SnapshotToRead :one
 -- SnapshotToRead returns a snapshot of the workspace, of any project, which
@@ -37,10 +50,10 @@ SELECT * FROM snapshot WHERE workspace_id = @workspace_id AND project_id = @proj
 SELECT * FROM snapshot WHERE workspace_id = @workspace_id AND id = @id;
 
 -- name: SnapshotToBuild :one
--- SnapshotToBuild returns a snapshot of the workspace, of any project, and
--- locks it until the transaction ends, so that one build at a time finishes
--- it.
-SELECT * FROM snapshot WHERE workspace_id = @workspace_id AND id = @id FOR UPDATE;
+-- SnapshotToBuild returns the status of a snapshot of the workspace, of any
+-- project, and locks it until the transaction ends, so that one build at a
+-- time finishes it.
+SELECT status FROM snapshot WHERE workspace_id = @workspace_id AND id = @id FOR UPDATE;
 
 -- name: FinishSnapshot :execrows
 -- FinishSnapshot makes a snapshot that is building ready, with what its build
@@ -66,12 +79,6 @@ WHERE workspace_id = @workspace_id AND id = @id AND status = 'building';
 INSERT INTO snapshot_file (id, workspace_id, snapshot_id, path, sha256, bytes)
 SELECT unnest(@ids::uuid[]), @workspace_id::uuid, @snapshot_id::uuid, unnest(@paths::text[]),
     unnest(@hashes::text[]), unnest(@contents::bytea[]);
-
--- name: SnapshotFiles :many
--- SnapshotFiles returns the files of a snapshot, in the order of their paths.
-SELECT path, sha256, bytes FROM snapshot_file
-WHERE workspace_id = @workspace_id AND snapshot_id = @snapshot_id
-ORDER BY path;
 
 -- name: UsersWithAccounts :many
 -- UsersWithAccounts returns the users among user_ids that have an account,
