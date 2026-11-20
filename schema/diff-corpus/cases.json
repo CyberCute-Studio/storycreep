@@ -1212,7 +1212,7 @@
       "to": "cosmetic"
     },
     {
-      "description": "A changed rich text, an element's text or a connection's label, has its plain texts as before and after, one that a side does not have left out, and their word-level diff, an absent text's as the empty text's; and an element whose text, of white space alone, has an empty preview is named without one.",
+      "description": "A changed rich text, an element's text or a connection's label, has its plain texts as before and after, one that a side does not have left out, and their word-level diff, an absent text's as the empty text's; an element whose text, of white space alone, has an empty preview is named without one; and a label whose marks alone changed, which a rich text is compared by, is modified with the same plain text before and after.",
       "diff": {
         "boards": [
           {
@@ -1275,6 +1275,27 @@
                 "id": "nd_000000000000000000000000N5",
                 "kind": "node",
                 "type": "element"
+              },
+              {
+                "change": "modified",
+                "fields": [
+                  {
+                    "after": "Go on",
+                    "before": "Go on",
+                    "field": "label",
+                    "words": [
+                      {
+                        "op": "equal",
+                        "text": "Go on"
+                      }
+                    ]
+                  }
+                ],
+                "from": "nd_000000000000000000000000N1",
+                "id": "cn_000000000000000000000000K1",
+                "kind": "connection",
+                "label": "Go on",
+                "to": "nd_000000000000000000000000N2"
               },
               {
                 "change": "modified",
@@ -1362,7 +1383,7 @@
             "connection": {
               "added": 0,
               "cosmetic": 0,
-              "modified": 1,
+              "modified": 2,
               "moved": 0,
               "removed": 0
             },
@@ -1388,12 +1409,12 @@
               "removed": 0
             }
           },
-          "modified": 3,
+          "modified": 4,
           "moved": 0,
           "removed": 0
         },
         "to": {
-          "contentHash": "sha256:fb745a6b23e6e0a7c5fd26656c7c22d378cc9c859510dac564e079cb610da3df",
+          "contentHash": "sha256:18546e27b9037f5fc34a6d2e17bde21157962d856d2e9df0d26a1d0c17578766",
           "id": "snp_000000000000000000000000G1",
           "kind": "snapshot",
           "version": "1.4.0"

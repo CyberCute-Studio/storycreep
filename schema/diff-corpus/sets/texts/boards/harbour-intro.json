@@ -49,7 +49,9 @@
         "segments": [
           {
             "kind": "text",
-            "marks": [],
+            "marks": [
+              "bold"
+            ],
             "value": "Go on"
           }
         ]

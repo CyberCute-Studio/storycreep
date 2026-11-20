@@ -35,7 +35,7 @@
   },
   "files": {
     "boards/empty.json": "sha256:222527202cd6ef57a793f0f994a280f74b9a29afaf2a0a7a82f6387cb5dd90db",
-    "boards/harbour-intro.json": "sha256:4aef6698ce3b307fa6320ef6283054fc93574910874883c419e4b029e4d888f1",
+    "boards/harbour-intro.json": "sha256:64f603e5becb54ea70326b975f145f23664c0343e12643237ae1dca86bc400a5",
     "boards/keepers-gate.json": "sha256:37d6209b3e6b00e24dbd31ae818af194dee42ce2660347f95824be33d216b4dc",
     "project/component_types.json": "sha256:ad7aa2505638b339872c8fc0f4cac72f1b73ac519f058761188fce8523367a82",
     "project/components.json": "sha256:a27c565eeab1218a4a2a1281df1d72ef3b4a905cf36d3c15013a6bb6103521d2",
@@ -54,7 +54,7 @@
   "schemaVersion": 1,
   "snapshot": {
     "channel": "release",
-    "contentHash": "sha256:fb745a6b23e6e0a7c5fd26656c7c22d378cc9c859510dac564e079cb610da3df",
+    "contentHash": "sha256:18546e27b9037f5fc34a6d2e17bde21157962d856d2e9df0d26a1d0c17578766",
     "id": "snp_000000000000000000000000G1",
     "note": "Golden <note> & \"quotes\"",
     "publishedAt": "2026-11-19T12:34:56Z",

@@ -415,14 +415,17 @@ var corpusSets = []corpusSet{
 		return s
 	}},
 	// texts rewrites an element's text, gives one that had none a text of
-	// white space alone, whose preview is empty, and lengthens a connection's
-	// label.
+	// white space alone, whose preview is empty, makes a connection's label
+	// bold, whose plain text stays the same, and lengthens another's.
 	{"texts", func(t *testing.T, sets map[string]*snap) *snap {
 		s := of(t, sets, "base")
 		end, _ := s.node(t, b1, n3)
 		end.(*published.Element).Text = textOf(segments(t, `The very end <3 & "farewell"`))
 		blank, _ := s.node(t, b1, n5)
 		blank.(*published.Element).Text = textOf(segments(t, "  "))
+		bold := segments(t, "Go on")
+		bold[0].Marks = []string{"bold"}
+		s.connection(t, b1, k1).Label = &published.Label{Segments: bold}
 		s.connection(t, b1, k2).Label = &published.Label{Segments: segments(t, "Leave quietly")}
 		return s
 	}},

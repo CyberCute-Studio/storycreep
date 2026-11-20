@@ -8,7 +8,7 @@
           "description": "The board, as the to side has it, or as the from side has it for a board that the to side does not have."
         },
         "change": {
-          "description": "What happened to the board itself: added or removed, with each node, branch output, and connection of it that the other side does not have, one that it has on another board being a change of its own, a node or a connection moved; or modified, with the changes of its fields. Without it, the board itself did not change, and only what it holds did.",
+          "description": "What happened to the board itself: added or removed, with each node, branch output, and connection of it that the other side does not have, but not one that the other side has on another board, a node or a connection of which is moved, and a branch output modified if a field of it differs; or modified, with the changes of its fields. Without it, the board itself did not change, and only what it holds did.",
           "enum": [
             "added",
             "removed",
@@ -17,7 +17,7 @@
           "type": "string"
         },
         "changes": {
-          "description": "The changes of what the board holds: its nodes, then their branch outputs, then its connections, each kind sorted by ID, [] for none. A node or a connection that was added, modified, or moved is listed on the board that the to side has it on, and one that was removed on the board that the from side had it on.",
+          "description": "The changes of what the board holds: its nodes, then their branch outputs, then its connections, each kind sorted by ID, [] for none. A change of a node, a branch output, or a connection is listed on the board that the to side has it on, or, of one that was removed, on the board that the from side had it on.",
           "items": {
             "$ref": "#/$defs/EntityChange"
           },
@@ -106,7 +106,7 @@
       "additionalProperties": false,
       "properties": {
         "boards": {
-          "description": "Each board that changed, or whose nodes, branch outputs, or connections changed, sorted by the board's ID, [] for none.",
+          "description": "Each board that was added, removed, or modified, or on which a change of a node, a branch output, or a connection is listed, sorted by the board's ID, [] for none: a board that a node or a connection only moved off has none.",
           "items": {
             "$ref": "#/$defs/BoardChanges"
           },

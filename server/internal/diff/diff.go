@@ -18,8 +18,9 @@ const (
 	Added = "added"
 	// Removed is an entity that only the from side has.
 	Removed = "removed"
-	// Modified is an entity that both sides have, on the same board, whose
-	// fields differ.
+	// Modified is an entity that both sides have, whose fields differ, and
+	// that was not moved: any but a node or a connection on different boards,
+	// a branch output on different boards among them.
 	Modified = "modified"
 	// Moved is a node or a connection that both sides have, on different
 	// boards, whose fields may differ too.
@@ -56,7 +57,7 @@ const (
 // Diff is the entity-level diff of two snapshots' files, the from side and the
 // to side, at one version of the published format (§7.4).
 type Diff struct {
-	Boards        []BoardChanges `json:"boards" nullable:"false" doc:"Each board that changed, or whose nodes, branch outputs, or connections changed, sorted by the board's ID, [] for none."`
+	Boards        []BoardChanges `json:"boards" nullable:"false" doc:"Each board that was added, removed, or modified, or on which a change of a node, a branch output, or a connection is listed, sorted by the board's ID, [] for none: a board that a node or a connection only moved off has none."`
 	From          DiffSide       `json:"from"`
 	Project       ProjectChanges `json:"project"`
 	SchemaVersion int            `json:"schemaVersion" minimum:"1" doc:"The version of the published game format, its schemaVersion, that both sides were compared at."`
@@ -90,8 +91,8 @@ type ProjectChanges struct {
 // nodes, branch outputs, and connections.
 type BoardChanges struct {
 	Board   BoardRef       `json:"board" doc:"The board, as the to side has it, or as the from side has it for a board that the to side does not have."`
-	Change  string         `json:"change,omitempty" enum:"added,removed,modified" doc:"What happened to the board itself: added or removed, with each node, branch output, and connection of it that the other side does not have, one that it has on another board being a change of its own, a node or a connection moved; or modified, with the changes of its fields. Without it, the board itself did not change, and only what it holds did."`
-	Changes []EntityChange `json:"changes" nullable:"false" doc:"The changes of what the board holds: its nodes, then their branch outputs, then its connections, each kind sorted by ID, [] for none. A node or a connection that was added, modified, or moved is listed on the board that the to side has it on, and one that was removed on the board that the from side had it on."`
+	Change  string         `json:"change,omitempty" enum:"added,removed,modified" doc:"What happened to the board itself: added or removed, with each node, branch output, and connection of it that the other side does not have, but not one that the other side has on another board, a node or a connection of which is moved, and a branch output modified if a field of it differs; or modified, with the changes of its fields. Without it, the board itself did not change, and only what it holds did."`
+	Changes []EntityChange `json:"changes" nullable:"false" doc:"The changes of what the board holds: its nodes, then their branch outputs, then its connections, each kind sorted by ID, [] for none. A change of a node, a branch output, or a connection is listed on the board that the to side has it on, or, of one that was removed, on the board that the from side had it on."`
 	Fields  []FieldChange  `json:"fields,omitempty" nullable:"false" doc:"The changes of the board's fields, its entryNodeId, name, and slug, sorted by field, of a board that was modified."`
 	Omitted int            `json:"omitted" minimum:"0" doc:"How many changes of what the board holds were left out to size the diff, 0 for none."`
 }

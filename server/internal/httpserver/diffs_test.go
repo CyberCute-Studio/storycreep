@@ -3,7 +3,6 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
-	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -26,25 +25,12 @@ var diffCorpus = filepath.Join("..", "..", "..", "schema", "diff-corpus")
 // corpusSet returns the files of the diff corpus's set name, by their paths.
 func corpusSet(t *testing.T, name string) map[string][]byte {
 	t.Helper()
-	root := filepath.Join(diffCorpus, "sets", name)
-	files := map[string][]byte{}
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		data, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			return err
-		}
-		files[filepath.ToSlash(rel)] = data
-		return nil
-	})
+	files, err := readFileTree(filepath.Join(diffCorpus, "sets", name))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Fatalf("the diff corpus has no set %s", name)
 	}
 	return files
 }

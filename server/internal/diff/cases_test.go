@@ -135,16 +135,19 @@ var corpusCases = []corpusCase{
 	}`},
 	{"texts", "A changed rich text, an element's text or a connection's label, has its plain texts as before and " +
 		"after, one that a side does not have left out, and their word-level diff, an absent text's as the empty " +
-		"text's; and an element whose text, of white space alone, has an empty preview is named without one.",
+		"text's; an element whose text, of white space alone, has an empty preview is named without one; and a " +
+		"label whose marks alone changed, which a rich text is compared by, is modified with the same plain text " +
+		"before and after.",
 		"base", "texts", `{
 		"boards": [
 			{"board": <@B1>, "changes": [
 				{"change": "modified", "fields": [{"after": "The very end <3 & \"farewell\"", "before": "The end <3 & \"bye\"", "field": "text", "words": [{"op": "equal", "text": "The "}, {"op": "insert", "text": "very "}, {"op": "equal", "text": "end <3 & "}, {"op": "delete", "text": "\"bye\""}, {"op": "insert", "text": "\"farewell\""}]}], "id": "<N3>", "kind": "node", "preview": "The very end <3 & \"farewell\"", "type": "element"},
 				{"change": "modified", "fields": [{"after": "  ", "field": "text", "words": [{"op": "insert", "text": "  "}]}], "id": "<N5>", "kind": "node", "type": "element"},
+				{"change": "modified", "fields": [{"after": "Go on", "before": "Go on", "field": "label", "words": [{"op": "equal", "text": "Go on"}]}], "from": "<N1>", "id": "<K1>", "kind": "connection", "label": "Go on", "to": "<N2>"},
 				{"change": "modified", "fields": [{"after": "Leave quietly", "before": "Leave", "field": "label", "words": [{"op": "equal", "text": "Leave"}, {"op": "insert", "text": " quietly"}]}], "from": "<N1>", "id": "<K2>", "kind": "connection", "label": "Leave quietly", "to": "<N3>"}
 			]}
 		],
-		"summary": {"modified": 3, "kinds": {"connection": {"modified": 1}, "node": {"modified": 2}}}
+		"summary": {"modified": 4, "kinds": {"connection": {"modified": 2}, "node": {"modified": 2}}}
 	}`},
 	{"expressions", "A changed expression, added, removed, or rewritten, has its sources as before and after, and " +
 		"whether the variables, attributes, and nodes that it names changed.", "base", "expressions", `{

@@ -67,6 +67,8 @@ Each change of `fields` has the `field`'s name, and `attribute` for a component'
 - A rich text, an element's `text` or a connection's `label`, is its plain text, as [`../rich-text/README.md`](../rich-text/README.md) derives it from its segments, and its change has `words`, the word-level diff of the plain texts below, an absent one read as the empty text, but for a change whose two plain texts are both empty, whose diff has no run, and which has no `words`.
 - An expression, a `condition`, or an `onEnter`, `onExit`, or `onTraverse` script, is its `source`, and its change has `refsChanged`: whether the sets of what the two ASTs name differ, each AST's being the `ref` of each of its nodes of the kinds `var` and `node_ref`, and the `ref`, a period, and the `attribute` of each of its `attr` nodes, and an absent expression's the empty set.
 
+These are what a change shows of a rich text and of an expression, not what it compares: a field is compared as its file holds it, a rich text by its segments, and an element's text by its `preview` too, and an expression by its AST and its source. So a text or a label whose marks alone changed, as a word made bold, is modified with the same plain text as `before` and `after`, and `words` of one `equal` run, and an expression whose AST alone changed is modified with the same source as `before` and `after`.
+
 A field's change has no other member.
 
 ### The word-level diff

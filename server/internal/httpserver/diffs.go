@@ -17,6 +17,7 @@ import (
 const draftTarget = "draft"
 
 type diffInput struct {
+	SessionCSRFInput
 	ProjectID string `path:"project_id" doc:"The project's ID"`
 	Body      struct {
 		From  string `json:"from" doc:"The ID of the snapshot that the diff is from, a ready one of the project's, as the release that a game has pinned, whether or not it is the newest (PRD FR-SYNC-02 AC1)"`
@@ -31,7 +32,11 @@ type diffOutput struct {
 
 // registerDiffs registers the route that compares two of a project's
 // snapshots, or a snapshot and the draft, entity by entity (PRD FR-SNAP-04,
-// FR-SYNC-02, §7.4).
+// FR-SYNC-02, §7.4). It is a POST, as the two IDs and the limit are a body,
+// but reads, and changes nothing, as the clipboard's copy does; so a request
+// of it made with the session cookie needs the session's CSRF token, as every
+// request that is not a GET, a HEAD, or an OPTIONS does (sessions.go), which
+// its input declares (SessionCSRFInput).
 func registerDiffs(m *api.Mux, snapshots *snapshot.Service) {
 	api.Register(m, api.ReadProject, huma.Operation{
 		OperationID: "diffSnapshots",
@@ -64,7 +69,7 @@ func registerDiffs(m *api.Mux, snapshots *snapshot.Service) {
 			"only a server that reads both versions holds, whose content the server's version cannot express, is " +
 			"answered with 409 schema_unrepresentable, whose details.schema is the server's version and " +
 			"details.constructs lists each value that it cannot express (PRD §6.4)." + projectNotFoundDoc +
-			tokenNotFoundDoc + snapshotNotFoundDoc + tokenAuthDoc(scope.SnapshotRead),
+			tokenNotFoundDoc + snapshotNotFoundDoc + tokenPostReadDoc(scope.SnapshotRead),
 		Tags: []string{"Snapshots"},
 	}, func(ctx context.Context, in *diffInput) (*diffOutput, error) {
 		id, actor, err := projectActor(ctx, in.ProjectID)

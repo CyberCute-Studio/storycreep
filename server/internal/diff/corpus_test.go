@@ -518,8 +518,8 @@ func TestCompareSized(t *testing.T) {
 			}
 		}
 	}
-	// The case texts changes two elements' texts and then a connection's
-	// label, of which a limit of 1 keeps the first alone.
+	// The case texts changes two elements' texts and then two connections'
+	// labels, of which a limit of 1 keeps the first alone.
 	c := caseNamed(t, "texts")
 	d, err := compareFiles(corpusSetFiles(t, c.From), corpusSetFiles(t, c.To))
 	if err != nil {

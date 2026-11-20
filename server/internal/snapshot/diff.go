@@ -2,12 +2,10 @@ package snapshot
 
 import (
 	"context"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
-	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/diff"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
@@ -38,14 +36,15 @@ import (
 // version cannot express. The token's snapshot:read is the route's to check.
 func (s *Service) Diff(ctx context.Context, actor commands.Actor, projectID, from, to ids.UUID, limit int) (
 	*diff.Diff, error) {
+	// A snapshot's diff into itself compares its files with themselves, which
+	// it reads, and renders, once.
+	same := to == from
 	var f, t diffSide
 	err := s.projects.ReadContent(ctx, s.db, actor, projectID, func(tx pgx.Tx, ws ids.UUID) error {
 		if err := f.read(ctx, tx, ws, projectID, from); err != nil {
 			return err
 		}
-		// A snapshot's diff into itself compares its files with themselves,
-		// which it reads once.
-		if to == from {
+		if same {
 			t = f
 			return nil
 		}
@@ -54,7 +53,7 @@ func (s *Service) Diff(ctx context.Context, actor commands.Actor, projectID, fro
 	if err != nil {
 		return nil, err
 	}
-	return compareSides(f, t, limit)
+	return compareSides(f, t, same, limit)
 }
 
 // DiffDraft returns the entity-level diff of the snapshot from of the project
@@ -62,9 +61,9 @@ func (s *Service) Diff(ctx context.Context, actor commands.Actor, projectID, fro
 // two snapshots, but that the snapshot and the draft are read in one
 // transaction that reads as of one moment (project.Service.ReadSnapshot), as
 // ExportDraft reads the draft, which is serialized after that transaction
-// ends, as the draft's export writes it, marked as the draft's, with what it
-// stands in for of what no release may hold (§7.8), as a draft pull brings it
-// in, so that the serialization holds no connection.
+// ends, as the draft's export writes it (serializeDraft), marked as the
+// draft's, with what it stands in for of what no release may hold (§7.8), as
+// a draft pull brings it in, so that the serialization holds no connection.
 //
 // The draft is not a release, so a diff into it needs an API token's
 // project:read, and is refused with a *scope.InsufficientError for one that
@@ -88,21 +87,27 @@ func (s *Service) DiffDraft(ctx context.Context, actor commands.Actor, projectID
 	if err != nil {
 		return nil, err
 	}
-	built, err := serializer.Serialize(draft, serializer.Stamp{Generator: serializer.Generator(), At: time.Now()})
+	built, err := serializeDraft(draft)
 	if err != nil {
 		return nil, err
 	}
-	return compareSides(f, diffSide{files: built.Files, version: int(built.Manifest.SchemaVersion)}, limit)
+	return compareSides(f, diffSide{files: built.Files, schema: int(built.Manifest.SchemaVersion)}, false, limit)
 }
 
 // diffSide is a side of a diff: its files, at the version of the published
-// format that they are of, and the row of a snapshot's, which the draft's has
-// none of, and its ID.
+// format that they are of, schema, and, of a snapshot's side, the snapshot
+// that the request names, by its ID and its version, which the draft's side
+// has neither of.
 type diffSide struct {
-	files   schemaversion.Files
-	version int
-	row     *queries.SnapshotRow
+	files    schemaversion.Files
+	schema   int
+	snapshot *diffSnapshot
+}
+
+// diffSnapshot is the snapshot of a side of a diff: its ID, and its version.
+type diffSnapshot struct {
 	id      ids.UUID
+	version string
 }
 
 // read reads the side of the snapshot id of the project projectID of the
@@ -112,25 +117,26 @@ func (d *diffSide) read(ctx context.Context, tx pgx.Tx, ws, projectID, id ids.UU
 	if err != nil {
 		return err
 	}
-	*d = diffSide{files: files, version: int(row.SchemaVersion.Int32), row: &row, id: id}
+	*d = diffSide{files: files, schema: int(row.SchemaVersion.Int32),
+		snapshot: &diffSnapshot{id: id, version: row.Version}}
 	return nil
 }
 
 // compareSides returns the diff of f into t, each rendered at
-// published.SchemaVersion first, a snapshot's into itself once, sized to at
-// most limit changes, with each snapshot's side named by the snapshot that the
-// request names, by its row, which its build's manifest names alike, with the
-// content hash of the files compared, at the version that they were compared
-// at.
-func compareSides(f, t diffSide, limit int) (*diff.Diff, error) {
-	same := f.row != nil && t.row != nil && f.id == t.id
+// published.SchemaVersion first, but t not again where same says that it is
+// f, a snapshot's side diffed into itself, sized to at most limit changes,
+// with each snapshot's side named by the snapshot that the request names, by
+// its ID and its row's version, which its build's manifest names alike, with
+// the content hash of the files compared, at the version that they were
+// compared at.
+func compareSides(f, t diffSide, same bool, limit int) (*diff.Diff, error) {
 	var err error
-	if f.files, _, err = render(f.files, f.version, published.SchemaVersion); err != nil {
+	if f.files, _, err = render(f.files, f.schema, published.SchemaVersion); err != nil {
 		return nil, err
 	}
 	if same {
 		t.files = f.files
-	} else if t.files, _, err = render(t.files, t.version, published.SchemaVersion); err != nil {
+	} else if t.files, _, err = render(t.files, t.schema, published.SchemaVersion); err != nil {
 		return nil, err
 	}
 	d, err := diff.CompareSized(f.files, t.files, limit)
@@ -141,9 +147,8 @@ func compareSides(f, t diffSide, limit int) (*diff.Diff, error) {
 		out  *diff.DiffSide
 		side diffSide
 	}{{&d.From, f}, {&d.To, t}} {
-		if s.side.row != nil {
-			s.out.Kind, s.out.ID, s.out.Version = diff.SideSnapshot, ids.Encode(ids.Snapshot, s.side.id),
-				s.side.row.Version
+		if snap := s.side.snapshot; snap != nil {
+			s.out.Kind, s.out.ID, s.out.Version = diff.SideSnapshot, ids.Encode(ids.Snapshot, snap.id), snap.version
 		}
 	}
 	return d, nil
