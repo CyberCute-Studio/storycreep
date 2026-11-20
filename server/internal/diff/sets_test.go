@@ -14,6 +14,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/expr"
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
 	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
+	"github.com/CyberCute-Studio/storycreep/server/internal/schemaversion"
 	"github.com/CyberCute-Studio/storycreep/server/internal/serializer"
 	"github.com/CyberCute-Studio/storycreep/server/internal/value"
 )
@@ -43,7 +44,7 @@ var (
 	k1, k2, k3     = mn("cn", "K1"), mn("cn", "K2"), mn("cn", "K3")
 	k20            = mn("cn", "K20")
 	v1, v2, v3, v6 = mn("var", "V1"), mn("var", "V2"), mn("var", "V3"), mn("var", "V6")
-	v7, v10        = mn("var", "V7"), mn("var", "V10")
+	v7, v9, v10    = mn("var", "V7"), mn("var", "V9"), mn("var", "V10")
 	t1             = mn("ct", "T1")
 	a1, a2, a3     = mn("atr", "A1"), mn("atr", "A2"), mn("atr", "A3")
 	c2, c3         = mn("cmp", "C2"), mn("cmp", "C3")
@@ -58,6 +59,9 @@ type snap struct {
 	types      published.ComponentTypes
 	components published.Components
 	boards     []*published.Board
+	// edit, of a set that holds what the format's types do not write,
+	// changes the JSON of each file once the types have written it (files).
+	edit func(path string, file map[string]any)
 }
 
 // readFixture returns the files of version 1's fixture project, by their
@@ -108,7 +112,9 @@ func load(t *testing.T, files map[string][]byte) *snap {
 
 // files returns the snapshot's files as the serializer writes them (§6.2),
 // with its manifest's boards, counts, entry, hashes, and content hash those
-// of the files.
+// of the files, and then, of a snapshot with an edit, the files that it
+// edits, each laid out as the serializer lays it out, with the manifest's
+// hashes and content hash computed again (schemaversion.Edit, Seal).
 func (s *snap) files(t *testing.T) map[string][]byte {
 	t.Helper()
 	// Every array that §6.2 does not order otherwise is sorted by ID.
@@ -165,7 +171,20 @@ func (s *snap) files(t *testing.T) map[string][]byte {
 		m.Snapshot = &c
 	}
 	put(published.ManifestPath, m)
-	return files
+	if s.edit == nil {
+		return files
+	}
+	edited, err := schemaversion.Edit(files, func(path string, file map[string]any) error {
+		s.edit(path, file)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edited, err = schemaversion.Seal(edited); err != nil {
+		t.Fatal(err)
+	}
+	return edited
 }
 
 // board returns the snapshot's board id.
@@ -277,6 +296,17 @@ func textOf(segs richtext.Segments) *published.Text {
 type corpusSet struct {
 	name  string
 	build func(t *testing.T, sets map[string]*snap) *snap
+}
+
+// member returns the object of the list key of the JSON object file whose
+// id is id.
+func member(file map[string]any, key, id string) map[string]any {
+	for _, item := range file[key].([]any) {
+		if o := item.(map[string]any); o["id"] == id {
+			return o
+		}
+	}
+	panic("no " + id + " in " + key)
 }
 
 // of returns a copy of the set name of sets, which a set changes.
@@ -451,6 +481,43 @@ var corpusSets = []corpusSet{
 			Connections: []published.Connection{}})
 		return s
 	}},
+	// ignored is base with keys that the format does not define, which a
+	// consumer ignores, in an object of every kind of entity and in a
+	// node's position, one of which differs from a key that the format defines
+	// only by its case, and with optional fields written with the value that
+	// the format leaves out: a board variable's resetOnEnter of false and an
+	// element's tags of [].
+	{"ignored", func(t *testing.T, sets map[string]*snap) *snap {
+		s := of(t, sets, "base")
+		s.edit = ignoredKeys
+		return s
+	}},
+}
+
+// ignoredKeys is the edit of the set ignored's files.
+func ignoredKeys(path string, file map[string]any) {
+	switch path {
+	case published.ManifestPath:
+		file["project"].(map[string]any)["codename"] = "gull"
+		member(file, "boards", b3)["colour"] = "teal"
+	case published.SettingsPath:
+		file["theme"] = map[string]any{"dark": true}
+	case published.VariablesPath:
+		member(file, "variables", v1)["KEY"] = "met_someone"
+		member(file, "variables", v9)["resetOnEnter"] = false
+	case published.ComponentTypesPath:
+		cast := member(file, "componentTypes", t1)
+		cast["plural"] = "Cast members"
+		member(cast, "attributes", a1)["hint"] = "0 to 10"
+	case published.ComponentsPath:
+		member(file, "components", c2)["portrait"] = []any{"mira.png", "mira@2x.png"}
+	case published.BoardPath("harbour-intro"):
+		member(file, "nodes", n1)["TITLE"] = "Loud"
+		member(file, "nodes", n3)["tags"] = []any{}
+		member(file, "nodes", n5)["position"].(map[string]any)["z"] = json.Number("3")
+		member(member(file, "nodes", n2), "outputs", q1)["colour"] = "red"
+		member(file, "connections", k1)["weight"] = json.Number("2.5")
+	}
 }
 
 // buildSets returns the corpus's file sets, by their names.

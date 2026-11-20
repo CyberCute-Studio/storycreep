@@ -1,0 +1,42 @@
+{
+  "componentTypes": [
+    {
+      "attributes": [
+        {
+          "default": 0,
+          "hint": "0 to 10",
+          "id": "atr_000000000000000000000000A1",
+          "key": "trust",
+          "name": "Trust",
+          "runtime": true,
+          "type": "int"
+        },
+        {
+          "default": "",
+          "id": "atr_000000000000000000000000A3",
+          "key": "bio",
+          "name": "Biography",
+          "runtime": false,
+          "type": "text"
+        },
+        {
+          "default": "calm",
+          "id": "atr_000000000000000000000000A2",
+          "key": "mood",
+          "name": "Mood",
+          "options": [
+            "tense",
+            "calm"
+          ],
+          "runtime": true,
+          "type": "enum"
+        }
+      ],
+      "id": "ct_000000000000000000000000T1",
+      "key": "cast",
+      "name": "Cast",
+      "plural": "Cast members"
+    }
+  ],
+  "schemaVersion": 1
+}

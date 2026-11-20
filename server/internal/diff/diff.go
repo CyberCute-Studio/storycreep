@@ -144,6 +144,47 @@ type FieldChange struct {
 	Field       string    `json:"field" doc:"The field's name, as its file has it, as key or condition; componentType and order for an attribute definition's component type and its place among the type's, from 0; and branch for a branch output's branch."`
 	RefsChanged *bool     `json:"refsChanged,omitempty" doc:"Of an expression, whether the variables, the components' attributes, and the nodes that it names differ between the two sides."`
 	Words       []WordRun `json:"words,omitempty" nullable:"false" doc:"Of a rich text, the word-level diff of its plain texts, before into after, in order."`
+
+	// texts are a rich text's plain texts, of a change that compareFiles
+	// made, until fill computes their Words.
+	texts *plainTexts
+}
+
+// plainTexts are the plain texts of a rich text's change, before and after,
+// an absent text's empty.
+type plainTexts struct {
+	before, after string
+}
+
+// fill computes the Words of c's plain texts, if it holds them.
+func (c *FieldChange) fill() {
+	if c.texts != nil {
+		c.Words = Words(c.texts.before, c.texts.after)
+		c.texts = nil
+	}
+}
+
+// fill computes the Words of each of e's fields' changes that holds plain
+// texts.
+func (e *EntityChange) fill() {
+	for i := range e.Fields {
+		e.Fields[i].fill()
+	}
+}
+
+// fill computes the Words of every change of d that holds plain texts.
+func (d *Diff) fill() {
+	for _, l := range [][]EntityChange{d.Project.Variables, d.Project.ComponentTypes, d.Project.Attributes,
+		d.Project.Components} {
+		for i := range l {
+			l[i].fill()
+		}
+	}
+	for _, b := range d.Boards {
+		for i := range b.Changes {
+			b.Changes[i].fill()
+		}
+	}
 }
 
 // WordRun is a run of a word-level text diff: text that the two sides share,
@@ -190,7 +231,7 @@ type ChangeCounts struct {
 	Removed  int `json:"removed" minimum:"0"`
 }
 
-// of returns the counts of the kind k.
+// of returns the counts of the kind k, which is one of the kinds' constants.
 func (k *KindCounts) of(kind string) *ChangeCounts {
 	switch kind {
 	case KindAttribute:
@@ -209,8 +250,10 @@ func (k *KindCounts) of(kind string) *ChangeCounts {
 		return &k.Node
 	case KindProject:
 		return &k.Project
+	case KindVariable:
+		return &k.Variable
 	}
-	return &k.Variable
+	panic("diff: no kind " + kind)
 }
 
 // count counts a change of the kind kind, what happened to it, cosmetic or

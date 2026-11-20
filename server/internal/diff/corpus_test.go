@@ -351,6 +351,126 @@ func TestMovedNode(t *testing.T) {
 	}
 }
 
+// TestMovedBranchOutputs checks that the branch outputs of a branch that
+// moved to another board are not moved themselves: one whose own fields
+// changed is modified, on the board that the branch is on, and the others
+// are no change.
+func TestMovedBranchOutputs(t *testing.T) {
+	from, to := load(t, corpusSetFiles(t, "base")), load(t, corpusSetFiles(t, "base"))
+	branch, i := to.node(t, b1, n2)
+	intro, gate := to.board(t, b1), to.board(t, b2)
+	intro.Nodes = slices.Delete(intro.Nodes, i, i+1)
+	gate.Nodes = append(gate.Nodes, branch)
+	br := branch.(*published.Branch)
+	for i := range br.Outputs {
+		if br.Outputs[i].ID == q1 {
+			br.Outputs[i].Condition = to.condition(t, "coins > 0", b1)
+		}
+	}
+	d, err := Compare(from.files(t), to.files(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Boards) != 1 || d.Boards[0].Board.ID != b2 || len(d.Boards[0].Changes) != 2 {
+		t.Fatalf("the changes are %+v, want the branch moved and one output modified, on %s", d.Boards, b2)
+	}
+	node, output := d.Boards[0].Changes[0], d.Boards[0].Changes[1]
+	if node.ID != n2 || node.Change != Moved || node.FromBoard.ID != b1 || node.ToBoard.ID != b2 ||
+		len(node.Fields) != 0 {
+		t.Errorf("the branch's change is %+v, want moved from %s to %s with no field", node, b1, b2)
+	}
+	if output.ID != q1 || output.Kind != KindBranchOutput || output.Change != Modified || output.FromBoard != nil ||
+		len(output.Fields) != 1 || output.Fields[0].Field != "condition" {
+		t.Errorf("the output's change is %+v, want %s modified on its condition alone", output, q1)
+	}
+	if k := d.Summary.Kinds.BranchOutput; k != (ChangeCounts{Modified: 1}) || d.Summary.Moved != 1 {
+		t.Errorf("the summary is %+v, want one node moved and one output modified", d.Summary)
+	}
+}
+
+// TestCompareRefusesABoardTwice checks that Compare fails on a manifest that
+// names a board's ID twice, as on any entity's ID that it has twice.
+func TestCompareRefusesABoardTwice(t *testing.T) {
+	files := corpusSetFiles(t, "base")
+	twice, err := schemaversion.Edit(files, func(p string, file map[string]any) error {
+		if p == published.ManifestPath {
+			boards := file["boards"].([]any)
+			again := maps.Clone(boards[0].(map[string]any))
+			again["file"] = boards[1].(map[string]any)["file"]
+			file["boards"] = append(boards, again)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Compare(files, twice); err == nil || !strings.Contains(err.Error(), "twice") {
+		t.Errorf("Compare of a manifest that names a board twice: %v, want an error", err)
+	}
+}
+
+// TestCompareSized checks that CompareSized gives the diff that Compare's
+// Truncate does, of every case of the corpus and every limit, and that it
+// computes no word-level diff of a change that it leaves out.
+func TestCompareSized(t *testing.T) {
+	for _, c := range readCases(t) {
+		from, to := corpusSetFiles(t, c.From), corpusSetFiles(t, c.To)
+		whole, err := Compare(from, to)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for limit := 1; limit <= len(changesOf(whole))+1; limit++ {
+			want, err := whole.Truncate(limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := CompareSized(from, to, limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("%s, limit %d: CompareSized gives\n%+v\nwant\n%+v", c.Name, limit, got, want)
+			}
+		}
+	}
+	// The case texts changes an element's text and then a connection's label.
+	c := caseNamed(t, "texts")
+	d, err := compareFiles(corpusSetFiles(t, c.From), corpusSetFiles(t, c.To))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Truncate(1); err != nil {
+		t.Fatal(err)
+	}
+	kept, left := d.Boards[0].Changes[0].Fields[0], d.Boards[0].Changes[1].Fields[0]
+	if kept.Words == nil || kept.texts != nil || left.Words != nil || left.texts == nil {
+		t.Errorf("of the text kept and the label left out, the words are %+v and %+v, want the kept one's alone",
+			kept.Words, left.Words)
+	}
+}
+
+// TestCountKinds checks that the summary counts a change of each kind in that
+// kind's counts, and refuses a kind that is none of them.
+func TestCountKinds(t *testing.T) {
+	var s DiffSummary
+	kinds := []string{KindAttribute, KindBoard, KindBranchOutput, KindComponent, KindComponentType, KindConnection,
+		KindNode, KindProject, KindVariable}
+	for _, k := range kinds {
+		s.count(k, Added, false)
+	}
+	for _, k := range kinds {
+		if got := *s.Kinds.of(k); got != (ChangeCounts{Added: 1}) {
+			t.Errorf("the counts of %s are %+v, want one added", k, got)
+		}
+	}
+	defer func() {
+		if recover() == nil {
+			t.Error("the summary counts a kind that is none")
+		}
+	}()
+	s.count("varaible", Added, false)
+}
+
 // TestWordsCorpus checks that Words gives the runs of every case of the
 // corpus's words.json, as the Godot addon's word diff must too, and that the
 // equal and delete runs of each make its before text, and the equal and

@@ -242,7 +242,12 @@ func TestDiffTruncated(t *testing.T) {
 			"of the 9 changes that entries list, and the whole summary %+v", listed, omitted, first.Truncated,
 			first.Summary, all.Summary)
 	}
-	for _, limit := range []int{0, -1, 5001} {
+	// The route's bound is package diff's, which Truncate holds a limit to.
+	body, _ := reflect.TypeFor[diffInput]().FieldByName("Body")
+	if field, ok := body.Type.FieldByName("Limit"); !ok || field.Tag.Get("maximum") != strconv.Itoa(diff.MaxLimit) {
+		t.Errorf("the route's limit is not bounded by diff.MaxLimit, %d", diff.MaxLimit)
+	}
+	for _, limit := range []int{0, -1, diff.MaxLimit + 1} {
 		body := jsonBody(t, map[string]any{"from": from, "to": to, "limit": limit})
 		wantCode(t, "a diff of the limit "+strconv.Itoa(limit), call(h, http.MethodPost, diffPath(p), body,
 			owner.header(true)), http.StatusUnprocessableEntity, api.CodeValidationFailed)
@@ -263,12 +268,15 @@ func TestDiffRefusals(t *testing.T) {
 	other := createProject(t, h, owner, ws, "Lighthouse").ID
 	elsewhere := addSnapshot(t, admin, wsID, decode(t, ids.Project, other), "1.0.0", "ready", ids.UUID{},
 		corpusSet(t, "base"))
-	missing := ids.Encode(ids.Snapshot, ids.New())
+	missing, none := ids.Encode(ids.Snapshot, ids.New()), ids.Encode(ids.Snapshot, ids.UUID{})
 	for what, body := range map[string][]byte{
 		"from a snapshot that no project has":   diffBody(t, missing, ready, 0),
 		"into a snapshot that no project has":   diffBody(t, ready, missing, 0),
 		"from another project's snapshot":       diffBody(t, elsewhere, ready, 0),
 		"into the draft from a missing release": diffBody(t, missing, "draft", 0),
+		// The zero UUID is no snapshot's, and not the draft's.
+		"from the zero UUID": diffBody(t, none, ready, 0),
+		"into the zero UUID": diffBody(t, ready, none, 0),
 	} {
 		wantCode(t, "a diff "+what, call(h, http.MethodPost, diffPath(p), body, owner.header(true)),
 			http.StatusNotFound, api.CodeNotFound)

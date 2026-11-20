@@ -34,7 +34,7 @@ var refs = strings.NewReplacer(
 	"<N20>", n20, "<N21>", n21, "<N30>", n30,
 	"<Q1>", q1, "<Q2>", q2, "<Q3>", q3, "<Q4>", q4,
 	"<K1>", k1, "<K2>", k2, "<K3>", k3, "<K20>", k20,
-	"<V1>", v1, "<V2>", v2, "<V3>", v3, "<V6>", v6, "<V7>", v7, "<V10>", v10,
+	"<V1>", v1, "<V2>", v2, "<V3>", v3, "<V6>", v6, "<V7>", v7, "<V9>", v9, "<V10>", v10,
 	"<T1>", t1, "<A1>", a1, "<A2>", a2, "<A3>", a3, "<C2>", c2, "<C3>", c3,
 )
 
@@ -192,6 +192,10 @@ var corpusCases = []corpusCase{
 		],
 		"summary": {"added": 2, "modified": 1, "removed": 1, "kinds": {"board": {"added": 1, "modified": 1, "removed": 1}, "node": {"added": 1}}}
 	}`},
+	{"ignored", "Keys that the format does not define, which a consumer ignores, in an object of every kind of " +
+		"entity and at any depth, one that differs from a key that the format defines only by its case among " +
+		"them, and optional fields written with the value that the format leaves out, a board variable's " +
+		"resetOnEnter of false and an element's tags of [], are no change.", "base", "ignored", `{}`},
 }
 
 // wordsCase is a case of the word-level text diff: two plain texts, and the

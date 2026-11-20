@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/expr"
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
@@ -57,6 +58,30 @@ import (
 // its manifest's index names a board whose file it does not have, or where it
 // has an entity's ID twice.
 func Compare(from, to map[string][]byte) (*Diff, error) {
+	d, err := compareFiles(from, to)
+	if err != nil {
+		return nil, err
+	}
+	d.fill()
+	return d, nil
+}
+
+// CompareSized returns the diff of from into to as Compare does, sized for
+// display as Truncate sizes it to at most limit changes, of which alone it
+// computes the word-level diffs of their rich texts, so that a diff of many
+// changes spends no time on the words of those that it leaves out.
+func CompareSized(from, to map[string][]byte, limit int) (*Diff, error) {
+	d, err := compareFiles(from, to)
+	if err != nil {
+		return nil, err
+	}
+	return d.Truncate(limit)
+}
+
+// compareFiles returns the diff of from into to as Compare does, but that a
+// change of a rich text holds its two plain texts, and not yet their Words,
+// which fill computes.
+func compareFiles(from, to map[string][]byte) (*Diff, error) {
 	f, err := read(from)
 	if err != nil {
 		return nil, fmt.Errorf("diff: the from side: %w", err)
@@ -80,12 +105,16 @@ func Compare(from, to map[string][]byte) (*Diff, error) {
 	return c.d, nil
 }
 
-// side is a side's files, its manifest, its boards by ID, and its settings.
+// side is a side's files, its manifest, its boards by ID, and its settings,
+// and its component types and their attribute definitions once it has read
+// them (definitions).
 type side struct {
 	files    map[string][]byte
 	manifest published.Manifest
 	boards   map[string]published.ManifestBoard
 	settings published.Settings
+	types    map[string]published.ComponentType
+	defs     map[string]published.AttributeDefinition
 }
 
 // read returns the side whose files are files, with its manifest and settings
@@ -101,6 +130,9 @@ func read(files map[string][]byte) (*side, error) {
 	for _, b := range s.manifest.Boards {
 		if _, ok := files[b.File]; !ok {
 			return nil, fmt.Errorf("the manifest names %s, which the snapshot does not have", b.File)
+		}
+		if _, ok := s.boards[b.ID]; ok {
+			return nil, fmt.Errorf("the manifest has the board %s twice", b.ID)
 		}
 		s.boards[b.ID] = b
 	}
@@ -166,10 +198,14 @@ type field struct {
 // attributes by the name attributes and the attribute's ID (attributeField).
 type fields map[string]field
 
+// attributePrefix is what the name in fields of the value of a component's
+// attribute starts with, before the attribute definition's ID.
+const attributePrefix = "attributes\x00"
+
 // attributeField returns the name in fields of the value of the attribute
 // definition id of a component.
 func attributeField(id string) string {
-	return "attributes\x00" + id
+	return attributePrefix + id
 }
 
 // entity is an entity of a side: its board, of a node, a branch output, or a
@@ -198,7 +234,9 @@ func compare(kind, id string, f, t *entity) (EntityChange, bool) {
 	e.Kind, e.ID = kind, id
 	e.Fields = changes(f.fields, t.fields)
 	switch {
-	case f.board != t.board:
+	// A branch output is on its branch's board, whose move is the branch's:
+	// the output itself is modified, if at all.
+	case f.board != t.board && kind != KindBranchOutput:
 		e.Change = Moved
 	case len(e.Fields) == 0:
 		return EntityChange{}, false
@@ -212,15 +250,8 @@ func compare(kind, id string, f, t *entity) (EntityChange, bool) {
 // changes returns the changes of the fields from into to, sorted by name, a
 // component's attributes by their IDs, or nil for none.
 func changes(from, to fields) []FieldChange {
-	names := slices.Sorted(maps.Keys(from))
-	for n := range to {
-		if _, ok := from[n]; !ok {
-			names = append(names, n)
-		}
-	}
-	slices.Sort(names)
 	var out []FieldChange
-	for _, n := range names {
+	for _, n := range unionOf(from, to) {
 		f, inFrom := from[n]
 		t, inTo := to[n]
 		if inFrom && inTo && bytes.Equal(f.raw, t.raw) {
@@ -237,7 +268,7 @@ func changes(from, to fields) []FieldChange {
 			c.After = t.show
 		}
 		if f.text != nil || t.text != nil {
-			c.Words = wordsOf(f.text, t.text)
+			c.texts = textsOf(f.text, t.text)
 		}
 		if f.expr || t.expr {
 			changed := !slices.Equal(f.refs, t.refs)
@@ -251,28 +282,29 @@ func changes(from, to fields) []FieldChange {
 // cutAttribute returns the attribute definition's ID of name, a component's
 // attribute's name in fields, and true, or false for another field's.
 func cutAttribute(name string) (string, bool) {
-	const prefix = "attributes\x00"
-	if len(name) > len(prefix) && name[:len(prefix)] == prefix {
-		return name[len(prefix):], true
-	}
-	return "", false
+	return strings.CutPrefix(name, attributePrefix)
 }
 
-// wordsOf returns the word-level diff of the plain texts before into after,
-// either of which may be missing, as an empty text.
-func wordsOf(before, after *string) []WordRun {
-	var b, a string
+// textsOf returns the plain texts before and after, either of which may be
+// missing, as an empty text, whose Words a FieldChange computes when it is
+// listed (FieldChange.fill).
+func textsOf(before, after *string) *plainTexts {
+	var p plainTexts
 	if before != nil {
-		b = *before
+		p.before = *before
 	}
 	if after != nil {
-		a = *after
+		p.after = *after
 	}
-	return Words(b, a)
+	return &p
 }
 
 // objectOf returns v's JSON as a JSON object's members, without those of the
-// names drop.
+// names drop: v, of the published format's types, as published.Decode read
+// it, holds only the keys that the format defines, and encoding/json leaves
+// out an optional field whose value is empty, as a resetOnEnter of false or
+// tags of [], so that a field is one that the entity has as the format reads
+// it (schema/diff-corpus/README.md).
 func objectOf(v any, drop ...string) (fields, error) {
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -453,6 +485,9 @@ func (c *comparison) variables() error {
 // definitions returns the side's component types, by ID, and the
 // definitions of their attributes, by ID, as component_types.json holds them.
 func (s *side) definitions() (map[string]published.ComponentType, map[string]published.AttributeDefinition, error) {
+	if s.types != nil {
+		return s.types, s.defs, nil
+	}
 	var file published.ComponentTypes
 	if err := s.decode(published.ComponentTypesPath, &file); err != nil {
 		return nil, nil, err
@@ -472,6 +507,7 @@ func (s *side) definitions() (map[string]published.ComponentType, map[string]pub
 			defs[a.ID] = a
 		}
 	}
+	s.types, s.defs = types, defs
 	return types, defs, nil
 }
 
@@ -597,7 +633,7 @@ func newContents() contents {
 // change.
 func (c *comparison) boards() error {
 	var changed []string
-	for _, id := range boardIDs(c.from, c.to) {
+	for _, id := range unionOf(c.from.boards, c.to.boards) {
 		f, inFrom := c.from.boards[id]
 		t, inTo := c.to.boards[id]
 		if inFrom && inTo && c.same(f.File, t.File) {
@@ -705,16 +741,7 @@ func (c *comparison) boards() error {
 				board = f.board
 			}
 			if e.Change == Moved {
-				if k.kind == KindBranchOutput {
-					// A branch output is on its branch's board, whose move is
-					// the branch's: the output itself was modified, if at all.
-					if len(e.Fields) == 0 {
-						continue
-					}
-					e.Change = Modified
-				} else {
-					e.FromBoard, e.ToBoard = c.from.boardRef(f.board), c.to.boardRef(t.board)
-				}
+				e.FromBoard, e.ToBoard = c.from.boardRef(f.board), c.to.boardRef(t.board)
 			}
 			g := group(board)
 			g.Changes = append(g.Changes, e)
@@ -725,18 +752,6 @@ func (c *comparison) boards() error {
 		c.d.Boards = append(c.d.Boards, *groups[id])
 	}
 	return nil
-}
-
-// boardIDs returns the IDs of the boards of a and b, each once, sorted.
-func boardIDs(a, b *side) []string {
-	ids := slices.Collect(maps.Keys(a.boards))
-	for id := range b.boards {
-		if _, ok := a.boards[id]; !ok {
-			ids = append(ids, id)
-		}
-	}
-	slices.Sort(ids)
-	return ids
 }
 
 // elements returns the nodes and the connections of the side's boards of the

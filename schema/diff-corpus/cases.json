@@ -1963,6 +1963,109 @@
       "from": "base",
       "name": "boards",
       "to": "boards"
+    },
+    {
+      "description": "Keys that the format does not define, which a consumer ignores, in an object of every kind of entity and at any depth, one that differs from a key that the format defines only by its case among them, and optional fields written with the value that the format leaves out, a board variable's resetOnEnter of false and an element's tags of [], are no change.",
+      "diff": {
+        "boards": [],
+        "from": {
+          "contentHash": "sha256:480b80148da485f70504cd601949d117d90f2ad70b83cf1c59604d3b4fe9c599",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "project": {
+          "attributes": [],
+          "componentTypes": [],
+          "components": [],
+          "fields": [],
+          "omitted": 0,
+          "variables": []
+        },
+        "schemaVersion": 1,
+        "summary": {
+          "added": 0,
+          "cosmetic": 0,
+          "kinds": {
+            "attribute": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "board": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "branch_output": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component_type": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "connection": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "node": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "project": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "variable": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            }
+          },
+          "modified": 0,
+          "moved": 0,
+          "removed": 0
+        },
+        "to": {
+          "contentHash": "sha256:9ebd1cf8b6ff6ab12d663fb8ccd2d2d9465fff99ce3346e209c00b18c4dcab40",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "truncated": false
+      },
+      "from": "base",
+      "name": "ignored",
+      "to": "ignored"
     }
   ]
 }

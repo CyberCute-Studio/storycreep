@@ -38,9 +38,16 @@ func TestDiffAtTheServersVersion(t *testing.T) {
 	e.store(t, newer, v2)
 	older := e.mustPublish(t, "1.1.0")
 	e.store(t, older, e.releaseFiles(t, older))
+	// The zero UUID is the draft's.
 	for _, pair := range [][2]ids.UUID{{snapshotID(t, newer), snapshotID(t, older)},
 		{snapshotID(t, older), snapshotID(t, newer)}, {snapshotID(t, newer), {}}} {
-		d, err := e.snapshots.Diff(ctx, e.actor(), e.project, pair[0], pair[1])
+		var d *diff.Diff
+		var err error
+		if pair[1] == (ids.UUID{}) {
+			d, err = e.snapshots.DiffDraft(ctx, e.actor(), e.project, pair[0], diff.MaxLimit)
+		} else {
+			d, err = e.snapshots.Diff(ctx, e.actor(), e.project, pair[0], pair[1], diff.MaxLimit)
+		}
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -69,7 +76,7 @@ func TestDiffAtTheServersVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.store(t, long, edited)
-	_, err = e.snapshots.Diff(ctx, e.actor(), e.project, snapshotID(t, older), snapshotID(t, long))
+	_, err = e.snapshots.Diff(ctx, e.actor(), e.project, snapshotID(t, older), snapshotID(t, long), diff.MaxLimit)
 	var unrepresentable *schemaversion.UnrepresentableError
 	if !errors.As(err, &unrepresentable) || unrepresentable.To != published.SchemaVersion ||
 		len(unrepresentable.Constructs) != 1 || unrepresentable.Constructs[0].Entity != story.start {

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"math/rand/v2"
 	"reflect"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -106,6 +108,36 @@ func TestTruncateBytes(t *testing.T) {
 	}
 	if got.Summary.Modified != 4 {
 		t.Errorf("the truncated diff's summary counts %d modified, want 4", got.Summary.Modified)
+	}
+}
+
+// TestWordsLinear checks that Words of a long text, of 20,000 words, with one
+// word changed in its middle, allocates memory in proportion to the texts,
+// rather than to the square of their shared start's and end's tokens, and
+// that a text more than MaxEdits tokens longer than the other is a change of
+// everything between their shared start and end.
+func TestWordsLinear(t *testing.T) {
+	words := make([]string, 20_000)
+	for i := range words {
+		words[i] = "w" + strconv.Itoa(i)
+	}
+	before := strings.Join(words, " ")
+	words[10_000] = "changed"
+	after := strings.Join(words, " ")
+	var m0, m1 runtime.MemStats
+	runtime.ReadMemStats(&m0)
+	runs := Words(before, after)
+	runtime.ReadMemStats(&m1)
+	if alloc := m1.TotalAlloc - m0.TotalAlloc; alloc > 64<<20 {
+		t.Errorf("Words of two texts of %d bytes allocates %d bytes", len(before), alloc)
+	}
+	if len(runs) != 4 || runs[1] != run(Delete, "w10000") || runs[2] != run(Insert, "changed") {
+		t.Errorf("the words of the long texts are %d runs, want the word changed alone", len(runs))
+	}
+	long := numbered("a", 300)
+	got, want := Words("start", "start "+long), []WordRun{run(Equal, "start"), run(Insert, " "+long)}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("the words of a text into one of more than MaxEdits tokens more are %+v, want %+v", got, want)
 	}
 }
 

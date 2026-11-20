@@ -23,28 +23,32 @@ const (
 // the project's and of each board's, and is Truncated if it left any out. It
 // keeps every board, the project's and each board's own fields, and the
 // summary, which counts every change of d (FR-SYNC-02 AC2). A limit below 1
-// is 1. It fails only where a change is not JSON, which none is.
+// is 1, and one above MaxLimit is MaxLimit. Of a diff that CompareSized
+// made, it computes the word-level diffs of the changes that it keeps, and
+// of no other, in d itself, whose changes the copy shares. It fails only
+// where a change is not JSON, which none is.
 func (d *Diff) Truncate(limit int) (*Diff, error) {
-	limit = max(limit, 1)
+	limit = min(max(limit, 1), MaxLimit)
 	out := *d
 	kept, used, full := 0, 0, false
 	// take returns the changes of cs that fit, and how many it leaves out.
 	take := func(cs []EntityChange) ([]EntityChange, int, error) {
 		taken := []EntityChange{}
-		for i, c := range cs {
-			if !full {
-				data, err := json.Marshal(c)
+		for i := range cs {
+			if !full && kept < limit {
+				cs[i].fill()
+				data, err := json.Marshal(cs[i])
 				if err != nil {
 					return nil, 0, fmt.Errorf("diff: %w", err)
 				}
-				if kept < limit && used+len(data) <= MaxBytes {
-					taken = append(taken, c)
+				if used+len(data) <= MaxBytes {
+					taken = append(taken, cs[i])
 					kept++
 					used += len(data)
 					continue
 				}
-				full = true
 			}
+			full = true
 			return taken, len(cs) - i, nil
 		}
 		return taken, 0, nil

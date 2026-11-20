@@ -18,7 +18,7 @@ A runner reads each set's files as bytes, as a snapshot's are read, diffs the `f
 
 ## The diff
 
-A diff compares two snapshots at one version of the published format, `schemaVersion`, version 1 here. Two values are the same where their JSON is, read as above, but that a variable's default and a component's attribute's value are read as their declaration's type, so that `2` and `2.0` of an `int` are one value. Two values of the same bytes are the same, so an implementation may skip a file, a node, or a connection whose bytes are the same on both sides, as the Go diff does: a node or a connection that moved changed both boards' files, and one on two boards is never skipped.
+A diff compares two snapshots at one version of the published format, `schemaVersion`, version 1 here. Each file is read as a consumer reads it ([`../published/README.md`](../published/README.md), PRD §6.4): of a key that an object has twice, the last; and a key that the format does not define, at any depth, a key that differs from one that it defines only by its case among them, is ignored, as no field and as no part of a value. Two values are the same where their JSON is, read as above, but that a variable's default and a component's attribute's value are read as their declaration's type, so that `2` and `2.0` of an `int` are one value. Two values of the same bytes are the same, so an implementation may skip a file, a node, or a connection whose bytes are the same on both sides, as the Go diff does: a node or a connection that moved changed both boards' files, and one on two boards is never skipped.
 
 ### Its object
 
@@ -35,19 +35,19 @@ A diff compares two snapshots at one version of the published format, `schemaVer
 
 ### The entities and their fields
 
-Each entity is compared by its ID, by these fields, each as its file holds it, the name of each the key of its file's object, but for the few that the diff adds, which the last column names. A field that its file leaves out, as an optional field that is not set, is a field that the entity does not have.
+Each entity is compared by its ID, by these fields, each as its file holds it, the name of each the key of its file's object that the format defines, but for the few that the diff adds, which the last column names. A field that its file leaves out, as an optional field that is not set, is a field that the entity does not have, and so is one that its file holds with the value that the format leaves out, which version 1 has two of: a board variable's `resetOnEnter` of `false`, and an element's `tags` of `[]`.
 
 | Kind | Its fields | Added by the diff |
 | --- | --- | --- |
 | The project | `name` and `slug`, of the manifest's `project`; `entry` and `signals`, of `project/settings.json` | |
-| `variable` | every key of its object but `id` | |
-| `component_type` | every key but `id` and `attributes`, its attribute definitions, which are entities of their own | |
-| `attribute` (an attribute definition) | every key but `id` | `componentType`, its type's ID; `order`, its place among its type's attributes, from 0 |
-| `component` | every key but `id` and `attributes`; and the value of each of its attributes, a field `attributes` of its own, with the `attribute`'s ID | |
+| `variable` | every field of its object but `id` | |
+| `component_type` | every field but `id` and `attributes`, its attribute definitions, which are entities of their own | |
+| `attribute` (an attribute definition) | every field but `id` | `componentType`, its type's ID; `order`, its place among its type's attributes, from 0 |
+| `component` | every field but `id` and `attributes`; and the value of each of its attributes, a field `attributes` of its own, with the `attribute`'s ID | |
 | `board` | `entryNodeId`, `name`, and `slug`, of the manifest's `boards` | |
-| `node` | every key of its object but `id`, and a branch's `outputs`, which are entities of their own | |
-| `branch_output` | every key but `id` | `branch`, its branch's ID |
-| `connection` | every key but `id` | |
+| `node` | every field of its object but `id`, and a branch's `outputs`, which are entities of their own | |
+| `branch_output` | every field but `id` | `branch`, its branch's ID |
+| `connection` | every field but `id` | |
 
 Each node, branch output, and connection is on a board: its file's, and a branch output its branch's.
 
@@ -62,7 +62,7 @@ A change of an entity names it by what its kind shows of it, as `to` has it, or 
 
 ### A field's change
 
-Each change of `fields` has the `field`'s name, and `attribute` for a component's attribute, and its value on each side, `before` and `after`, each left out where its side does not have the field, sorted by `field`, a component's attributes by their IDs. A value is as its file holds it, but:
+Each change of `fields` has the `field`'s name, and `attribute` for a component's attribute, and its value on each side, `before` and `after`, each left out where its side does not have the field, sorted by `field`, a component's attributes by their IDs. A value is as its file holds it, without the keys that the format does not define, but:
 
 - A rich text, an element's `text` or a connection's `label`, is its plain text, as [`../rich-text/README.md`](../rich-text/README.md) derives it from its segments, and its change has `words`, the word-level diff of the plain texts below, an absent one read as the empty text.
 - An expression, a `condition`, or an `onEnter`, `onExit`, or `onTraverse` script, is its `source`, and its change has `refsChanged`: whether the sets of what the two ASTs name differ, each AST's being the `ref` of each of its nodes of the kinds `var` and `node_ref`, and the `ref`, a period, and the `attribute` of each of its `attr` nodes, and an absent expression's the empty set.

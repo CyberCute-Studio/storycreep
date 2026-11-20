@@ -70,22 +70,22 @@ func registerDiffs(m *api.Mux, snapshots *snapshot.Service) {
 		if err != nil {
 			return nil, err
 		}
-		var to ids.UUID
-		if in.Body.To != draftTarget {
-			if to, err = ids.Decode(ids.Snapshot, in.Body.To); err != nil {
-				return nil, err
-			}
-		}
-		d, err := snapshots.Diff(ctx, actor, id, from, to)
-		if err != nil {
-			return nil, snapshotError(ctx, err)
-		}
 		limit := in.Body.Limit
 		if limit == 0 {
 			limit = diff.DefaultLimit
 		}
-		if d, err = d.Truncate(limit); err != nil {
-			return nil, err
+		var d *diff.Diff
+		if in.Body.To == draftTarget {
+			d, err = snapshots.DiffDraft(ctx, actor, id, from, limit)
+		} else {
+			var to ids.UUID
+			if to, err = ids.Decode(ids.Snapshot, in.Body.To); err != nil {
+				return nil, err
+			}
+			d, err = snapshots.Diff(ctx, actor, id, from, to, limit)
+		}
+		if err != nil {
+			return nil, snapshotError(ctx, err)
 		}
 		return &diffOutput{Body: d}, nil
 	}, api.TokenScope(scope.SnapshotRead))

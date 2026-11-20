@@ -28,6 +28,10 @@ func TestScan(t *testing.T) {
 	if id, ok := idOf([]byte(`{"id": "nd_\u0031"}`)); !ok || id != "nd_1" {
 		t.Errorf("the ID of an escaped string is %q, %v", id, ok)
 	}
+	// Of an object that has id twice, the last, as published.Decode reads it.
+	if id, ok := idOf([]byte(`{"id": "nd_A", "title": "x", "id": "nd_B"}`)); !ok || id != "nd_B" {
+		t.Errorf("the ID of an object that has id twice is %q, %v, want the last", id, ok)
+	}
 	items, ok := elementsOf([]byte(` [ {"id": "a"}, "s,]", 3 , [ ] ] `))
 	if !ok || !reflect.DeepEqual(items, [][]byte{[]byte(`{"id": "a"}`), []byte(`"s,]"`), []byte("3"),
 		[]byte("[ ]")}) {

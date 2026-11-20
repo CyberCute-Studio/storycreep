@@ -180,7 +180,8 @@ func unquote(raw []byte) (string, bool) {
 	return s, true
 }
 
-// idOf returns the ID of the JSON object raw, its member id's string, and
+// idOf returns the ID of the JSON object raw, its member id's string, the
+// last of an object that has it twice, as published.Decode reads a key, and
 // true, or false where it has none.
 func idOf(raw []byte) (string, bool) {
 	var id string
@@ -188,7 +189,6 @@ func idOf(raw []byte) (string, bool) {
 	eachMember(raw, func(key string, value []byte) bool {
 		if key == "id" {
 			id, found = unquote(value)
-			return false
 		}
 		return true
 	})

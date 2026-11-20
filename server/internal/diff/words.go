@@ -1,8 +1,8 @@
 package diff
 
 import (
+	"bytes"
 	"slices"
-	"strings"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/semantics"
 )
@@ -66,7 +66,7 @@ func Words(before, after string) []WordRun {
 			script = append(script, edit{op: Insert, token: t})
 		}
 	}
-	var all []edit
+	all := make([]edit, 0, prefix+len(script)+suffix)
 	for _, t := range a[:prefix] {
 		all = append(all, edit{op: Equal, token: t})
 	}
@@ -115,14 +115,23 @@ type edit struct {
 // there. The script is the path that reaches the end of both first, read back
 // from its end through the paths that each d extended, each step's shared
 // tokens after its edit.
+//
+// Every script deletes or inserts at least the |n − m| tokens that one text
+// has more than the other, so it gives up at once where that is more than
+// MaxEdits. Of v, the copy before d keeps only diagonals −d − 1 to d + 1,
+// which are all that the d-th step reads, so that the copies of D steps hold
+// about D² ints rather than D times v.
 func editScript(a, b []string) ([]edit, bool) {
 	n, m := len(a), len(b)
 	most := min(n+m, MaxEdits)
+	if max(n-m, m-n) > most {
+		return nil, false
+	}
 	offset := most + 1
 	v := make([]int, 2*most+3)
 	var trace [][]int
 	for d := 0; d <= most; d++ {
-		trace = append(trace, slices.Clone(v))
+		trace = append(trace, slices.Clone(v[offset-d-1:offset+d+2]))
 		for k := -d; k <= d; k += 2 {
 			var x int
 			if k == -d || (k != d && v[offset+k-1] < v[offset+k+1]) {
@@ -137,7 +146,7 @@ func editScript(a, b []string) ([]edit, bool) {
 			}
 			v[offset+k] = x
 			if x >= n && y >= m {
-				return backtrack(trace, a, b, offset), true
+				return backtrack(trace, a, b), true
 			}
 		}
 	}
@@ -145,13 +154,14 @@ func editScript(a, b []string) ([]edit, bool) {
 }
 
 // backtrack returns the edit script of a into b whose paths trace holds, the
-// furthest point of each diagonal before each number of edits, from the end
-// of both back to their start, in the order of a and b.
-func backtrack(trace [][]int, a, b []string, offset int) []edit {
+// furthest point of diagonals −d − 1 to d + 1 before each number of edits d,
+// diagonal k's at k + d + 1, from the end of both back to their start, in the
+// order of a and b.
+func backtrack(trace [][]int, a, b []string) []edit {
 	x, y := len(a), len(b)
 	var script []edit
 	for d := len(trace) - 1; d >= 0; d-- {
-		v := trace[d]
+		v, offset := trace[d], d+1
 		k := x - y
 		prev := k - 1
 		if k == -d || (k != d && v[offset+k-1] < v[offset+k+1]) {
@@ -179,9 +189,11 @@ func backtrack(trace [][]int, a, b []string, offset int) []edit {
 
 // region is a run of equal tokens, the text of which is equal, or a change,
 // whose deleted tokens' text is deleted and inserted tokens' text inserted.
+// Each text is appended to, so that a region of many tokens is built in time
+// linear in its text, and written as a string once (runsOf).
 type region struct {
 	change                   bool
-	equal, deleted, inserted string
+	equal, deleted, inserted []byte
 }
 
 // regionsOf returns the regions of the script, in order: each run of equal
@@ -196,11 +208,11 @@ func regionsOf(script []edit) []region {
 		r := &out[len(out)-1]
 		switch e.op {
 		case Equal:
-			r.equal += e.token
+			r.equal = append(r.equal, e.token...)
 		case Delete:
-			r.deleted += e.token
+			r.deleted = append(r.deleted, e.token...)
 		default:
-			r.inserted += e.token
+			r.inserted = append(r.inserted, e.token...)
 		}
 	}
 	return out
@@ -216,8 +228,8 @@ func joined(rs []region) []region {
 			ws := out[n-1].equal
 			out = out[:n-1]
 			prev := &out[n-2]
-			prev.deleted += ws + r.deleted
-			prev.inserted += ws + r.inserted
+			prev.deleted = append(append(prev.deleted, ws...), r.deleted...)
+			prev.inserted = append(append(prev.inserted, ws...), r.inserted...)
 			continue
 		}
 		out = append(out, r)
@@ -226,8 +238,8 @@ func joined(rs []region) []region {
 }
 
 // blank reports whether s is white space alone.
-func blank(s string) bool {
-	return strings.TrimFunc(s, semantics.IsWhiteSpace) == ""
+func blank(s []byte) bool {
+	return len(bytes.TrimFunc(s, semantics.IsWhiteSpace)) == 0
 }
 
 // runsOf returns the runs of rs: an equal run of each equal region, and a
@@ -237,14 +249,14 @@ func runsOf(rs []region) []WordRun {
 	out := []WordRun{}
 	for _, r := range rs {
 		if !r.change {
-			out = append(out, WordRun{Op: Equal, Text: r.equal})
+			out = append(out, WordRun{Op: Equal, Text: string(r.equal)})
 			continue
 		}
-		if r.deleted != "" {
-			out = append(out, WordRun{Op: Delete, Text: r.deleted})
+		if len(r.deleted) != 0 {
+			out = append(out, WordRun{Op: Delete, Text: string(r.deleted)})
 		}
-		if r.inserted != "" {
-			out = append(out, WordRun{Op: Insert, Text: r.inserted})
+		if len(r.inserted) != 0 {
+			out = append(out, WordRun{Op: Insert, Text: string(r.inserted)})
 		}
 	}
 	return out

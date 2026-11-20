@@ -1,0 +1,14 @@
+{
+  "entry": {
+    "boardId": "bd_000000000000000000000000B1",
+    "nodeId": "nd_000000000000000000000000N1"
+  },
+  "schemaVersion": 1,
+  "signals": [
+    "bell",
+    "door_open"
+  ],
+  "theme": {
+    "dark": true
+  }
+}
