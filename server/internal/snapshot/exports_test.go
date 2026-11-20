@@ -10,6 +10,7 @@ import (
 	"maps"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
@@ -129,5 +130,58 @@ func TestExportRelease(t *testing.T) {
 	}
 	if _, err := e.snapshots.ExportDraft(ctx, e.actor(), e.project, newer); !errors.As(err, &unsupported) {
 		t.Errorf("the draft's export at version %d: %v, want an *UnsupportedError", newer, err)
+	}
+}
+
+// TestListNewestFirst checks that the list holds the project's snapshots in
+// the reverse of the order in which they were published, a page at a time,
+// those of a status alone with it, and that a snapshot published after one
+// whose ID a server with a clock an hour ahead made still sorts after it, as
+// each new snapshot's ID is made after the project's newest
+// (ids.NewAfter).
+func TestListNewestFirst(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.newStory(t)
+	ctx := context.Background()
+	var published []string
+	for _, v := range []string{"0.1.0", "0.2.0", "0.3.0"} {
+		published = append(published, e.mustPublish(t, v).ID)
+	}
+	// A snapshot that a server whose clock is an hour ahead published.
+	ahead := ids.NewV7(time.Now().Add(time.Hour).UnixMilli(), [10]byte{})
+	if _, err := e.d.Admin(t).Exec(ctx, `INSERT INTO snapshot (id, workspace_id, project_id, version,
+		version_major, version_minor, version_patch, note, acknowledged_seq, acknowledged_warnings)
+		VALUES ($1, $2, $3, '0.4.0', 0, 4, 0, 'Harbour intro', 0, '[]')`, ahead, e.workspace,
+		e.project); err != nil {
+		t.Fatal(err)
+	}
+	published = append(published, ids.Encode(ids.Snapshot, ahead))
+	for _, v := range []string{"0.5.0", "0.6.0"} {
+		published = append(published, e.mustPublish(t, v).ID)
+	}
+	slices.Reverse(published)
+
+	var listed []string
+	after := ids.UUID{}
+	for {
+		page, err := e.snapshots.List(ctx, e.actor(), e.project, "", after, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		for _, s := range page {
+			listed = append(listed, s.ID)
+		}
+		after = snapshotID(t, page[len(page)-1])
+	}
+	if !slices.Equal(listed, published) {
+		t.Errorf("the list is %v, want %v, the newest first", listed, published)
+	}
+	ready, err := e.snapshots.List(ctx, e.actor(), e.project, snapshot.Ready, ids.UUID{}, 10)
+	if err != nil || len(ready) != 0 {
+		t.Errorf("the ready snapshots are %v (%v), want none, as none is built", ready, err)
 	}
 }

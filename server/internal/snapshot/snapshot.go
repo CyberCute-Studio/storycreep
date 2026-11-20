@@ -336,7 +336,13 @@ func (s *Service) Publish(ctx context.Context, actor commands.Actor, projectID i
 			}
 			return e
 		}
-		id := ids.New()
+		// The new snapshot's ID sorts after every ID of the project's
+		// snapshots, as their list orders them newest first, by their IDs.
+		last, err := q.NewestSnapshotID(ctx, queries.NewestSnapshotIDParams{WorkspaceID: w, ProjectID: p})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("snapshot: read the project's newest snapshot: %w", err)
+		}
+		id := ids.NewAfter(last.Bytes)
 		if err := q.InsertSnapshot(ctx, queries.InsertSnapshotParams{ID: nullUUID(id), WorkspaceID: w,
 			ProjectID: p, Version: v.String(), VersionMajor: v.Major, VersionMinor: v.Minor, VersionPatch: v.Patch,
 			Note: r.Note, AcknowledgedSeq: r.AcknowledgedSeq, AcknowledgedWarnings: acknowledged,

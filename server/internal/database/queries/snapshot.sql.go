@@ -172,6 +172,27 @@ func (q *Queries) LockSnapshots(ctx context.Context, arg LockSnapshotsParams) er
 	return err
 }
 
+const newestSnapshotID = `-- name: NewestSnapshotID :one
+SELECT id FROM snapshot WHERE workspace_id = $1 AND project_id = $2 ORDER BY id DESC LIMIT 1
+`
+
+type NewestSnapshotIDParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+}
+
+// NewestSnapshotID returns the greatest ID of the project's snapshots, of
+// every status, or no row if it has none, after which a new snapshot's ID is
+// made (ids.NewAfter), under the lock of the project's snapshots, so that
+// their IDs, by which Snapshots lists them, follow the order in which they
+// were published, whatever the clocks of the servers that published them.
+func (q *Queries) NewestSnapshotID(ctx context.Context, arg NewestSnapshotIDParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, newestSnapshotID, arg.WorkspaceID, arg.ProjectID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const newestSnapshotVersion = `-- name: NewestSnapshotVersion :one
 SELECT version FROM snapshot
 WHERE workspace_id = $1 AND project_id = $2 AND status <> 'failed'
@@ -434,7 +455,7 @@ type SnapshotsRow struct {
 
 // Snapshots returns a page of the project's snapshots, as Snapshot returns
 // each, newest first, by their IDs, which follow the order in which they
-// were published, those of the status alone, or of every status for a null
+// were published (NewestSnapshotID), those of the status alone, or of every status for a null
 // one, after the snapshot of the ID after in that order, or from the newest
 // for a null one (PRD FR-SNAP-02). The key (workspace_id, project_id, id)
 // reads them in that order.

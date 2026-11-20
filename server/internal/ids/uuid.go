@@ -1,6 +1,7 @@
 package ids
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -42,6 +43,25 @@ func NewV7(ms int64, r [10]byte) UUID {
 	u[6] = 0x70 | u[6]&0x0F
 	u[8] = 0x80 | u[8]&0x3F
 	return u
+}
+
+// NewAfter returns a new UUIDv7 that sorts after u, as the IDs of a series
+// that a lock serializes must, as a project's snapshots, which their list
+// orders by ID: New's, unless that does not sort after u, as when u was made
+// in the same millisecond, or by a server whose clock is ahead, and then one
+// of the millisecond after u's, of the system's random bytes, as hard to
+// guess as New's.
+func NewAfter(u UUID) UUID {
+	if id := New(); bytes.Compare(id[:], u[:]) > 0 {
+		return id
+	}
+	var r [10]byte
+	_, _ = rand.Read(r[:])
+	var ms int64
+	for i := range 6 {
+		ms = ms<<8 | int64(u[i])
+	}
+	return NewV7(ms+1, r)
 }
 
 // IsV7 reports whether u is a UUIDv7 of RFC 9562: its version is 7, and its

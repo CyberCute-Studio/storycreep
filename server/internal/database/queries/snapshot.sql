@@ -19,6 +19,14 @@ WHERE workspace_id = @workspace_id AND project_id = @project_id AND status <> 'f
 ORDER BY version_major DESC, version_minor DESC, version_patch DESC
 LIMIT 1;
 
+-- name: NewestSnapshotID :one
+-- NewestSnapshotID returns the greatest ID of the project's snapshots, of
+-- every status, or no row if it has none, after which a new snapshot's ID is
+-- made (ids.NewAfter), under the lock of the project's snapshots, so that
+-- their IDs, by which Snapshots lists them, follow the order in which they
+-- were published, whatever the clocks of the servers that published them.
+SELECT id FROM snapshot WHERE workspace_id = @workspace_id AND project_id = @project_id ORDER BY id DESC LIMIT 1;
+
 -- name: InsertSnapshot :exec
 -- InsertSnapshot adds a snapshot of a project, building, which Snapshot
 -- then reads as the API shows it.
@@ -43,7 +51,7 @@ WHERE s.workspace_id = @workspace_id AND s.project_id = @project_id AND s.id = @
 -- name: Snapshots :many
 -- Snapshots returns a page of the project's snapshots, as Snapshot returns
 -- each, newest first, by their IDs, which follow the order in which they
--- were published, those of the status alone, or of every status for a null
+-- were published (NewestSnapshotID), those of the status alone, or of every status for a null
 -- one, after the snapshot of the ID after in that order, or from the newest
 -- for a null one (PRD FR-SNAP-02). The key (workspace_id, project_id, id)
 -- reads them in that order.
