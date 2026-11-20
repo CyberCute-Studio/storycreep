@@ -27,10 +27,10 @@ It differs only in what its schemas take, not in what a runtime does with a snap
 
 ## The Go side
 
-The version's migration, renderer, and validator are Go code in `server/internal/schemaversion/synthetic`, because a Go module compiles only the code under its own directory. Every file of that package needs the `synthetic_schema` build tag, so a build without the tag, as every release is, cannot import it. Importing it registers the version (`schemaversion.Register`, which exists only with the tag). The default test run has no tag, so most tests exercise the release configuration with version 1 as the newest. Only the tests of the two-version criteria run with the tag:
+The version's migration, renderer, and validator are Go code in `server/internal/schemaversion/synthetic`, because a Go module compiles only the code under its own directory. Every file of that package needs the `synthetic_schema` build tag, so a build without the tag, as every release is, cannot import it. Importing it registers the version (`schemaversion.Register`, which exists only with the tag). The default test run has no tag, so most tests exercise the release configuration with version 1 as the newest. Only the tests of the two-version criteria run with the tag: those of the registry, and those of the exports of package `snapshot`, which render a snapshot stored at this version down to version 1 (PRD FR-SYNC-01 AC2):
 
 ```sh
-go test -tags synthetic_schema ./internal/schemaversion/...
+go test -tags synthetic_schema ./internal/schemaversion/... ./internal/snapshot/...
 ```
 
-Running them with `-update`, in `server/`, rewrites `published/v2/` and `fixtures/v2/` after a change of version 1's types or of the migration. CI runs them on every operating system, and the database's with each PostgreSQL version.
+Running those of `./internal/schemaversion/...` with `-update`, in `server/`, rewrites `published/v2/` and `fixtures/v2/` after a change of version 1's types or of the migration. CI runs them on every operating system, and the database's with each PostgreSQL version.
