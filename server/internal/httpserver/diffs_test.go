@@ -37,8 +37,11 @@ func corpusSet(t *testing.T, name string) map[string][]byte {
 			return err
 		}
 		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
+		}
 		files[filepath.ToSlash(rel)] = data
-		return err
+		return nil
 	})
 	if err != nil {
 		t.Fatal(err)

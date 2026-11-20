@@ -105,26 +105,27 @@ type BoardRef struct {
 
 // EntityChange is what happened to an entity. It names the entity by what
 // its kind shows of it, as the to side has it, or as the from side has it for
-// one that was removed: a variable by its key and type; a component type by
-// its key and name; an attribute definition by its component type's ID, its
-// key, and its name; a component by its key and name; a node by its type, its
-// title, and an element's text's preview, where it has them; a branch output
-// by its branch's ID; and a connection by the nodes that it leaves and enters
-// and its label's plain text, where it has one.
+// one that was removed, each member where it is not empty: a variable by its
+// key and type; a component type by its key and name; an attribute
+// definition by its component type's ID, its key, and its name; a component
+// by its key and name; a node by its type, its title, and an element's
+// text's preview, where it has them; a branch output by its branch's ID; and
+// a connection by the nodes that it leaves and enters and its label's plain
+// text, where it has one.
 type EntityChange struct {
 	Branch        string        `json:"branch,omitempty" doc:"A branch output's branch, a node's ID."`
 	Change        string        `json:"change" enum:"added,removed,modified,moved" doc:"What happened to the entity: added, which only the to side has; removed, which only the from side has; modified, which both sides have, whose fields differ; or moved, a node or a connection that the two sides have on different boards, whose fields may differ too (PRD §7.4)."`
 	ComponentType string        `json:"componentType,omitempty" doc:"An attribute definition's component type's ID."`
-	Cosmetic      bool          `json:"cosmetic,omitempty" doc:"Set on a modified node whose position alone changed, which a view collapses by default (PRD §7.4)."`
+	Cosmetic      bool          `json:"cosmetic,omitempty" doc:"Set on a modified node whose position alone changed, which a view collapses by default, and never on a moved one (PRD §7.4)."`
 	Fields        []FieldChange `json:"fields,omitempty" nullable:"false" doc:"The changes of the entity's fields, sorted by field, and the values of a component's attributes by the attribute's ID, of an entity that was modified, or moved with fields that differ too. An entity that was added or removed lists none."`
 	From          string        `json:"from,omitempty" doc:"The node that a connection leaves."`
 	FromBoard     *BoardRef     `json:"fromBoard,omitempty" doc:"The board that a moved node or connection was on, as the from side has it."`
 	ID            string        `json:"id" doc:"The entity's ID."`
 	Key           string        `json:"key,omitempty" doc:"A variable's, a component type's, an attribute definition's, or a component's key."`
 	Kind          string        `json:"kind" enum:"variable,component_type,attribute,component,node,branch_output,connection" doc:"The entity's kind."`
-	Label         string        `json:"label,omitempty" doc:"A connection's label's plain text, where it has one."`
-	Name          string        `json:"name,omitempty" doc:"A component type's, an attribute definition's, or a component's name."`
-	Preview       string        `json:"preview,omitempty" doc:"An element's text's preview, where it has a text."`
+	Label         string        `json:"label,omitempty" doc:"A connection's label's plain text, where it has a label whose plain text is not empty."`
+	Name          string        `json:"name,omitempty" doc:"A component type's, an attribute definition's, or a component's name, where it is not empty."`
+	Preview       string        `json:"preview,omitempty" doc:"An element's text's preview, where it has a text whose preview is not empty: a text of white space alone has an empty one."`
 	Title         string        `json:"title,omitempty" doc:"A node's title, where it has one."`
 	To            string        `json:"to,omitempty" doc:"The node that a connection enters."`
 	ToBoard       *BoardRef     `json:"toBoard,omitempty" doc:"The board that a moved node or connection is on, as the to side has it."`

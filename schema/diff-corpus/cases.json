@@ -866,7 +866,7 @@
       "to": "moved"
     },
     {
-      "description": "A board that only one side has is added or removed, but a node or a connection of it that the other side has on another board is moved, onto the added board or off the removed one, not added or removed with it.",
+      "description": "A board that only one side has is added or removed, but a node or a connection of it that the other side has on another board is moved, onto the added board or off the removed one, not added or removed with it; and a node whose position alone changed too is moved, with its position, never cosmetic.",
       "diff": {
         "boards": [
           {
@@ -889,6 +889,19 @@
             "changes": [
               {
                 "change": "moved",
+                "fields": [
+                  {
+                    "after": {
+                      "x": 40,
+                      "y": 80
+                    },
+                    "before": {
+                      "x": 0,
+                      "y": 0
+                    },
+                    "field": "position"
+                  }
+                ],
                 "fromBoard": {
                   "id": "bd_000000000000000000000000B3",
                   "name": "Empty",
@@ -1032,7 +1045,7 @@
           "removed": 1
         },
         "to": {
-          "contentHash": "sha256:4397dc527c2346c55b54a157e66b9e476352c1c2f486e6bcda26835f45c8605a",
+          "contentHash": "sha256:a5b294a78e7e793e6535f8cb8ff45c668407352772034886358cac5276b522fb",
           "id": "snp_000000000000000000000000G1",
           "kind": "snapshot",
           "version": "1.4.0"
@@ -1199,7 +1212,7 @@
       "to": "cosmetic"
     },
     {
-      "description": "A changed rich text, an element's text or a connection's label, has its plain texts as before and after, and their word-level diff.",
+      "description": "A changed rich text, an element's text or a connection's label, has its plain texts as before and after, one that a side does not have left out, and their word-level diff, an absent text's as the empty text's; and an element whose text, of white space alone, has an empty preview is named without one.",
       "diff": {
         "boards": [
           {
@@ -1243,6 +1256,24 @@
                 "id": "nd_000000000000000000000000N3",
                 "kind": "node",
                 "preview": "The very end <3 & \"farewell\"",
+                "type": "element"
+              },
+              {
+                "change": "modified",
+                "fields": [
+                  {
+                    "after": "  ",
+                    "field": "text",
+                    "words": [
+                      {
+                        "op": "insert",
+                        "text": "  "
+                      }
+                    ]
+                  }
+                ],
+                "id": "nd_000000000000000000000000N5",
+                "kind": "node",
                 "type": "element"
               },
               {
@@ -1338,7 +1369,7 @@
             "node": {
               "added": 0,
               "cosmetic": 0,
-              "modified": 1,
+              "modified": 2,
               "moved": 0,
               "removed": 0
             },
@@ -1357,12 +1388,12 @@
               "removed": 0
             }
           },
-          "modified": 2,
+          "modified": 3,
           "moved": 0,
           "removed": 0
         },
         "to": {
-          "contentHash": "sha256:3a52166ed756cfc97500bfcdc5bdecfcadf904c976b32d4ff5df341dc9a3c284",
+          "contentHash": "sha256:fb745a6b23e6e0a7c5fd26656c7c22d378cc9c859510dac564e079cb610da3df",
           "id": "snp_000000000000000000000000G1",
           "kind": "snapshot",
           "version": "1.4.0"

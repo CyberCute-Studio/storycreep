@@ -141,6 +141,25 @@
       ]
     },
     {
+      "after": "x y z d",
+      "before": "a b c d",
+      "name": "three-words-rewritten",
+      "words": [
+        {
+          "op": "delete",
+          "text": "a b c"
+        },
+        {
+          "op": "insert",
+          "text": "x y z"
+        },
+        {
+          "op": "equal",
+          "text": " d"
+        }
+      ]
+    },
+    {
       "after": "b a",
       "before": "a b",
       "name": "swapped",

@@ -241,7 +241,7 @@
           "type": "string"
         },
         "cosmetic": {
-          "description": "Set on a modified node whose position alone changed, which a view collapses by default (PRD §7.4).",
+          "description": "Set on a modified node whose position alone changed, which a view collapses by default, and never on a moved one (PRD §7.4).",
           "type": "boolean"
         },
         "fields": {
@@ -281,15 +281,15 @@
           "type": "string"
         },
         "label": {
-          "description": "A connection's label's plain text, where it has one.",
+          "description": "A connection's label's plain text, where it has a label whose plain text is not empty.",
           "type": "string"
         },
         "name": {
-          "description": "A component type's, an attribute definition's, or a component's name.",
+          "description": "A component type's, an attribute definition's, or a component's name, where it is not empty.",
           "type": "string"
         },
         "preview": {
-          "description": "An element's text's preview, where it has a text.",
+          "description": "An element's text's preview, where it has a text whose preview is not empty: a text of white space alone has an empty one.",
           "type": "string"
         },
         "title": {

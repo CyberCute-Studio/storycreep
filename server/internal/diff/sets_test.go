@@ -78,8 +78,11 @@ func readFixture(t *testing.T) map[string][]byte {
 			return err
 		}
 		rel, err := filepath.Rel(fixtureDir, p)
+		if err != nil {
+			return err
+		}
 		files[filepath.ToSlash(rel)] = data
-		return err
+		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -382,7 +385,8 @@ var corpusSets = []corpusSet{
 	}},
 	// rehomed removes the empty board, and moves added's two elements and
 	// their connection, which it held, to a board that it adds, the
-	// lighthouse, as an author who splits a board or merges two does.
+	// lighthouse, as an author who splits a board or merges two does, one of
+	// the elements to another place on its new board's canvas.
 	{"rehomed", func(t *testing.T, sets map[string]*snap) *snap {
 		s := of(t, sets, "added")
 		quay := s.board(t, b3)
@@ -390,6 +394,8 @@ var corpusSets = []corpusSet{
 		s.boards = append(s.boards, &published.Board{SchemaVersion: published.SchemaVersion,
 			Board: published.BoardInfo{ID: b4, Name: "Lighthouse", Slug: "lighthouse"},
 			Nodes: quay.Nodes, Connections: quay.Connections})
+		gulls, _ := s.node(t, b4, n20)
+		gulls.(*published.Element).Position = published.Position{X: 40, Y: 80}
 		return s
 	}},
 	// cosmetic moves two elements on their canvas, and changes nothing else.
@@ -401,11 +407,15 @@ var corpusSets = []corpusSet{
 		mira.(*published.Element).Position = published.Position{X: 120.5, Y: 0}
 		return s
 	}},
-	// texts rewrites an element's text and lengthens a connection's label.
+	// texts rewrites an element's text, gives one that had none a text of
+	// white space alone, whose preview is empty, and lengthens a connection's
+	// label.
 	{"texts", func(t *testing.T, sets map[string]*snap) *snap {
 		s := of(t, sets, "base")
 		end, _ := s.node(t, b1, n3)
 		end.(*published.Element).Text = textOf(segments(t, `The very end <3 & "farewell"`))
+		blank, _ := s.node(t, b1, n5)
+		blank.(*published.Element).Text = textOf(segments(t, "  "))
 		s.connection(t, b1, k2).Label = &published.Label{Segments: segments(t, "Leave quietly")}
 		return s
 	}},

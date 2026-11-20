@@ -388,6 +388,38 @@ func TestMovedBranchOutputs(t *testing.T) {
 	}
 }
 
+// TestNegativeZeroPosition checks that a node's position whose coordinate is
+// written -0, which encoding/json writes back as -0, is the same as one of 0,
+// as a consumer reads the two as one double (schema/diff-corpus/README.md).
+func TestNegativeZeroPosition(t *testing.T) {
+	files := corpusSetFiles(t, "base")
+	negative, err := schemaversion.Edit(files, func(p string, file map[string]any) error {
+		if p == published.BoardPath("harbour-intro") {
+			position := member(file, "nodes", n5)["position"].(map[string]any)
+			position["x"], position["y"] = json.Number("-0"), json.Number("-0.0")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if negative, err = schemaversion.Seal(negative); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(negative[published.BoardPath("harbour-intro")], []byte(`"x": -0,`)) {
+		t.Fatal("the edited board's file does not write the position's -0")
+	}
+	for _, pair := range [][2]map[string][]byte{{files, negative}, {negative, files}} {
+		d, err := Compare(pair[0], pair[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Summary != (DiffSummary{}) || len(d.Boards) != 0 {
+			t.Errorf("a position of -0 against one of 0 is %+v, want no change", d.Boards)
+		}
+	}
+}
+
 // TestCompareRefusesABoardTwice checks that Compare fails on a manifest that
 // names a board's ID twice, as on any entity's ID that it has twice.
 func TestCompareRefusesABoardTwice(t *testing.T) {
@@ -433,7 +465,8 @@ func TestCompareSized(t *testing.T) {
 			}
 		}
 	}
-	// The case texts changes an element's text and then a connection's label.
+	// The case texts changes two elements' texts and then a connection's
+	// label, of which a limit of 1 keeps the first alone.
 	c := caseNamed(t, "texts")
 	d, err := compareFiles(corpusSetFiles(t, c.From), corpusSetFiles(t, c.To))
 	if err != nil {

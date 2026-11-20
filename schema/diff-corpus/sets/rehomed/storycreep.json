@@ -36,7 +36,7 @@
   "files": {
     "boards/harbour-intro.json": "sha256:99e9c8afd417e7870f4d99a5540cafb3c9184d5a965712640a05ef64eb45f30a",
     "boards/keepers-gate.json": "sha256:37d6209b3e6b00e24dbd31ae818af194dee42ce2660347f95824be33d216b4dc",
-    "boards/lighthouse.json": "sha256:15eee6b7cbd04fa331db853fd37d48dfa22e88251f8677e0a2fb684c4543eb2b",
+    "boards/lighthouse.json": "sha256:e0cfa9ed65840ca2d4e89f083f6353f5c8a29d97cbbf1283bcb8442b92d0ef72",
     "project/component_types.json": "sha256:ad7aa2505638b339872c8fc0f4cac72f1b73ac519f058761188fce8523367a82",
     "project/components.json": "sha256:30f79774d0124ae5627efe8aa1e193db98cc7c1ae8fb0c571424bec197cfd505",
     "project/settings.json": "sha256:380c2a5b1f407f9e568d6a623b61307f7a49991b3f2117dec770c26c2c8c992d",
@@ -54,7 +54,7 @@
   "schemaVersion": 1,
   "snapshot": {
     "channel": "release",
-    "contentHash": "sha256:4397dc527c2346c55b54a157e66b9e476352c1c2f486e6bcda26835f45c8605a",
+    "contentHash": "sha256:a5b294a78e7e793e6535f8cb8ff45c668407352772034886358cac5276b522fb",
     "id": "snp_000000000000000000000000G1",
     "note": "Golden <note> & \"quotes\"",
     "publishedAt": "2026-11-19T12:34:56Z",

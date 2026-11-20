@@ -28,8 +28,8 @@
       "isEnding": false,
       "kind": "dialogue",
       "position": {
-        "x": 0,
-        "y": 0
+        "x": 40,
+        "y": 80
       },
       "text": {
         "preview": "Gulls cry.",

@@ -11,6 +11,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/expr"
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
 	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
+	"github.com/CyberCute-Studio/storycreep/server/internal/schemagen"
 	"github.com/CyberCute-Studio/storycreep/server/internal/value"
 )
 
@@ -34,14 +35,18 @@ import (
 //   - An entity that only to has was added, and one that only from has
 //     removed. One that both have was moved, if it is a node or a connection
 //     on different boards; otherwise it was modified if a field differs, a
-//     field that one of them has and the other does not among them, and is
-//     cosmetic where only its position does.
-//   - Two values of a field are the same where their JSON is, but that each
-//     value of a declaration's type is read as that type (value.Value.Read),
-//     so that two numbers are the same where they are one number, as 2 and
-//     2.0 of an int. A field's value is written as its file holds it, but a
-//     rich text's, an element's text or a connection's label, which is its
-//     plain text (richtext.PlainText), with the Words of the two, and an
+//     field that one of them has and the other does not among them, and a
+//     modified node is cosmetic where only its position does; a moved one
+//     never is.
+//   - Two values of a field are the same where their JSON is, as the format's
+//     types write what they read, but that each value of a declaration's
+//     type, a variable's default, an attribute definition's, and a
+//     component's value of an attribute, is read as that type
+//     (value.Value.Read), and a node's position's -0 as 0, so that two
+//     numbers are the same where they are one double, as 2 and 2.0, as a
+//     consumer reads them. A field's value is written as its file holds it,
+//     but a rich text's, an element's text or a connection's label, which is
+//     its plain text (richtext.PlainText), with the Words of the two, and an
 //     expression's, a condition or a script, which is its source, with
 //     whether the variables, components' attributes, and nodes that its AST
 //     names differ (refsChanged).
@@ -307,9 +312,10 @@ func textsOf(before, after *string) *plainTexts {
 // it, holds only the keys that the format defines, and encoding/json leaves
 // out an optional field whose value is empty, as a resetOnEnter of false or
 // tags of [], so that a field is one that the entity has as the format reads
-// it (schema/diff-corpus/README.md).
+// it (schema/diff-corpus/README.md). It writes v without escaping HTML, as
+// the API writes every other string (schemagen.Marshal).
 func objectOf(v any, drop ...string) (fields, error) {
-	data, err := json.Marshal(v)
+	data, err := schemagen.Marshal(v)
 	if err != nil {
 		return nil, err
 	}
@@ -326,9 +332,9 @@ func objectOf(v any, drop ...string) (fields, error) {
 	return out, nil
 }
 
-// set sets the field name to v's JSON.
+// set sets the field name to v's JSON, as objectOf writes it.
 func (fs fields) set(name string, v any) error {
-	raw, err := json.Marshal(v)
+	raw, err := schemagen.Marshal(v)
 	if err != nil {
 		return err
 	}
@@ -338,15 +344,17 @@ func (fs fields) set(name string, v any) error {
 
 // richText marks the field name, a rich text of the segments segs, if it is
 // one of fs's, as one whose value is shown as its plain text, with the words
-// of its change.
-func (fs fields) richText(name string, segs richtext.Segments) {
+// of its change, and returns the plain text, or "" where fs has no field
+// name.
+func (fs fields) richText(name string, segs richtext.Segments) string {
 	f, ok := fs[name]
 	if !ok {
-		return
+		return ""
 	}
 	plain := richtext.PlainText(segs)
 	f.show, f.text = plain, &plain
 	fs[name] = f
+	return plain
 }
 
 // expression marks the field name, an expression of the AST ast and the source
@@ -851,8 +859,7 @@ func readConnection(e element, into contents) error {
 	}
 	show := EntityChange{From: cn.From, To: cn.To}
 	if cn.Label != nil {
-		fs.richText("label", cn.Label.Segments)
-		show.Label = richtext.PlainText(cn.Label.Segments)
+		show.Label = fs.richText("label", cn.Label.Segments)
 	}
 	if cn.Condition != nil {
 		fs.expression("condition", cn.Condition.AST, cn.Condition.Source)
@@ -865,8 +872,18 @@ func readConnection(e element, into contents) error {
 }
 
 // nodeEntity returns the node n as an entity, without its board, and without
-// a branch's outputs, which are entities of their own.
+// a branch's outputs, which are entities of their own, its position's -0 as
+// 0, which encoding/json writes as -0, and which a consumer reads as the
+// number 0. It may change n, which readNode decoded for it alone.
 func nodeEntity(n published.Node) (*entity, error) {
+	switch n := n.(type) {
+	case *published.Element:
+		n.Position = zeroed(n.Position)
+	case *published.Branch:
+		n.Position = zeroed(n.Position)
+	case *published.Jumper:
+		n.Position = zeroed(n.Position)
+	}
 	fs, err := objectOf(n, "id", "outputs")
 	if err != nil {
 		return nil, err
@@ -894,4 +911,16 @@ func nodeEntity(n published.Node) (*entity, error) {
 		show = EntityChange{Type: published.NodeJumper, Title: n.Title}
 	}
 	return &entity{fields: fs, show: show}, nil
+}
+
+// zeroed returns p with each coordinate that is -0 as 0, which is the same
+// double to a consumer, as value.Value.Read reads a float's -0.
+func zeroed(p published.Position) published.Position {
+	if p.X == 0 {
+		p.X = 0
+	}
+	if p.Y == 0 {
+		p.Y = 0
+	}
+	return p
 }

@@ -58,8 +58,11 @@ func registerDiffs(m *api.Mux, snapshots *snapshot.Service) {
 			"not fit, which truncated, the project's omitted, and each board's omitted count, while the summary " +
 			"still counts every change (PRD FR-SYNC-02 AC2). The draft is not a release, so an API token needs " +
 			"project:read for a diff into it, and one that holds snapshot:read alone is answered with 403 " +
-			"insufficient_scope." + projectNotFoundDoc + tokenNotFoundDoc + snapshotNotFoundDoc +
-			tokenAuthDoc(scope.SnapshotRead),
+			"insufficient_scope. A snapshot stored at a newer version of the format than the server writes, as " +
+			"only a server that reads both versions holds, whose content the server's version cannot express, is " +
+			"answered with 409 schema_unrepresentable, whose details.schema is the server's version and " +
+			"details.constructs lists each value that it cannot express (PRD §6.4)." + projectNotFoundDoc +
+			tokenNotFoundDoc + snapshotNotFoundDoc + tokenAuthDoc(scope.SnapshotRead),
 		Tags: []string{"Snapshots"},
 	}, func(ctx context.Context, in *diffInput) (*diffOutput, error) {
 		id, actor, err := projectActor(ctx, in.ProjectID)

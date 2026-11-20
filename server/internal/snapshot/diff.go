@@ -43,6 +43,12 @@ func (s *Service) Diff(ctx context.Context, actor commands.Actor, projectID, fro
 		if err := f.read(ctx, tx, ws, projectID, from); err != nil {
 			return err
 		}
+		// A snapshot's diff into itself compares its files with themselves,
+		// which it reads once.
+		if to == from {
+			t = f
+			return nil
+		}
 		return t.read(ctx, tx, ws, projectID, to)
 	})
 	if err != nil {

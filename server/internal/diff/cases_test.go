@@ -13,22 +13,24 @@ import (
 // list or a count that is empty or 0, and truncated, which no case is.
 
 // corpusCase is a case of the corpus: its name, what it is about, the names of
-// its from and to sets, and its expected diff, in which ids replaces each of
-// the sets' IDs' placeholders, as <N1>, and refs each board's, as <@B1>.
+// its from and to sets, and its expected diff, in which boardRefs replaces
+// each placeholder of a board as a change names it, as <@B1>, and then refs
+// each of the sets' IDs' placeholders, as <N1> or <B1>.
 type corpusCase struct {
 	name, description, from, to, diff string
 }
 
-// ids replaces the placeholders of the expected diffs' IDs, and of their
-// boards, with the IDs and the boards that the sets have.
-var ids = strings.NewReplacer(
+// boardRefs replaces the placeholders of the boards that the expected diffs
+// name, as a group or a moved change names its board, with each board as the
+// sets have it, its ID a placeholder that refs replaces.
+var boardRefs = strings.NewReplacer(
 	`<@B1>`, `{"id": "<B1>", "name": "Harbour Intro\u2028Part one", "slug": "harbour-intro"}`,
 	`<@B2>`, `{"id": "<B2>", "name": "Keeper's \"Gate\" \\ back", "slug": "keepers-gate"}`,
 	`<@B3>`, `{"id": "<B3>", "name": "Empty", "slug": "empty"}`,
 	`<@B4>`, `{"id": "<B4>", "name": "Lighthouse", "slug": "lighthouse"}`,
 )
 
-// refs replaces the placeholders of the IDs.
+// refs replaces the placeholders of the IDs with the IDs that the sets have.
 var refs = strings.NewReplacer(
 	"<B1>", b1, "<B2>", b2, "<B3>", b3, "<B4>", b4,
 	"<N1>", n1, "<N2>", n2, "<N3>", n3, "<N4>", n4, "<N5>", n5, "<N10>", n10, "<N11>", n11,
@@ -41,7 +43,7 @@ var refs = strings.NewReplacer(
 
 // expand returns the expected diff of c with its placeholders replaced.
 func (c corpusCase) expand() string {
-	return refs.Replace(ids.Replace(c.diff))
+	return refs.Replace(boardRefs.Replace(c.diff))
 }
 
 var corpusCases = []corpusCase{
@@ -109,11 +111,12 @@ var corpusCases = []corpusCase{
 	}`},
 	{"rehomed", "A board that only one side has is added or removed, but a node or a connection of it that the " +
 		"other side has on another board is moved, onto the added board or off the removed one, not added or " +
-		"removed with it.", "added", "rehomed", `{
+		"removed with it; and a node whose position alone changed too is moved, with its position, never cosmetic.",
+		"added", "rehomed", `{
 		"boards": [
 			{"board": <@B3>, "change": "removed"},
 			{"board": <@B4>, "change": "added", "changes": [
-				{"change": "moved", "fromBoard": <@B3>, "id": "<N20>", "kind": "node", "preview": "Gulls cry.", "title": "Quay", "toBoard": <@B4>, "type": "element"},
+				{"change": "moved", "fields": [{"after": {"x": 40, "y": 80}, "before": {"x": 0, "y": 0}, "field": "position"}], "fromBoard": <@B3>, "id": "<N20>", "kind": "node", "preview": "Gulls cry.", "title": "Quay", "toBoard": <@B4>, "type": "element"},
 				{"change": "moved", "fromBoard": <@B3>, "id": "<N21>", "kind": "node", "preview": "Silence.", "toBoard": <@B4>, "type": "element"},
 				{"change": "moved", "from": "<N20>", "fromBoard": <@B3>, "id": "<K20>", "kind": "connection", "label": "Listen", "to": "<N21>", "toBoard": <@B4>}
 			]}
@@ -131,14 +134,17 @@ var corpusCases = []corpusCase{
 		"summary": {"cosmetic": 2, "kinds": {"node": {"cosmetic": 2}}}
 	}`},
 	{"texts", "A changed rich text, an element's text or a connection's label, has its plain texts as before and " +
-		"after, and their word-level diff.", "base", "texts", `{
+		"after, one that a side does not have left out, and their word-level diff, an absent text's as the empty " +
+		"text's; and an element whose text, of white space alone, has an empty preview is named without one.",
+		"base", "texts", `{
 		"boards": [
 			{"board": <@B1>, "changes": [
 				{"change": "modified", "fields": [{"after": "The very end <3 & \"farewell\"", "before": "The end <3 & \"bye\"", "field": "text", "words": [{"op": "equal", "text": "The "}, {"op": "insert", "text": "very "}, {"op": "equal", "text": "end <3 & "}, {"op": "delete", "text": "\"bye\""}, {"op": "insert", "text": "\"farewell\""}]}], "id": "<N3>", "kind": "node", "preview": "The very end <3 & \"farewell\"", "type": "element"},
+				{"change": "modified", "fields": [{"after": "  ", "field": "text", "words": [{"op": "insert", "text": "  "}]}], "id": "<N5>", "kind": "node", "type": "element"},
 				{"change": "modified", "fields": [{"after": "Leave quietly", "before": "Leave", "field": "label", "words": [{"op": "equal", "text": "Leave"}, {"op": "insert", "text": " quietly"}]}], "from": "<N1>", "id": "<K2>", "kind": "connection", "label": "Leave quietly", "to": "<N3>"}
 			]}
 		],
-		"summary": {"modified": 2, "kinds": {"connection": {"modified": 1}, "node": {"modified": 1}}}
+		"summary": {"modified": 3, "kinds": {"connection": {"modified": 1}, "node": {"modified": 2}}}
 	}`},
 	{"expressions", "A changed expression, added, removed, or rewritten, has its sources as before and after, and " +
 		"whether the variables, attributes, and nodes that it names changed.", "base", "expressions", `{
@@ -236,6 +242,8 @@ var wordsCases = []wordsCase{
 		run(Equal, "b")}},
 	{"phrase-rewritten", "one two three", "uno dos three",
 		[]WordRun{run(Delete, "one two"), run(Insert, "uno dos"), run(Equal, " three")}},
+	{"three-words-rewritten", "a b c d", "x y z d",
+		[]WordRun{run(Delete, "a b c"), run(Insert, "x y z"), run(Equal, " d")}},
 	{"swapped", "a b", "b a", []WordRun{run(Delete, "a "), run(Equal, "b"), run(Insert, " a")}},
 	{"repeated", "a b a", "a", []WordRun{run(Equal, "a"), run(Delete, " b a")}},
 	{"lines", "First line\nsecond line", "First line\nthird line",
