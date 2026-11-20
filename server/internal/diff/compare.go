@@ -61,10 +61,10 @@ import (
 // validate (schemaversion.Validate), and fails where what it reads of either
 // side is not of the format's version, as published.Decode refuses it, where
 // its manifest's index names a board whose file it does not have, or where
-// what it reads has an entity's ID twice. It checks nothing of what it does
-// not read: a file, a node, or a connection that it skips, and of a board's
-// file anything but its nodes and connections, the board's own fields being
-// its manifest's.
+// what it reads has an entity's ID twice, with an error that names the side,
+// from or to, that it is of. It checks nothing of what it does not read: a
+// file, a node, or a connection that it skips, and of a board's file anything
+// but its nodes and connections, the board's own fields being its manifest's.
 func Compare(from, to map[string][]byte) (*Diff, error) {
 	d, err := compareFiles(from, to)
 	if err != nil {
@@ -76,8 +76,9 @@ func Compare(from, to map[string][]byte) (*Diff, error) {
 
 // CompareSized returns the diff of from into to as Compare does, sized for
 // display as Truncate sizes it to at most limit changes, of which alone it
-// computes the word-level diffs of their rich texts, so that a diff of many
-// changes spends no time on the words of those that it leaves out.
+// computes the word-level diffs of their rich texts, and of the first change
+// that MaxBytes leaves out, which Truncate measures, so that a diff of many
+// changes spends no time on the words of the others that it leaves out.
 func CompareSized(from, to map[string][]byte, limit int) (*Diff, error) {
 	d, err := compareFiles(from, to)
 	if err != nil {
@@ -90,13 +91,13 @@ func CompareSized(from, to map[string][]byte, limit int) (*Diff, error) {
 // change of a rich text holds its two plain texts, and not yet their Words,
 // which fill computes.
 func compareFiles(from, to map[string][]byte) (*Diff, error) {
-	f, err := read(from)
+	f, err := read("from", from)
 	if err != nil {
-		return nil, fmt.Errorf("diff: the from side: %w", err)
+		return nil, err
 	}
-	t, err := read(to)
+	t, err := read("to", to)
 	if err != nil {
-		return nil, fmt.Errorf("diff: the to side: %w", err)
+		return nil, err
 	}
 	c := &comparison{from: f, to: t, d: &Diff{
 		Boards:        []BoardChanges{},
@@ -113,10 +114,11 @@ func compareFiles(from, to map[string][]byte) (*Diff, error) {
 	return c.d, nil
 }
 
-// side is a side's files, its manifest, its boards by ID, and its settings,
-// and its component types and their attribute definitions once it has read
-// them (definitions).
+// side is a side's name, from or to, its files, its manifest, its boards by
+// ID, and its settings, and its component types and their attribute
+// definitions once it has read them (definitions).
 type side struct {
+	name     string
 	files    map[string][]byte
 	manifest published.Manifest
 	boards   map[string]published.ManifestBoard
@@ -125,10 +127,10 @@ type side struct {
 	defs     map[string]published.AttributeDefinition
 }
 
-// read returns the side whose files are files, with its manifest and settings
-// decoded.
-func read(files map[string][]byte) (*side, error) {
-	s := &side{files: files, boards: map[string]published.ManifestBoard{}}
+// read returns the side name whose files are files, with its manifest and
+// settings decoded.
+func read(name string, files map[string][]byte) (*side, error) {
+	s := &side{name: name, files: files, boards: map[string]published.ManifestBoard{}}
 	if err := s.decode(published.ManifestPath, &s.manifest); err != nil {
 		return nil, err
 	}
@@ -137,24 +139,31 @@ func read(files map[string][]byte) (*side, error) {
 	}
 	for _, b := range s.manifest.Boards {
 		if _, ok := files[b.File]; !ok {
-			return nil, fmt.Errorf("the manifest names %s, which the snapshot does not have", b.File)
+			return nil, s.fail(fmt.Errorf("the manifest names %s, which the snapshot does not have", b.File))
 		}
 		if _, ok := s.boards[b.ID]; ok {
-			return nil, fmt.Errorf("the manifest has the board %s twice", b.ID)
+			return nil, s.fail(fmt.Errorf("the manifest has the board %s twice", b.ID))
 		}
 		s.boards[b.ID] = b
 	}
 	return s, nil
 }
 
+// fail returns err, an error of what the side holds, as Compare returns it,
+// naming the side, so that a log of it says which of the two snapshots it is
+// of.
+func (s *side) fail(err error) error {
+	return fmt.Errorf("diff: the %s side: %w", s.name, err)
+}
+
 // decode reads the side's file at path into v.
 func (s *side) decode(path string, v any) error {
 	data, ok := s.files[path]
 	if !ok {
-		return fmt.Errorf("the snapshot has no %s", path)
+		return s.fail(fmt.Errorf("the snapshot has no %s", path))
 	}
 	if err := published.Decode(data, v); err != nil {
-		return fmt.Errorf("%s: %w", path, err)
+		return s.fail(fmt.Errorf("%s: %w", path, err))
 	}
 	return nil
 }
@@ -242,8 +251,9 @@ func compare(kind, id string, f, t *entity) (EntityChange, bool) {
 	e.Kind, e.ID = kind, id
 	e.Fields = changes(f.fields, t.fields)
 	switch {
-	// A branch output is on its branch's board, whose move is the branch's:
-	// the output itself is modified, if at all.
+	// A branch output is on its branch's board, whose move is the branch's,
+	// and one that another board's branch holds is that branch's, its branch
+	// a field: the output itself is modified, if at all, on whichever boards.
 	case f.board != t.board && kind != KindBranchOutput:
 		e.Change = Moved
 	case len(e.Fields) == 0:
@@ -409,12 +419,12 @@ func (c *comparison) project() error {
 		for name, v := range map[string]any{"name": s.manifest.Project.Name, "slug": s.manifest.Project.Slug,
 			"signals": signals} {
 			if err := fs.set(name, v); err != nil {
-				return nil, err
+				return nil, s.fail(err)
 			}
 		}
 		if s.settings.Entry != nil {
 			if err := fs.set("entry", s.settings.Entry); err != nil {
-				return nil, err
+				return nil, s.fail(err)
 			}
 		}
 		return fs, nil
@@ -470,12 +480,12 @@ func (c *comparison) variables() error {
 		out := map[string]*entity{}
 		for _, v := range file.Variables {
 			if _, ok := out[v.ID]; ok {
-				return nil, fmt.Errorf("%s has the variable %s twice", published.VariablesPath, v.ID)
+				return nil, s.fail(fmt.Errorf("%s has the variable %s twice", published.VariablesPath, v.ID))
 			}
 			v.Default = typed(v.Default, v.Type, nil)
 			fs, err := objectOf(v, "id")
 			if err != nil {
-				return nil, err
+				return nil, s.fail(err)
 			}
 			out[v.ID] = &entity{fields: fs, show: EntityChange{Key: v.Key, Type: v.Type}}
 		}
@@ -507,13 +517,14 @@ func (s *side) definitions() (map[string]published.ComponentType, map[string]pub
 	defs := map[string]published.AttributeDefinition{}
 	for _, t := range file.ComponentTypes {
 		if _, ok := types[t.ID]; ok {
-			return nil, nil, fmt.Errorf("%s has the component type %s twice", published.ComponentTypesPath, t.ID)
+			return nil, nil, s.fail(fmt.Errorf("%s has the component type %s twice", published.ComponentTypesPath,
+				t.ID))
 		}
 		types[t.ID] = t
 		for _, a := range t.Attributes {
 			if _, ok := defs[a.ID]; ok {
-				return nil, nil, fmt.Errorf("%s has the attribute definition %s twice", published.ComponentTypesPath,
-					a.ID)
+				return nil, nil, s.fail(fmt.Errorf("%s has the attribute definition %s twice",
+					published.ComponentTypesPath, a.ID))
 			}
 			defs[a.ID] = a
 		}
@@ -537,20 +548,20 @@ func (c *comparison) componentTypes() error {
 		for id, t := range all {
 			fs, err := objectOf(t, "id", "attributes")
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, s.fail(err)
 			}
 			types[id] = &entity{fields: fs, show: EntityChange{Key: t.Key, Name: t.Name}}
 			for i, a := range t.Attributes {
 				a.Default = typed(a.Default, a.Type, a.Options)
 				fs, err := objectOf(a, "id")
 				if err != nil {
-					return nil, nil, err
+					return nil, nil, s.fail(err)
 				}
 				if err := fs.set("componentType", t.ID); err != nil {
-					return nil, nil, err
+					return nil, nil, s.fail(err)
 				}
 				if err := fs.set("order", i); err != nil {
-					return nil, nil, err
+					return nil, nil, s.fail(err)
 				}
 				attributes[a.ID] = &entity{fields: fs, show: EntityChange{ComponentType: t.ID, Key: a.Key,
 					Name: a.Name}}
@@ -589,16 +600,16 @@ func (c *comparison) components() error {
 		out := map[string]*entity{}
 		for _, cmp := range file.Components {
 			if _, ok := out[cmp.ID]; ok {
-				return nil, fmt.Errorf("%s has the component %s twice", published.ComponentsPath, cmp.ID)
+				return nil, s.fail(fmt.Errorf("%s has the component %s twice", published.ComponentsPath, cmp.ID))
 			}
 			fs, err := objectOf(cmp, "id", "attributes")
 			if err != nil {
-				return nil, err
+				return nil, s.fail(err)
 			}
 			for id, v := range cmp.Attributes {
 				d := defs[id]
 				if err := fs.set(attributeField(id), typed(v, d.Type, d.Options)); err != nil {
-					return nil, err
+					return nil, s.fail(err)
 				}
 			}
 			out[cmp.ID] = &entity{fields: fs, show: EntityChange{Key: cmp.Key, Name: cmp.Name}}
@@ -654,11 +665,11 @@ func (c *comparison) boards() error {
 	}
 	fromNodes, fromConnections, err := c.from.elements(changed)
 	if err != nil {
-		return fmt.Errorf("diff: the from side: %w", err)
+		return c.from.fail(err)
 	}
 	toNodes, toConnections, err := c.to.elements(changed)
 	if err != nil {
-		return fmt.Errorf("diff: the to side: %w", err)
+		return c.to.fail(err)
 	}
 	from, to := newContents(), newContents()
 	for _, k := range []struct {
@@ -676,12 +687,12 @@ func (c *comparison) boards() error {
 			}
 			if inFrom {
 				if err := k.read(f, from); err != nil {
-					return fmt.Errorf("diff: the from side: %w", err)
+					return c.from.fail(err)
 				}
 			}
 			if inTo {
 				if err := k.read(t, to); err != nil {
-					return fmt.Errorf("diff: the to side: %w", err)
+					return c.to.fail(err)
 				}
 			}
 		}
@@ -715,11 +726,11 @@ func (c *comparison) boards() error {
 		default:
 			ff, err := objectOf(f, "id", "file")
 			if err != nil {
-				return err
+				return c.from.fail(err)
 			}
 			tf, err := objectOf(t, "id", "file")
 			if err != nil {
-				return err
+				return c.to.fail(err)
 			}
 			if fs = changes(ff, tf); fs != nil {
 				change = Modified
@@ -876,39 +887,40 @@ func readConnection(e element, into contents) error {
 // 0, which encoding/json writes as -0, and which a consumer reads as the
 // number 0. It may change n, which readNode decoded for it alone.
 func nodeEntity(n published.Node) (*entity, error) {
+	// Of each type, its position zeroed, what a change shows of it, its text,
+	// and its scripts, its onEnter and its onExit, which its fields mark once
+	// they are read.
+	var show EntityChange
+	var text *published.Text
+	var onEnter, onExit *published.Script
 	switch n := n.(type) {
 	case *published.Element:
 		n.Position = zeroed(n.Position)
+		show = EntityChange{Type: published.NodeElement, Title: n.Title}
+		text, onEnter, onExit = n.Text, n.OnEnter, n.OnExit
 	case *published.Branch:
 		n.Position = zeroed(n.Position)
+		show = EntityChange{Type: published.NodeBranch, Title: n.Title}
+		onEnter, onExit = n.OnEnter, n.OnExit
 	case *published.Jumper:
 		n.Position = zeroed(n.Position)
+		show = EntityChange{Type: published.NodeJumper, Title: n.Title}
 	}
 	fs, err := objectOf(n, "id", "outputs")
 	if err != nil {
 		return nil, err
 	}
-	var show EntityChange
-	script := func(name string, s *published.Script) {
-		if s != nil {
-			fs.expression(name, s.AST, s.Source)
-		}
+	if text != nil {
+		fs.richText("text", text.Segments)
+		show.Preview = text.Preview
 	}
-	switch n := n.(type) {
-	case *published.Element:
-		show = EntityChange{Type: published.NodeElement, Title: n.Title}
-		if n.Text != nil {
-			fs.richText("text", n.Text.Segments)
-			show.Preview = n.Text.Preview
+	for _, s := range []struct {
+		name   string
+		script *published.Script
+	}{{"onEnter", onEnter}, {"onExit", onExit}} {
+		if s.script != nil {
+			fs.expression(s.name, s.script.AST, s.script.Source)
 		}
-		script("onEnter", n.OnEnter)
-		script("onExit", n.OnExit)
-	case *published.Branch:
-		show = EntityChange{Type: published.NodeBranch, Title: n.Title}
-		script("onEnter", n.OnEnter)
-		script("onExit", n.OnExit)
-	case *published.Jumper:
-		show = EntityChange{Type: published.NodeJumper, Title: n.Title}
 	}
 	return &entity{fields: fs, show: show}, nil
 }

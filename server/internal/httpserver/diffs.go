@@ -39,7 +39,9 @@ func registerDiffs(m *api.Mux, snapshots *snapshot.Service) {
 		Path:        "/api/v1/projects/{project_id}/diff",
 		Summary:     "Diff two snapshots",
 		Description: "Returns the entity-level diff of the project's snapshot from into its snapshot to, or into its " +
-			"draft as it is now, read as of one moment, for to draft (PRD FR-SNAP-04, FR-SYNC-02, §7.4): the " +
+			"draft as it is now, read as of one moment, for to draft, as the draft's export writes it, with what it " +
+			"stands in for of what no release may hold (PRD §7.8), as a draft pull brings it in (PRD FR-SNAP-04, " +
+			"FR-SYNC-02, §7.4): the " +
 			"variables, component types, attribute definitions, components, boards, nodes, branch outputs, and " +
 			"connections that only to has, added, or only from has, removed; those that both have whose fields " +
 			"differ, modified, each changed field with its value on either side, a rich text's as its plain text " +

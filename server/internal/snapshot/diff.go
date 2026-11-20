@@ -62,8 +62,9 @@ func (s *Service) Diff(ctx context.Context, actor commands.Actor, projectID, fro
 // two snapshots, but that the snapshot and the draft are read in one
 // transaction that reads as of one moment (project.Service.ReadSnapshot), as
 // ExportDraft reads the draft, which is serialized after that transaction
-// ends, as the draft's export writes it, marked as the draft's (§7.8), so that
-// the serialization holds no connection.
+// ends, as the draft's export writes it, marked as the draft's, with what it
+// stands in for of what no release may hold (§7.8), as a draft pull brings it
+// in, so that the serialization holds no connection.
 //
 // The draft is not a release, so a diff into it needs an API token's
 // project:read, and is refused with a *scope.InsufficientError for one that
@@ -116,16 +117,20 @@ func (d *diffSide) read(ctx context.Context, tx pgx.Tx, ws, projectID, id ids.UU
 }
 
 // compareSides returns the diff of f into t, each rendered at
-// published.SchemaVersion first, sized to at most limit changes, with each
-// snapshot's side named by the snapshot that the request names, by its row,
-// which its build's manifest names alike, with the content hash of the files
-// compared, at the version that they were compared at.
+// published.SchemaVersion first, a snapshot's into itself once, sized to at
+// most limit changes, with each snapshot's side named by the snapshot that the
+// request names, by its row, which its build's manifest names alike, with the
+// content hash of the files compared, at the version that they were compared
+// at.
 func compareSides(f, t diffSide, limit int) (*diff.Diff, error) {
+	same := f.row != nil && t.row != nil && f.id == t.id
 	var err error
 	if f.files, _, err = render(f.files, f.version, published.SchemaVersion); err != nil {
 		return nil, err
 	}
-	if t.files, _, err = render(t.files, t.version, published.SchemaVersion); err != nil {
+	if same {
+		t.files = f.files
+	} else if t.files, _, err = render(t.files, t.version, published.SchemaVersion); err != nil {
 		return nil, err
 	}
 	d, err := diff.CompareSized(f.files, t.files, limit)

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
-	"io/fs"
 	"maps"
 	"os"
 	"path"
@@ -155,21 +154,8 @@ func corpusFiles(t *testing.T) map[string][]byte {
 // from its root, but its README.md.
 func readCorpus(t *testing.T) map[string][]byte {
 	t.Helper()
-	files := map[string][]byte{}
-	err := filepath.WalkDir(corpusRoot, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		rel, err := filepath.Rel(corpusRoot, p)
-		if err != nil || rel == "README.md" {
-			return err
-		}
-		files[filepath.ToSlash(rel)], err = os.ReadFile(p)
-		return err
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	files := readDir(t, corpusRoot)
+	delete(files, "README.md")
 	return files
 }
 
@@ -224,16 +210,15 @@ func TestBaseIsTheFixture(t *testing.T) {
 	}
 }
 
-// corpusSet returns the files of the corpus's set name, as the repository
-// holds them.
+// corpusSetFiles returns the files of the corpus's set name, as the
+// repository holds them, which it reads alone of the corpus.
 func corpusSetFiles(t *testing.T, name string) map[string][]byte {
 	t.Helper()
-	files := map[string][]byte{}
-	for p, data := range readCorpus(t) {
-		if rest, ok := strings.CutPrefix(p, "sets/"+name+"/"); ok {
-			files[rest] = data
-		}
+	dir := filepath.Join(corpusRoot, "sets", name)
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("the corpus has no set %s: %v", name, err)
 	}
+	files := readDir(t, dir)
 	if len(files) == 0 {
 		t.Fatalf("the corpus has no set %s", name)
 	}
@@ -385,6 +370,74 @@ func TestMovedBranchOutputs(t *testing.T) {
 	}
 	if k := d.Summary.Kinds.BranchOutput; k != (ChangeCounts{Modified: 1}) || d.Summary.Moved != 1 {
 		t.Errorf("the summary is %+v, want one node moved and one output modified", d.Summary)
+	}
+}
+
+// TestReparentedBranchOutput checks that a branch output that the to side has
+// on another branch, of another board, whose own branch did not move, is not
+// moved either: it is modified, on its branch and on each other field of it
+// that differs, and listed on the board that the to side has it on, of a pair
+// of snapshots that validate (schema/diff-corpus/README.md).
+func TestReparentedBranchOutput(t *testing.T) {
+	from, to := load(t, corpusSetFiles(t, "base")), load(t, corpusSetFiles(t, "base"))
+	n40, k5 := mn("nd", "N40"), mn("cn", "K5")
+	branch, _ := to.node(t, b1, n2)
+	br := branch.(*published.Branch)
+	var output published.BranchOutput
+	br.Outputs = slices.DeleteFunc(br.Outputs, func(o published.BranchOutput) bool {
+		if o.ID == q1 {
+			output = o
+		}
+		return o.ID == q1
+	})
+	for i := range br.Outputs {
+		br.Outputs[i].Order = published.Int(i)
+	}
+	output.Kind, output.Order = published.OutputIf, 0
+	intro, gate := to.board(t, b1), to.board(t, b2)
+	gate.Nodes = append(gate.Nodes, &published.Branch{ID: n40, Outputs: []published.BranchOutput{output}})
+	// The connection that leaves the output leaves it on its new board.
+	var leaves published.Connection
+	intro.Connections = slices.DeleteFunc(intro.Connections, func(c published.Connection) bool {
+		if c.ID == k5 {
+			leaves = c
+		}
+		return c.ID == k5
+	})
+	leaves.From, leaves.To = n40, n10
+	gate.Connections = append(gate.Connections, leaves)
+	files := to.files(t)
+	if err := schemaversion.Validate(files); err != nil {
+		t.Fatalf("the snapshot with the output on another board's branch does not validate: %v", err)
+	}
+	d, err := Compare(from.files(t), files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got *EntityChange
+	for _, g := range d.Boards {
+		for i, c := range g.Changes {
+			if c.ID == q1 {
+				if g.Board.ID != b2 {
+					t.Errorf("%s is listed on %s, want %s, the board that the to side has it on", q1, g.Board.ID, b2)
+				}
+				got = &g.Changes[i]
+			}
+		}
+	}
+	if got == nil {
+		t.Fatalf("the diff has no change of %s: %+v", q1, d.Boards)
+	}
+	var names []string
+	for _, f := range got.Fields {
+		names = append(names, f.Field)
+	}
+	if got.Change != Modified || got.FromBoard != nil || got.ToBoard != nil || got.Branch != n40 ||
+		!slices.Equal(names, []string{"branch", "kind", "order"}) {
+		t.Errorf("the output's change is %+v, want modified on its branch, kind, and order, named by %s", got, n40)
+	}
+	if k := d.Summary.Kinds.BranchOutput; k != (ChangeCounts{Modified: 2}) {
+		t.Errorf("the branch outputs' counts are %+v, want two modified, the other on its order, and none moved", k)
 	}
 }
 

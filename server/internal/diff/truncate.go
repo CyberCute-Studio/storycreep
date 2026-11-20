@@ -1,8 +1,9 @@
 package diff
 
 import (
-	"encoding/json"
 	"fmt"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/schemagen"
 )
 
 // The bounds of a diff that the API answers with, sized for display (PRD
@@ -15,18 +16,19 @@ const (
 )
 
 // Truncate returns a copy of d that holds at most limit of its changes, and
-// at most MaxBytes of their JSON, as json.Marshal writes each, the first of
-// them in the order in which the diff lists them: the project's variables,
-// component types, attribute definitions, and components, and then each
-// board's changes, in the order of the boards. Every change after the first
-// that does not fit is left out, and the copy counts how many it left out of
-// the project's and of each board's, and is Truncated if it left any out. It
-// keeps every board, the project's and each board's own fields, and the
-// summary, which counts every change of d (FR-SYNC-02 AC2). A limit below 1
-// is 1, and one above MaxLimit is MaxLimit. Of a diff that CompareSized
-// made, it computes the word-level diffs of the changes that it keeps, and
-// of no other, in d itself, whose changes the copy shares. It fails only
-// where a change is not JSON, which none is.
+// at most MaxBytes of their JSON, as the API writes each, without escaping
+// HTML (schemagen.Marshal), the first of them in the order in which the diff
+// lists them: the project's variables, component types, attribute
+// definitions, and components, and then each board's changes, in the order
+// of the boards. Every change after the first that does not fit is left out,
+// and the copy counts how many it left out of the project's and of each
+// board's, and is Truncated if it left any out. It keeps every board, the
+// project's and each board's own fields, and the summary, which counts every
+// change of d (FR-SYNC-02 AC2). A limit below 1 is 1, and one above MaxLimit
+// is MaxLimit. Of a diff that CompareSized made, it computes the word-level
+// diffs of the changes that it keeps, and of the first that MaxBytes leaves
+// out, which it measures, and of no other, in d itself, whose changes the
+// copy shares. It fails only where a change is not JSON, which none is.
 func (d *Diff) Truncate(limit int) (*Diff, error) {
 	limit = min(max(limit, 1), MaxLimit)
 	out := *d
@@ -37,7 +39,7 @@ func (d *Diff) Truncate(limit int) (*Diff, error) {
 		for i := range cs {
 			if !full && kept < limit {
 				cs[i].fill()
-				data, err := json.Marshal(cs[i])
+				data, err := schemagen.Marshal(cs[i])
 				if err != nil {
 					return nil, 0, fmt.Errorf("diff: %w", err)
 				}

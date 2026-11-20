@@ -68,8 +68,15 @@ type snap struct {
 // paths.
 func readFixture(t *testing.T) map[string][]byte {
 	t.Helper()
+	return readDir(t, fixtureDir)
+}
+
+// readDir returns the files under the directory root, at any depth, by their
+// paths from it, with forward slashes.
+func readDir(t *testing.T, root string) map[string][]byte {
+	t.Helper()
 	files := map[string][]byte{}
-	err := filepath.WalkDir(fixtureDir, func(p string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
@@ -77,7 +84,7 @@ func readFixture(t *testing.T) map[string][]byte {
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(fixtureDir, p)
+		rel, err := filepath.Rel(root, p)
 		if err != nil {
 			return err
 		}

@@ -1,13 +1,14 @@
 package diff
 
 import (
-	"encoding/json"
 	"math/rand/v2"
 	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/schemagen"
 )
 
 // changesOf returns the changes that d lists, in its order.
@@ -78,12 +79,14 @@ func TestTruncate(t *testing.T) {
 }
 
 // TestTruncateBytes checks that Truncate keeps no more than MaxBytes of the
-// changes' JSON, leaving out every change from the first that would pass it,
-// whatever the limit.
+// changes' JSON, as the API writes it, without escaping HTML, leaving out
+// every change from the first that would pass it, whatever the limit: a text
+// of < alone, which json.Marshal would write as six times as many bytes,
+// takes its own length.
 //
 // Verifies: FR-SYNC-02/AC2
 func TestTruncateBytes(t *testing.T) {
-	big := strings.Repeat("w", MaxBytes/3)
+	big := strings.Repeat("<", MaxBytes/3)
 	d := &Diff{Boards: []BoardChanges{{Board: BoardRef{ID: b1}}}, Project: ProjectChanges{}}
 	for range 4 {
 		d.Boards[0].Changes = append(d.Boards[0].Changes, EntityChange{Change: Modified, Kind: KindNode, ID: n1,
@@ -96,7 +99,7 @@ func TestTruncateBytes(t *testing.T) {
 	}
 	size := 0
 	for _, c := range got.Boards[0].Changes {
-		data, err := json.Marshal(c)
+		data, err := schemagen.Marshal(c)
 		if err != nil {
 			t.Fatal(err)
 		}
