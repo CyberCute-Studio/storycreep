@@ -849,7 +849,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-SNAP-01 AC1–AC7, FR-DEP-04 AC1–AC4 (including the race test), FR-DATA-04 AC1, FR-EDIT-05 AC1 (a broken jumper is a validation error and blocks publishing), and the publishing half of FR-EDIT-03 AC4 (a connection whose condition fails to parse blocks publishing) pass, and a benchmark of item 45's suite reports NFR-PERF-12 on `large`.
 
 ### 79. Snapshot list, retrieval, and export endpoints
-**Status:** todo · **Depends on:** 78
+**Status:** done ([#93](https://github.com/CyberCute-Studio/storycreep/pull/93)) · **Depends on:** 78
 **PRD:** FR-SNAP-02 (server), FR-SYNC-01
 - Snapshot list, beside item 78's metadata of one: `GET /api/v1/projects/{project_id}/snapshots`, newest first, by their IDs, cursor-paged, with a `status` filter, by which §7.5's check of a newer release reads `status=ready&limit=1`, and each snapshot's publisher's display name as it is now, which the metadata of one shows too (`snapshot.Service.List`, `queries/snapshot.sql`, `httpserver/snapshots.go`, N86). Zip download of the published layout, which is the export without `schema`.
 - `…/snapshots/{id}/export?schema=n`, a zip of the files at their paths, in the order of their paths, without directories, with one fixed modification time: the stored bytes at the snapshot's own version, and at another what `schemaversion.Render` renders, with down-rendering and `schema_unsupported` carrying `min` and `max`, and 409 `schema_unrepresentable` with each construct and 409 `snapshot_not_ready` for a snapshot that is building or failed (`Export`, `Export.Zip`, `api/errors.go`, N86).
