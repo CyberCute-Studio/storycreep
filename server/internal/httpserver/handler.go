@@ -36,6 +36,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/realtime"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
+	"github.com/CyberCute-Studio/storycreep/server/internal/schemaversion"
 	"github.com/CyberCute-Studio/storycreep/server/internal/search"
 	"github.com/CyberCute-Studio/storycreep/server/internal/setup"
 	"github.com/CyberCute-Studio/storycreep/server/internal/statistics"
@@ -354,6 +355,14 @@ type versionBody struct {
 	Commit     string `json:"commit,omitempty" doc:"The revision of the source the binary was built from"`
 	CommitTime string `json:"commit_time,omitempty" doc:"The time of that revision, in RFC 3339"`
 	GoVersion  string `json:"go_version" doc:"The version of Go the binary was built with"`
+	// PublishedSchema is schemaversion.Supported (PRD §6.4, FR-SYNC-07).
+	PublishedSchema schemaRange `json:"published_schema" doc:"The versions of the published game format, its schemaVersion, that the server reads, migrates a snapshot to, and renders a snapshot at, which a pull negotiates with the addon's: the newest version that both read (PRD §6.4, FR-SYNC-07)"`
+}
+
+// schemaRange is a range of versions of the published game format.
+type schemaRange struct {
+	Min int `json:"min" minimum:"1" doc:"The oldest version"`
+	Max int `json:"max" minimum:"1" doc:"The newest version"`
 }
 
 type versionOutput struct {
@@ -399,11 +408,13 @@ func (s *server) registerOperational(m *api.Mux) {
 		Tags:        []string{"Operations"},
 	}, func(context.Context, *struct{}) (*versionOutput, error) {
 		info := version.Get()
+		schema := schemaversion.Supported()
 		return &versionOutput{Body: versionBody{
-			Version:    info.Version,
-			Commit:     info.Commit,
-			CommitTime: info.CommitTime,
-			GoVersion:  info.GoVersion,
+			Version:         info.Version,
+			Commit:          info.Commit,
+			CommitTime:      info.CommitTime,
+			GoVersion:       info.GoVersion,
+			PublishedSchema: schemaRange{Min: schema.Min, Max: schema.Max},
 		}}, nil
 	}, api.Unlimited())
 }

@@ -48,6 +48,13 @@ var ErrLoad = errors.New("flow: not a snapshot that a runtime runs")
 // caller can tell it from a snapshot that no runtime runs.
 var ErrASTUnsupported = errors.New("ast_unsupported")
 
+// ErrSchemaUnsupported is Load's error, beside ErrLoad, for a snapshot whose
+// manifest's schemaVersion is not published.SchemaVersion, the version that
+// the runtime reads, the runtime's schema_unsupported (FR-SYNC-07 AC3, PRD
+// §6.4), which a runtime of that version may run, so that a caller can tell
+// it from a snapshot that no runtime runs.
+var ErrSchemaUnsupported = errors.New("schema_unsupported")
+
 // Snapshot is a published snapshot, loaded and checked (Load), which a
 // Runtime runs and never changes, so that several runtimes may run one at
 // once.
@@ -101,10 +108,16 @@ const out = "out"
 // schema/published/README.md says a consumer checks beyond the schemas,
 // which that list alone enumerates, an asset's hash among the files', and a
 // node's tags compared as input.FoldCase folds them. Beyond that list, it
-// checks what the runtime relies on: that the snapshot's astVersion is at
-// most expr.ASTVersion, which a newer one is refused for as the runtime's
-// ast_unsupported, with an error that wraps ErrASTUnsupported too, and at
-// least the highest version of the constructs that its ASTs use
+// checks what the runtime relies on: first, that the manifest's
+// schemaVersion is published.SchemaVersion, the one version that it reads,
+// which a manifest of another is refused for as the runtime's
+// schema_unsupported, with an error that wraps ErrSchemaUnsupported too,
+// before anything else of it is read but that it is JSON that value.ReadJSON
+// reads, as every version's manifest is (PRD §6.4, published.SchemaVersionOf),
+// as play mode's loader refuses the same manifests; that the snapshot's
+// astVersion is at most expr.ASTVersion, which a newer one is refused for as
+// the runtime's ast_unsupported, with an error that wraps ErrASTUnsupported
+// too, and at least the highest version of the constructs that its ASTs use
 // (expr.VersionOf), as every runtime trusts it to be (FR-EXPR-04); that a
 // text's or a label's value is of a variable that an expression of its board
 // reads (FR-TEXT-02, §5.8.3), or of a runtime attribute; and that every value
@@ -150,6 +163,12 @@ func (l *loader) load(fsys fs.FS) error {
 	data, err := fs.ReadFile(fsys, published.ManifestPath)
 	if err != nil {
 		return err
+	}
+	// A manifest whose schemaVersion is no version is refused below, as its
+	// schema refuses it.
+	if v, err := published.SchemaVersionOf(data); err == nil && v != published.SchemaVersion {
+		return fmt.Errorf("%w: the snapshot's schemaVersion is %d, and this runtime reads %d", ErrSchemaUnsupported, v,
+			published.SchemaVersion)
 	}
 	if err := decode(published.ManifestPath, data, &s.manifest); err != nil {
 		return err

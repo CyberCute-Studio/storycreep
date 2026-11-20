@@ -3238,6 +3238,13 @@ export interface SaveState {
   visits: Record<string, number>;
 }
 
+export interface SchemaRange {
+  /** The newest version */
+  max: number;
+  /** The oldest version */
+  min: number;
+}
+
 export interface SessionBody {
   /** When its user signed in */
   created_at: string;
@@ -3810,6 +3817,8 @@ export interface VersionBody {
   commit_time?: string;
   /** The version of Go the binary was built with */
   go_version: string;
+  /** The versions of the published game format, its schemaVersion, that the server reads, migrates a snapshot to, and renders a snapshot at, which a pull negotiates with the addon's: the newest version that both read (PRD §6.4, FR-SYNC-07) */
+  published_schema: SchemaRange;
   /** The release version, or (devel) for any other build, such as the main branch's image */
   version: string;
 }

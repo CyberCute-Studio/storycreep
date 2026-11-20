@@ -23,9 +23,12 @@ package published
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -40,6 +43,34 @@ import (
 // SchemaVersion is the version of the published game format that these
 // types are of (§6.4).
 const SchemaVersion = 1
+
+// SchemaVersionOf returns the schemaVersion of data, a manifest's bytes, of
+// whatever version: an Int, however its JSON writes it, as 1 or 1.0, of a
+// JSON object that value.ReadJSON reads. It fails where data is no such
+// object, or its schemaVersion no such Int. The reference runtime reads a
+// manifest's version so before anything else of it but what value.ReadJSON
+// checks, which every version's files keep (PRD §6.4, flow.Load), and package
+// schemaversion so (schemaversion.VersionOf).
+func SchemaVersionOf(data []byte) (int64, error) {
+	tree, err := value.ReadJSON(data)
+	if err != nil {
+		return 0, fmt.Errorf("published: %s: %w", ManifestPath, err)
+	}
+	m, ok := tree.(map[string]any)
+	if !ok {
+		return 0, fmt.Errorf("published: %s is no JSON object", ManifestPath)
+	}
+	raw, ok := m["schemaVersion"]
+	if !ok {
+		return 0, fmt.Errorf("published: %s has no schemaVersion", ManifestPath)
+	}
+	num, ok := raw.(json.Number)
+	var n Int
+	if !ok || n.UnmarshalJSON([]byte(num)) != nil {
+		return 0, fmt.Errorf("published: %s's schemaVersion is no version", ManifestPath)
+	}
+	return int64(n), nil
+}
 
 // The paths of a snapshot's files, from the directory that holds them,
 // res://storycreep/ in a game (§6.3), but for its boards' (BoardPath) and its
@@ -65,6 +96,25 @@ type Hash string
 func (Hash) JSONSchema(*schemagen.Generator) *schemagen.Schema {
 	return &schemagen.Schema{Type: "string", Pattern: "^sha256:[0-9a-f]{64}$",
 		Description: "sha256: and the lowercase hexadecimal SHA-256 of the bytes."}
+}
+
+// HashOf returns the hash of a file's bytes, as the manifest's files hold it.
+func HashOf(data []byte) Hash {
+	sum := sha256.Sum256(data)
+	return Hash("sha256:" + hex.EncodeToString(sum[:]))
+}
+
+// ContentHash returns the content hash of a snapshot whose files, but the
+// manifest, have the hashes files, by their paths (§7.3): the hash of a line
+// of each file, in the order of their paths, of its path, a space, its hash,
+// and a line feed, so that it is the same for the same content whatever the
+// manifest's generator and snapshot blocks say.
+func ContentHash(files map[string]Hash) Hash {
+	var all strings.Builder
+	for _, path := range slices.Sorted(maps.Keys(files)) {
+		all.WriteString(path + " " + string(files[path]) + "\n")
+	}
+	return HashOf([]byte(all.String()))
 }
 
 // Timestamp is a moment, in UTC, to the second, as 2026-10-12T18:04:31Z.

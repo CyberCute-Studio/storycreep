@@ -41,7 +41,9 @@ type handlerRules struct {
 	// functions are the functions of other packages that a handler may not
 	// call, by the package's path below the module and the function's name:
 	// writing an audit entry, which a service does in the transaction of its
-	// change.
+	// change, and writing and reading a project's migration log, which a
+	// service does in a transaction of its workspace (schemaversion.Record,
+	// schemaversion.Log).
 	functions map[string][]string
 	// compared are the packages, by their paths below the module, whose
 	// declarations a handler may not compare a value with, by == or !=, or
@@ -59,7 +61,7 @@ var rules = handlerRules{
 	imports: []string{"internal/database/queries", "internal/authz"},
 	methods: []string{"InTx", "Begin", "BeginTx", "BeginFunc", "Pool", "Exec", "SendBatch", "CopyFrom", "Enqueue",
 		"AtLeast"},
-	functions: map[string][]string{"internal/audit": {"Record"}},
+	functions: map[string][]string{"internal/audit": {"Record"}, "internal/schemaversion": {"Record", "Log"}},
 	compared:  []string{"internal/role"},
 	adapters:  []string{"readyDB.InTx", "queueRef.Enqueue"},
 }
@@ -253,10 +255,10 @@ func goModule(root string) (string, error) {
 // TestHandlersUseServices checks that no handler writes to a repository
 // directly, nor checks a permission itself: the packages that serve the API
 // neither import the repositories or the matrix of permissions, nor open a
-// transaction, reach the pool, write, enqueue a job, compare roles, or write
-// an audit entry, but in the adapters that hand the database and the queue
-// to the services (rules), so that every operation is authorised in the
-// service that does it.
+// transaction, reach the pool, write, enqueue a job, compare roles, write an
+// audit entry, or write or read a project's migration log, but in the
+// adapters that hand the database and the queue to the services (rules), so
+// that every operation is authorised in the service that does it.
 //
 // Verifies: FR-TEN-03/AC2
 func TestHandlersUseServices(t *testing.T) {
@@ -305,6 +307,9 @@ func TestHandlerLintFindsWrites(t *testing.T) {
 			"	readyDB{}.InTx()",
 			"}",
 			"var _ = func() { pool.Pool() }"},
+		"internal/httpserver/version.go": {"package httpserver",
+			`import "example.com/m/internal/schemaversion"`,
+			"func f(tx Tx) { _ = schemaversion.Supported(); schemaversion.Record(tx); schemaversion.Log(tx) }"},
 		"internal/httpserver/roles.go": {"package httpserver",
 			`import r "example.com/m/internal/role"`,
 			"func check(m r.Role, v any) {",
@@ -355,13 +360,15 @@ func TestHandlerLintFindsWrites(t *testing.T) {
 		"internal/httpserver/roles.go:4: compares r.Owner",
 		"internal/httpserver/roles.go:7: compares r.Editor",
 		"internal/httpserver/sub/sub.go:2: calls Begin",
+		"internal/httpserver/version.go:3: calls schemaversion.Log",
+		"internal/httpserver/version.go:3: calls schemaversion.Record",
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("violations =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	// The adapters, the handlers, the roles, sub, api, and generic; not the
-	// tests, testdata, _skipped, or another package's files.
-	if n != 6 {
-		t.Errorf("the lint read %d files, want 6", n)
+	// The adapters, the handlers, the version, the roles, sub, api, and
+	// generic; not the tests, testdata, _skipped, or another package's files.
+	if n != 7 {
+		t.Errorf("the lint read %d files, want 7", n)
 	}
 }

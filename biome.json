@@ -13,6 +13,9 @@
       "!schema/api/v1/openapi.json",
       "!schema/**/*.schema.json",
       "!schema/conformance/**/*.json",
+      "!schema/fixtures",
+      "!testdata/synthetic-schema/published",
+      "!testdata/synthetic-schema/fixtures",
       "!server/internal/serializer/testdata",
       "!web/app/src/richtext/testdata"
     ]

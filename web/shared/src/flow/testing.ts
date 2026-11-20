@@ -4,7 +4,8 @@
 // typecheck, of tsconfig.browser.json, leaves out with this file, and run
 // the scenarios as the Go reference runtime's TestConformance does.
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -49,6 +50,63 @@ export function readTree(dir: string): Map<string, Uint8Array> {
   };
   walk("");
   return files;
+}
+
+/**
+ * Returns the fixture of the version n of the published format (PRD §6.4):
+ * schema/fixtures/v<n> of a real version, one whose schemas schema/published
+ * holds, and otherwise the synthetic version's of testdata/synthetic-schema
+ * (plan note N2), as the Go tests' fixtureDir finds them.
+ */
+export function fixture(n: number): Map<string, Uint8Array> {
+  const root = join(import.meta.dirname, "../../../..");
+  return readTree(
+    existsSync(join(root, `schema/published/v${n}`))
+      ? join(root, `schema/fixtures/v${n}`)
+      : join(root, `testdata/synthetic-schema/fixtures/v${n}`),
+  );
+}
+
+/** A file's JSON, which a test edits as it likes. */
+// biome-ignore lint/suspicious/noExplicitAny: a test edits any part of a file's JSON.
+export type FileJSON = Record<string, any>;
+
+/**
+ * Returns files with each file at a path of edits changed as its edit changes
+ * the file's JSON, and the manifest's hash of each file that they change, but
+ * for the manifest, which its edit changes last, and which the loader reads
+ * without a hash.
+ */
+export function edited(
+  files: ReadonlyMap<string, Uint8Array>,
+  edits: Readonly<Record<string, (f: FileJSON) => void>>,
+): Map<string, Uint8Array> {
+  const out = new Map(files);
+  const json = (path: string) =>
+    JSON.parse(new TextDecoder().decode(files.get(path))) as FileJSON;
+  const m = json("storycreep.json");
+  for (const [path, edit] of Object.entries(edits)) {
+    if (path === "storycreep.json") {
+      continue;
+    }
+    const f = json(path);
+    edit(f);
+    const bytes = new TextEncoder().encode(`${JSON.stringify(f, null, 2)}\n`);
+    out.set(path, bytes);
+    m.files[path] =
+      `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+  }
+  edits["storycreep.json"]?.(m);
+  out.set("storycreep.json", new TextEncoder().encode(JSON.stringify(m)));
+  return out;
+}
+
+/** Returns files with their manifest's keys set as edit sets them. */
+export function withManifest(
+  files: ReadonlyMap<string, Uint8Array>,
+  edit: Record<string, unknown>,
+): Map<string, Uint8Array> {
+  return edited(files, { "storycreep.json": (m) => Object.assign(m, edit) });
 }
 
 /** A scenario, or another object of a suite's files, read with each number as it is written. */

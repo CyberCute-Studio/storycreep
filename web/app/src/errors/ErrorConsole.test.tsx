@@ -32,6 +32,7 @@ function renderConsole(children?: ReactNode) {
   queryClient.setQueryData(versionQuery.queryKey, {
     version: "1.0.0",
     go_version: "go1.26",
+    published_schema: { min: 1, max: 1 },
   });
   render(
     <I18nextProvider i18n={createI18n("en")}>

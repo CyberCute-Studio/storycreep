@@ -1,0 +1,10 @@
+{
+  "board": {
+    "id": "bd_000000000000000000000000B3",
+    "name": "Empty",
+    "slug": "empty"
+  },
+  "connections": [],
+  "nodes": [],
+  "schemaVersion": 2
+}

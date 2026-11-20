@@ -85,7 +85,12 @@ it("heads a report with where the errors happened", () => {
     userAgent: "Agent/1",
     locale: "en",
   };
-  const server = { version: "1.2.0", commit: "abc", go_version: "go1.26" };
+  const server = {
+    version: "1.2.0",
+    commit: "abc",
+    go_version: "go1.26",
+    published_schema: { min: 1, max: 1 },
+  };
   expect(formatReport([], { ...context, server }, t)).toBe(
     [
       "Storycreep error report",

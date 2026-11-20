@@ -340,6 +340,7 @@ describe("signedIn and endSession", () => {
     client.setQueryData(versionQuery.queryKey, {
       version: "(devel)",
       go_version: "go",
+      published_schema: { min: 1, max: 1 },
     });
     client.setQueryData(instanceQuery.queryKey, testInstance);
     client.setQueryData(sessionQuery.queryKey, testSession);
