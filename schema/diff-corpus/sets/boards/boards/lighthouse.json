@@ -1,0 +1,32 @@
+{
+  "board": {
+    "entryNodeId": "nd_00000000000000000000000N30",
+    "id": "bd_000000000000000000000000B4",
+    "name": "Lighthouse",
+    "slug": "lighthouse"
+  },
+  "connections": [],
+  "nodes": [
+    {
+      "id": "nd_00000000000000000000000N30",
+      "isEnding": true,
+      "kind": "narration",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "text": {
+        "preview": "The lamp burns.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "The lamp burns."
+          }
+        ]
+      },
+      "type": "element"
+    }
+  ],
+  "schemaVersion": 1
+}

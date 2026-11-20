@@ -1,0 +1,1968 @@
+{
+  "cases": [
+    {
+      "description": "Two snapshots of the same content have no change, whatever their manifests say.",
+      "diff": {
+        "boards": [],
+        "from": {
+          "contentHash": "sha256:480b80148da485f70504cd601949d117d90f2ad70b83cf1c59604d3b4fe9c599",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "project": {
+          "attributes": [],
+          "componentTypes": [],
+          "components": [],
+          "fields": [],
+          "omitted": 0,
+          "variables": []
+        },
+        "schemaVersion": 1,
+        "summary": {
+          "added": 0,
+          "cosmetic": 0,
+          "kinds": {
+            "attribute": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "board": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "branch_output": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component_type": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "connection": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "node": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "project": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "variable": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            }
+          },
+          "modified": 0,
+          "moved": 0,
+          "removed": 0
+        },
+        "to": {
+          "contentHash": "sha256:480b80148da485f70504cd601949d117d90f2ad70b83cf1c59604d3b4fe9c599",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "truncated": false
+      },
+      "from": "base",
+      "name": "identical",
+      "to": "base"
+    },
+    {
+      "description": "The draft, as a draft pull fetches it, of the same content as a release has no change, and is named as the draft, with its content hash.",
+      "diff": {
+        "boards": [],
+        "from": {
+          "contentHash": "sha256:480b80148da485f70504cd601949d117d90f2ad70b83cf1c59604d3b4fe9c599",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "project": {
+          "attributes": [],
+          "componentTypes": [],
+          "components": [],
+          "fields": [],
+          "omitted": 0,
+          "variables": []
+        },
+        "schemaVersion": 1,
+        "summary": {
+          "added": 0,
+          "cosmetic": 0,
+          "kinds": {
+            "attribute": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "board": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "branch_output": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component_type": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "connection": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "node": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "project": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "variable": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            }
+          },
+          "modified": 0,
+          "moved": 0,
+          "removed": 0
+        },
+        "to": {
+          "contentHash": "sha256:480b80148da485f70504cd601949d117d90f2ad70b83cf1c59604d3b4fe9c599",
+          "kind": "draft"
+        },
+        "truncated": false
+      },
+      "from": "base",
+      "name": "draft",
+      "to": "draft"
+    },
+    {
+      "description": "A renamed variable is modified on its key, not removed and added, and each expression and text that names it is modified, the expressions naming what they named (FR-SNAP-04 AC1).",
+      "diff": {
+        "boards": [
+          {
+            "board": {
+              "id": "bd_000000000000000000000000B1",
+              "name": "Harbour Intro\u2028Part one",
+              "slug": "harbour-intro"
+            },
+            "changes": [
+              {
+                "branch": "nd_000000000000000000000000N2",
+                "change": "modified",
+                "fields": [
+                  {
+                    "after": "met_lara and elara.trust >= 2 and elara.mood == \"tense\"",
+                    "before": "met_elara and elara.trust >= 2 and elara.mood == \"tense\"",
+                    "field": "condition",
+                    "refsChanged": false
+                  }
+                ],
+                "id": "bo_000000000000000000000000Q2",
+                "kind": "branch_output"
+              }
+            ],
+            "omitted": 0
+          },
+          {
+            "board": {
+              "id": "bd_000000000000000000000000B2",
+              "name": "Keeper's \"Gate\" \\ back",
+              "slug": "keepers-gate"
+            },
+            "changes": [
+              {
+                "change": "modified",
+                "fields": [
+                  {
+                    "after": "Say {gate_word}, met: {met_lara}",
+                    "before": "Say {gate_word}, met: {met_elara}",
+                    "field": "text",
+                    "words": [
+                      {
+                        "op": "equal",
+                        "text": "Say {gate_word}, met: "
+                      },
+                      {
+                        "op": "delete",
+                        "text": "{met_elara}"
+                      },
+                      {
+                        "op": "insert",
+                        "text": "{met_lara}"
+                      }
+                    ]
+                  }
+                ],
+                "id": "nd_00000000000000000000000N10",
+                "kind": "node",
+                "preview": "Say {gate_word}, met: {met_lara}",
+                "type": "element"
+              }
+            ],
+            "omitted": 0
+          }
+        ],
+        "from": {
+          "contentHash": "sha256:480b80148da485f70504cd601949d117d90f2ad70b83cf1c59604d3b4fe9c599",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "project": {
+          "attributes": [],
+          "componentTypes": [],
+          "components": [],
+          "fields": [],
+          "omitted": 0,
+          "variables": [
+            {
+              "change": "modified",
+              "fields": [
+                {
+                  "after": "met_lara",
+                  "before": "met_elara",
+                  "field": "key"
+                }
+              ],
+              "id": "var_000000000000000000000000V1",
+              "key": "met_lara",
+              "kind": "variable",
+              "type": "bool"
+            }
+          ]
+        },
+        "schemaVersion": 1,
+        "summary": {
+          "added": 0,
+          "cosmetic": 0,
+          "kinds": {
+            "attribute": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "board": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "branch_output": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 1,
+              "moved": 0,
+              "removed": 0
+            },
+            "component": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component_type": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "connection": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "node": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 1,
+              "moved": 0,
+              "removed": 0
+            },
+            "project": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "variable": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 1,
+              "moved": 0,
+              "removed": 0
+            }
+          },
+          "modified": 3,
+          "moved": 0,
+          "removed": 0
+        },
+        "to": {
+          "contentHash": "sha256:56a00dc69c841bc2d003b162977ab7a9718b5f3c74c14515c4345e0107c321ab",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "truncated": false
+      },
+      "from": "base",
+      "name": "renamed-variable",
+      "to": "renamed"
+    },
+    {
+      "description": "Entities that only the to side has are added, named by what their kind shows of them, each node and connection on its board.",
+      "diff": {
+        "boards": [
+          {
+            "board": {
+              "id": "bd_000000000000000000000000B3",
+              "name": "Empty",
+              "slug": "empty"
+            },
+            "changes": [
+              {
+                "change": "added",
+                "id": "nd_00000000000000000000000N20",
+                "kind": "node",
+                "preview": "Gulls cry.",
+                "title": "Quay",
+                "type": "element"
+              },
+              {
+                "change": "added",
+                "id": "nd_00000000000000000000000N21",
+                "kind": "node",
+                "preview": "Silence.",
+                "type": "element"
+              },
+              {
+                "change": "added",
+                "from": "nd_00000000000000000000000N20",
+                "id": "cn_00000000000000000000000K20",
+                "kind": "connection",
+                "label": "Listen",
+                "to": "nd_00000000000000000000000N21"
+              }
+            ],
+            "omitted": 0
+          }
+        ],
+        "from": {
+          "contentHash": "sha256:480b80148da485f70504cd601949d117d90f2ad70b83cf1c59604d3b4fe9c599",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "project": {
+          "attributes": [],
+          "componentTypes": [],
+          "components": [
+            {
+              "change": "added",
+              "id": "cmp_000000000000000000000000C3",
+              "key": "boatman",
+              "kind": "component",
+              "name": "Boatman"
+            }
+          ],
+          "fields": [],
+          "omitted": 0,
+          "variables": [
+            {
+              "change": "added",
+              "id": "var_00000000000000000000000V10",
+              "key": "tide",
+              "kind": "variable",
+              "type": "int"
+            }
+          ]
+        },
+        "schemaVersion": 1,
+        "summary": {
+          "added": 5,
+          "cosmetic": 0,
+          "kinds": {
+            "attribute": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "board": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "branch_output": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component": {
+              "added": 1,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component_type": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "connection": {
+              "added": 1,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "node": {
+              "added": 2,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "project": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "variable": {
+              "added": 1,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            }
+          },
+          "modified": 0,
+          "moved": 0,
+          "removed": 0
+        },
+        "to": {
+          "contentHash": "sha256:b4db444655627d43713a3bad787ca195c3207aadade5eb2087f953286502d8a5",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "truncated": false
+      },
+      "from": "base",
+      "name": "added",
+      "to": "added"
+    },
+    {
+      "description": "Entities that only the from side has are removed, named as the from side has them, each node and connection on the board that it was on.",
+      "diff": {
+        "boards": [
+          {
+            "board": {
+              "id": "bd_000000000000000000000000B3",
+              "name": "Empty",
+              "slug": "empty"
+            },
+            "changes": [
+              {
+                "change": "removed",
+                "id": "nd_00000000000000000000000N20",
+                "kind": "node",
+                "preview": "Gulls cry.",
+                "title": "Quay",
+                "type": "element"
+              },
+              {
+                "change": "removed",
+                "id": "nd_00000000000000000000000N21",
+                "kind": "node",
+                "preview": "Silence.",
+                "type": "element"
+              },
+              {
+                "change": "removed",
+                "from": "nd_00000000000000000000000N20",
+                "id": "cn_00000000000000000000000K20",
+                "kind": "connection",
+                "label": "Listen",
+                "to": "nd_00000000000000000000000N21"
+              }
+            ],
+            "omitted": 0
+          }
+        ],
+        "from": {
+          "contentHash": "sha256:b4db444655627d43713a3bad787ca195c3207aadade5eb2087f953286502d8a5",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "project": {
+          "attributes": [],
+          "componentTypes": [],
+          "components": [
+            {
+              "change": "removed",
+              "id": "cmp_000000000000000000000000C3",
+              "key": "boatman",
+              "kind": "component",
+              "name": "Boatman"
+            }
+          ],
+          "fields": [],
+          "omitted": 0,
+          "variables": [
+            {
+              "change": "removed",
+              "id": "var_00000000000000000000000V10",
+              "key": "tide",
+              "kind": "variable",
+              "type": "int"
+            }
+          ]
+        },
+        "schemaVersion": 1,
+        "summary": {
+          "added": 0,
+          "cosmetic": 0,
+          "kinds": {
+            "attribute": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "board": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "branch_output": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 1
+            },
+            "component_type": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "connection": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 1
+            },
+            "node": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 2
+            },
+            "project": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "variable": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 1
+            }
+          },
+          "modified": 0,
+          "moved": 0,
+          "removed": 5
+        },
+        "to": {
+          "contentHash": "sha256:480b80148da485f70504cd601949d117d90f2ad70b83cf1c59604d3b4fe9c599",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "truncated": false
+      },
+      "from": "added",
+      "name": "removed",
+      "to": "base"
+    },
+    {
+      "description": "Nodes and a connection that the two sides have on different boards are moved, with the board that each was on and the one that it is on, listed on the latter, not removed and added; a moved node whose fields changed too lists them (FR-SNAP-04 AC2).",
+      "diff": {
+        "boards": [
+          {
+            "board": {
+              "id": "bd_000000000000000000000000B2",
+              "name": "Keeper's \"Gate\" \\ back",
+              "slug": "keepers-gate"
+            },
+            "changes": [
+              {
+                "change": "moved",
+                "fromBoard": {
+                  "id": "bd_000000000000000000000000B3",
+                  "name": "Empty",
+                  "slug": "empty"
+                },
+                "id": "nd_00000000000000000000000N20",
+                "kind": "node",
+                "preview": "Gulls cry.",
+                "title": "Quay",
+                "toBoard": {
+                  "id": "bd_000000000000000000000000B2",
+                  "name": "Keeper's \"Gate\" \\ back",
+                  "slug": "keepers-gate"
+                },
+                "type": "element"
+              },
+              {
+                "change": "moved",
+                "fields": [
+                  {
+                    "after": "Hush",
+                    "field": "title"
+                  }
+                ],
+                "fromBoard": {
+                  "id": "bd_000000000000000000000000B3",
+                  "name": "Empty",
+                  "slug": "empty"
+                },
+                "id": "nd_00000000000000000000000N21",
+                "kind": "node",
+                "preview": "Silence.",
+                "title": "Hush",
+                "toBoard": {
+                  "id": "bd_000000000000000000000000B2",
+                  "name": "Keeper's \"Gate\" \\ back",
+                  "slug": "keepers-gate"
+                },
+                "type": "element"
+              },
+              {
+                "change": "moved",
+                "from": "nd_00000000000000000000000N20",
+                "fromBoard": {
+                  "id": "bd_000000000000000000000000B3",
+                  "name": "Empty",
+                  "slug": "empty"
+                },
+                "id": "cn_00000000000000000000000K20",
+                "kind": "connection",
+                "label": "Listen",
+                "to": "nd_00000000000000000000000N21",
+                "toBoard": {
+                  "id": "bd_000000000000000000000000B2",
+                  "name": "Keeper's \"Gate\" \\ back",
+                  "slug": "keepers-gate"
+                }
+              }
+            ],
+            "omitted": 0
+          }
+        ],
+        "from": {
+          "contentHash": "sha256:b4db444655627d43713a3bad787ca195c3207aadade5eb2087f953286502d8a5",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "project": {
+          "attributes": [],
+          "componentTypes": [],
+          "components": [],
+          "fields": [],
+          "omitted": 0,
+          "variables": []
+        },
+        "schemaVersion": 1,
+        "summary": {
+          "added": 0,
+          "cosmetic": 0,
+          "kinds": {
+            "attribute": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "board": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "branch_output": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component_type": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "connection": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 1,
+              "removed": 0
+            },
+            "node": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 2,
+              "removed": 0
+            },
+            "project": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "variable": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            }
+          },
+          "modified": 0,
+          "moved": 3,
+          "removed": 0
+        },
+        "to": {
+          "contentHash": "sha256:608ac61c574ae35236b72c985870eda56036fe2390519f0a562cad2fafad3e41",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "truncated": false
+      },
+      "from": "added",
+      "name": "moved",
+      "to": "moved"
+    },
+    {
+      "description": "Nodes whose position alone changed are modified and cosmetic, and counted as cosmetic.",
+      "diff": {
+        "boards": [
+          {
+            "board": {
+              "id": "bd_000000000000000000000000B1",
+              "name": "Harbour Intro\u2028Part one",
+              "slug": "harbour-intro"
+            },
+            "changes": [
+              {
+                "change": "modified",
+                "cosmetic": true,
+                "fields": [
+                  {
+                    "after": {
+                      "x": -999999000,
+                      "y": 40
+                    },
+                    "before": {
+                      "x": -1000000000,
+                      "y": 0.01
+                    },
+                    "field": "position"
+                  }
+                ],
+                "id": "nd_000000000000000000000000N3",
+                "kind": "node",
+                "preview": "The end <3 & \"bye\"",
+                "type": "element"
+              },
+              {
+                "change": "modified",
+                "cosmetic": true,
+                "fields": [
+                  {
+                    "after": {
+                      "x": 120.5,
+                      "y": 0
+                    },
+                    "before": {
+                      "x": 0,
+                      "y": 0
+                    },
+                    "field": "position"
+                  }
+                ],
+                "id": "nd_000000000000000000000000N5",
+                "kind": "node",
+                "type": "element"
+              }
+            ],
+            "omitted": 0
+          }
+        ],
+        "from": {
+          "contentHash": "sha256:480b80148da485f70504cd601949d117d90f2ad70b83cf1c59604d3b4fe9c599",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "project": {
+          "attributes": [],
+          "componentTypes": [],
+          "components": [],
+          "fields": [],
+          "omitted": 0,
+          "variables": []
+        },
+        "schemaVersion": 1,
+        "summary": {
+          "added": 0,
+          "cosmetic": 2,
+          "kinds": {
+            "attribute": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "board": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "branch_output": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component_type": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "connection": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "node": {
+              "added": 0,
+              "cosmetic": 2,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "project": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "variable": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            }
+          },
+          "modified": 0,
+          "moved": 0,
+          "removed": 0
+        },
+        "to": {
+          "contentHash": "sha256:41676cbf7ace544c254790a71d6937ee55434655a6c5fb6c21a780440fb514b3",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "truncated": false
+      },
+      "from": "base",
+      "name": "cosmetic",
+      "to": "cosmetic"
+    },
+    {
+      "description": "A changed rich text, an element's text or a connection's label, has its plain texts as before and after, and their word-level diff.",
+      "diff": {
+        "boards": [
+          {
+            "board": {
+              "id": "bd_000000000000000000000000B1",
+              "name": "Harbour Intro\u2028Part one",
+              "slug": "harbour-intro"
+            },
+            "changes": [
+              {
+                "change": "modified",
+                "fields": [
+                  {
+                    "after": "The very end <3 & \"farewell\"",
+                    "before": "The end <3 & \"bye\"",
+                    "field": "text",
+                    "words": [
+                      {
+                        "op": "equal",
+                        "text": "The "
+                      },
+                      {
+                        "op": "insert",
+                        "text": "very "
+                      },
+                      {
+                        "op": "equal",
+                        "text": "end <3 & "
+                      },
+                      {
+                        "op": "delete",
+                        "text": "\"bye\""
+                      },
+                      {
+                        "op": "insert",
+                        "text": "\"farewell\""
+                      }
+                    ]
+                  }
+                ],
+                "id": "nd_000000000000000000000000N3",
+                "kind": "node",
+                "preview": "The very end <3 & \"farewell\"",
+                "type": "element"
+              },
+              {
+                "change": "modified",
+                "fields": [
+                  {
+                    "after": "Leave quietly",
+                    "before": "Leave",
+                    "field": "label",
+                    "words": [
+                      {
+                        "op": "equal",
+                        "text": "Leave"
+                      },
+                      {
+                        "op": "insert",
+                        "text": " quietly"
+                      }
+                    ]
+                  }
+                ],
+                "from": "nd_000000000000000000000000N1",
+                "id": "cn_000000000000000000000000K2",
+                "kind": "connection",
+                "label": "Leave quietly",
+                "to": "nd_000000000000000000000000N3"
+              }
+            ],
+            "omitted": 0
+          }
+        ],
+        "from": {
+          "contentHash": "sha256:480b80148da485f70504cd601949d117d90f2ad70b83cf1c59604d3b4fe9c599",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "project": {
+          "attributes": [],
+          "componentTypes": [],
+          "components": [],
+          "fields": [],
+          "omitted": 0,
+          "variables": []
+        },
+        "schemaVersion": 1,
+        "summary": {
+          "added": 0,
+          "cosmetic": 0,
+          "kinds": {
+            "attribute": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "board": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "branch_output": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component_type": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "connection": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 1,
+              "moved": 0,
+              "removed": 0
+            },
+            "node": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 1,
+              "moved": 0,
+              "removed": 0
+            },
+            "project": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "variable": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            }
+          },
+          "modified": 2,
+          "moved": 0,
+          "removed": 0
+        },
+        "to": {
+          "contentHash": "sha256:3a52166ed756cfc97500bfcdc5bdecfcadf904c976b32d4ff5df341dc9a3c284",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "truncated": false
+      },
+      "from": "base",
+      "name": "texts",
+      "to": "texts"
+    },
+    {
+      "description": "A changed expression, added, removed, or rewritten, has its sources as before and after, and whether the variables, attributes, and nodes that it names changed.",
+      "diff": {
+        "boards": [
+          {
+            "board": {
+              "id": "bd_000000000000000000000000B1",
+              "name": "Harbour Intro\u2028Part one",
+              "slug": "harbour-intro"
+            },
+            "changes": [
+              {
+                "change": "modified",
+                "fields": [
+                  {
+                    "after": "luck = luck * 2",
+                    "before": "luck = luck + 0.0000001",
+                    "field": "onEnter",
+                    "refsChanged": false
+                  }
+                ],
+                "id": "nd_000000000000000000000000N2",
+                "kind": "node",
+                "type": "branch"
+              },
+              {
+                "branch": "nd_000000000000000000000000N2",
+                "change": "modified",
+                "fields": [
+                  {
+                    "after": "coins > 0",
+                    "before": "luck > 0.5",
+                    "field": "condition",
+                    "refsChanged": true
+                  }
+                ],
+                "id": "bo_000000000000000000000000Q1",
+                "kind": "branch_output"
+              },
+              {
+                "change": "modified",
+                "fields": [
+                  {
+                    "after": "visits_here < 5 and not visited(node(\"nd_000000000000000000000000N3\"))",
+                    "before": "visits_here < 3 and not visited(node(\"nd_000000000000000000000000N3\"))",
+                    "field": "condition",
+                    "refsChanged": false
+                  }
+                ],
+                "from": "nd_000000000000000000000000N1",
+                "id": "cn_000000000000000000000000K1",
+                "kind": "connection",
+                "label": "Go on",
+                "to": "nd_000000000000000000000000N2"
+              },
+              {
+                "change": "modified",
+                "fields": [
+                  {
+                    "before": "visits_here = 0\nsignal(\"bell\")",
+                    "field": "onTraverse",
+                    "refsChanged": true
+                  }
+                ],
+                "from": "nd_000000000000000000000000N1",
+                "id": "cn_000000000000000000000000K2",
+                "kind": "connection",
+                "label": "Leave",
+                "to": "nd_000000000000000000000000N3"
+              },
+              {
+                "change": "modified",
+                "fields": [
+                  {
+                    "after": "coins > 2",
+                    "field": "condition",
+                    "refsChanged": true
+                  }
+                ],
+                "from": "nd_000000000000000000000000N1",
+                "id": "cn_000000000000000000000000K3",
+                "kind": "connection",
+                "label": "Jump",
+                "to": "nd_000000000000000000000000N4"
+              }
+            ],
+            "omitted": 0
+          }
+        ],
+        "from": {
+          "contentHash": "sha256:480b80148da485f70504cd601949d117d90f2ad70b83cf1c59604d3b4fe9c599",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "project": {
+          "attributes": [],
+          "componentTypes": [],
+          "components": [],
+          "fields": [],
+          "omitted": 0,
+          "variables": []
+        },
+        "schemaVersion": 1,
+        "summary": {
+          "added": 0,
+          "cosmetic": 0,
+          "kinds": {
+            "attribute": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "board": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "branch_output": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 1,
+              "moved": 0,
+              "removed": 0
+            },
+            "component": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component_type": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "connection": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 3,
+              "moved": 0,
+              "removed": 0
+            },
+            "node": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 1,
+              "moved": 0,
+              "removed": 0
+            },
+            "project": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "variable": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            }
+          },
+          "modified": 5,
+          "moved": 0,
+          "removed": 0
+        },
+        "to": {
+          "contentHash": "sha256:54308f2aa879dafbf16c124c9b94589c9c27405b7a6c931a9be6fad1ca815ed7",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "truncated": false
+      },
+      "from": "base",
+      "name": "expressions",
+      "to": "expressions"
+    },
+    {
+      "description": "A branch output added before others is added, and those whose places moved on are modified on their order; the branch itself, whose own fields did not change, is not.",
+      "diff": {
+        "boards": [
+          {
+            "board": {
+              "id": "bd_000000000000000000000000B1",
+              "name": "Harbour Intro\u2028Part one",
+              "slug": "harbour-intro"
+            },
+            "changes": [
+              {
+                "branch": "nd_000000000000000000000000N2",
+                "change": "modified",
+                "fields": [
+                  {
+                    "after": 2,
+                    "before": 1,
+                    "field": "order"
+                  }
+                ],
+                "id": "bo_000000000000000000000000Q1",
+                "kind": "branch_output"
+              },
+              {
+                "branch": "nd_000000000000000000000000N2",
+                "change": "modified",
+                "fields": [
+                  {
+                    "after": 3,
+                    "before": 2,
+                    "field": "order"
+                  }
+                ],
+                "id": "bo_000000000000000000000000Q3",
+                "kind": "branch_output"
+              },
+              {
+                "branch": "nd_000000000000000000000000N2",
+                "change": "added",
+                "id": "bo_000000000000000000000000Q4",
+                "kind": "branch_output"
+              }
+            ],
+            "omitted": 0
+          }
+        ],
+        "from": {
+          "contentHash": "sha256:480b80148da485f70504cd601949d117d90f2ad70b83cf1c59604d3b4fe9c599",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "project": {
+          "attributes": [],
+          "componentTypes": [],
+          "components": [],
+          "fields": [],
+          "omitted": 0,
+          "variables": []
+        },
+        "schemaVersion": 1,
+        "summary": {
+          "added": 1,
+          "cosmetic": 0,
+          "kinds": {
+            "attribute": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "board": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "branch_output": {
+              "added": 1,
+              "cosmetic": 0,
+              "modified": 2,
+              "moved": 0,
+              "removed": 0
+            },
+            "component": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component_type": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "connection": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "node": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "project": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "variable": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            }
+          },
+          "modified": 2,
+          "moved": 0,
+          "removed": 0
+        },
+        "to": {
+          "contentHash": "sha256:c1ac25fa5b0a0fd29a73f95e13edebc2651aab55dbf22befc75fc6e07dc1f094",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "truncated": false
+      },
+      "from": "base",
+      "name": "outputs",
+      "to": "outputs"
+    },
+    {
+      "description": "Changed fields of every kind of entity have their values as their files hold them, or no value where a side does not have the field: a retyped variable, a description added, a resetOnEnter taken away, names, options, an attribute's value, tags, a title, a board's name, and the project's.",
+      "diff": {
+        "boards": [
+          {
+            "board": {
+              "id": "bd_000000000000000000000000B1",
+              "name": "Harbour Intro\u2028Part one",
+              "slug": "harbour-intro"
+            },
+            "changes": [
+              {
+                "change": "modified",
+                "fields": [
+                  {
+                    "after": [
+                      "finale"
+                    ],
+                    "field": "tags"
+                  }
+                ],
+                "id": "nd_000000000000000000000000N3",
+                "kind": "node",
+                "preview": "The end <3 & \"bye\"",
+                "type": "element"
+              },
+              {
+                "change": "modified",
+                "fields": [
+                  {
+                    "after": "To the keeper's gate",
+                    "before": "To the gate",
+                    "field": "title"
+                  }
+                ],
+                "id": "nd_000000000000000000000000N4",
+                "kind": "node",
+                "title": "To the keeper's gate",
+                "type": "jumper"
+              }
+            ],
+            "omitted": 0
+          },
+          {
+            "board": {
+              "id": "bd_000000000000000000000000B3",
+              "name": "Empty quay",
+              "slug": "empty"
+            },
+            "change": "modified",
+            "changes": [],
+            "fields": [
+              {
+                "after": "Empty quay",
+                "before": "Empty",
+                "field": "name"
+              }
+            ],
+            "omitted": 0
+          }
+        ],
+        "from": {
+          "contentHash": "sha256:480b80148da485f70504cd601949d117d90f2ad70b83cf1c59604d3b4fe9c599",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "project": {
+          "attributes": [
+            {
+              "change": "modified",
+              "componentType": "ct_000000000000000000000000T1",
+              "fields": [
+                {
+                  "after": [
+                    "tense",
+                    "calm",
+                    "angry"
+                  ],
+                  "before": [
+                    "tense",
+                    "calm"
+                  ],
+                  "field": "options"
+                }
+              ],
+              "id": "atr_000000000000000000000000A2",
+              "key": "mood",
+              "kind": "attribute",
+              "name": "Mood"
+            },
+            {
+              "change": "modified",
+              "componentType": "ct_000000000000000000000000T1",
+              "fields": [
+                {
+                  "after": "Life story",
+                  "before": "Biography",
+                  "field": "name"
+                }
+              ],
+              "id": "atr_000000000000000000000000A3",
+              "key": "bio",
+              "kind": "attribute",
+              "name": "Life story"
+            }
+          ],
+          "componentTypes": [
+            {
+              "change": "modified",
+              "fields": [
+                {
+                  "after": "Characters",
+                  "before": "Cast",
+                  "field": "name"
+                }
+              ],
+              "id": "ct_000000000000000000000000T1",
+              "key": "cast",
+              "kind": "component_type",
+              "name": "Characters"
+            }
+          ],
+          "components": [
+            {
+              "change": "modified",
+              "fields": [
+                {
+                  "after": 6,
+                  "attribute": "atr_000000000000000000000000A1",
+                  "before": 5,
+                  "field": "attributes"
+                },
+                {
+                  "after": "Mira the Pilot",
+                  "before": "Mira",
+                  "field": "name"
+                }
+              ],
+              "id": "cmp_000000000000000000000000C2",
+              "key": "mira",
+              "kind": "component",
+              "name": "Mira the Pilot"
+            }
+          ],
+          "fields": [
+            {
+              "after": "Harbour Tales",
+              "before": "Harbour <Tales> & \"Sea\" 🐚",
+              "field": "name"
+            }
+          ],
+          "omitted": 0,
+          "variables": [
+            {
+              "change": "modified",
+              "fields": [
+                {
+                  "after": "Fortune's favour.",
+                  "field": "description"
+                }
+              ],
+              "id": "var_000000000000000000000000V2",
+              "key": "luck",
+              "kind": "variable",
+              "type": "float"
+            },
+            {
+              "change": "modified",
+              "fields": [
+                {
+                  "after": 7,
+                  "before": 1e+21,
+                  "field": "default"
+                },
+                {
+                  "after": "int",
+                  "before": "float",
+                  "field": "type"
+                }
+              ],
+              "id": "var_000000000000000000000000V3",
+              "key": "big",
+              "kind": "variable",
+              "type": "int"
+            },
+            {
+              "change": "modified",
+              "fields": [
+                {
+                  "before": true,
+                  "field": "resetOnEnter"
+                }
+              ],
+              "id": "var_000000000000000000000000V7",
+              "key": "visits_here",
+              "kind": "variable",
+              "type": "int"
+            }
+          ]
+        },
+        "schemaVersion": 1,
+        "summary": {
+          "added": 0,
+          "cosmetic": 0,
+          "kinds": {
+            "attribute": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 2,
+              "moved": 0,
+              "removed": 0
+            },
+            "board": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 1,
+              "moved": 0,
+              "removed": 0
+            },
+            "branch_output": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 1,
+              "moved": 0,
+              "removed": 0
+            },
+            "component_type": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 1,
+              "moved": 0,
+              "removed": 0
+            },
+            "connection": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "node": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 2,
+              "moved": 0,
+              "removed": 0
+            },
+            "project": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 1,
+              "moved": 0,
+              "removed": 0
+            },
+            "variable": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 3,
+              "moved": 0,
+              "removed": 0
+            }
+          },
+          "modified": 11,
+          "moved": 0,
+          "removed": 0
+        },
+        "to": {
+          "contentHash": "sha256:3da36542351706eb96c2975d184997b7d3768d664e88bf6bc109f9fe79aef99d",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "truncated": false
+      },
+      "from": "base",
+      "name": "fields",
+      "to": "fields"
+    },
+    {
+      "description": "A board that only one side has is added or removed with what it holds, and one whose slug, and so its file's path, changed is modified, with nothing that it holds changed.",
+      "diff": {
+        "boards": [
+          {
+            "board": {
+              "id": "bd_000000000000000000000000B2",
+              "name": "Keeper's \"Gate\" \\ back",
+              "slug": "keepers-gate-east"
+            },
+            "change": "modified",
+            "changes": [],
+            "fields": [
+              {
+                "after": "keepers-gate-east",
+                "before": "keepers-gate",
+                "field": "slug"
+              }
+            ],
+            "omitted": 0
+          },
+          {
+            "board": {
+              "id": "bd_000000000000000000000000B3",
+              "name": "Empty",
+              "slug": "empty"
+            },
+            "change": "removed",
+            "changes": [],
+            "omitted": 0
+          },
+          {
+            "board": {
+              "id": "bd_000000000000000000000000B4",
+              "name": "Lighthouse",
+              "slug": "lighthouse"
+            },
+            "change": "added",
+            "changes": [
+              {
+                "change": "added",
+                "id": "nd_00000000000000000000000N30",
+                "kind": "node",
+                "preview": "The lamp burns.",
+                "type": "element"
+              }
+            ],
+            "omitted": 0
+          }
+        ],
+        "from": {
+          "contentHash": "sha256:480b80148da485f70504cd601949d117d90f2ad70b83cf1c59604d3b4fe9c599",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "project": {
+          "attributes": [],
+          "componentTypes": [],
+          "components": [],
+          "fields": [],
+          "omitted": 0,
+          "variables": []
+        },
+        "schemaVersion": 1,
+        "summary": {
+          "added": 2,
+          "cosmetic": 0,
+          "kinds": {
+            "attribute": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "board": {
+              "added": 1,
+              "cosmetic": 0,
+              "modified": 1,
+              "moved": 0,
+              "removed": 1
+            },
+            "branch_output": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component_type": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "connection": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "node": {
+              "added": 1,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "project": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "variable": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            }
+          },
+          "modified": 1,
+          "moved": 0,
+          "removed": 1
+        },
+        "to": {
+          "contentHash": "sha256:671387490815188e60ad81020ea6fbf264763c27591542299d221ef6dbde444b",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "truncated": false
+      },
+      "from": "base",
+      "name": "boards",
+      "to": "boards"
+    }
+  ]
+}

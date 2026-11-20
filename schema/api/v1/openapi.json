@@ -1087,6 +1087,50 @@
         ],
         "type": "object"
       },
+      "BoardChanges": {
+        "additionalProperties": false,
+        "properties": {
+          "board": {
+            "$ref": "#/components/schemas/BoardRef",
+            "description": "The board, as the to side has it, or as the from side has it for a board that the to side does not have."
+          },
+          "change": {
+            "description": "What happened to the board itself: added or removed, with every node, branch output, and connection of it, or modified, with the changes of its fields. Without it, the board itself did not change, and only what it holds did.",
+            "enum": [
+              "added",
+              "removed",
+              "modified"
+            ],
+            "type": "string"
+          },
+          "changes": {
+            "description": "The changes of what the board holds: its nodes, then their branch outputs, then its connections, each kind sorted by ID, [] for none. A node or a connection that was added, modified, or moved is listed on the board that the to side has it on, and one that was removed on the board that the from side had it on.",
+            "items": {
+              "$ref": "#/components/schemas/EntityChange"
+            },
+            "type": "array"
+          },
+          "fields": {
+            "description": "The changes of the board's fields, its entryNodeId, name, and slug, sorted by field, of a board that was modified.",
+            "items": {
+              "$ref": "#/components/schemas/FieldChange"
+            },
+            "type": "array"
+          },
+          "omitted": {
+            "description": "How many changes of what the board holds were left out to size the diff, 0 for none.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "board",
+          "changes",
+          "omitted"
+        ],
+        "type": "object"
+      },
       "BoardCreateCommand": {
         "additionalProperties": false,
         "description": "A command of the type board.create.",
@@ -1345,6 +1389,26 @@
         },
         "required": [
           "id"
+        ],
+        "type": "object"
+      },
+      "BoardRef": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug"
         ],
         "type": "object"
       },
@@ -2029,6 +2093,44 @@
         },
         "required": [
           "id"
+        ],
+        "type": "object"
+      },
+      "ChangeCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "added": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cosmetic": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "modified": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "moved": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "removed": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "added",
+          "cosmetic",
+          "modified",
+          "moved",
+          "removed"
         ],
         "type": "object"
       },
@@ -5519,6 +5621,148 @@
         ],
         "type": "object"
       },
+      "Diff": {
+        "additionalProperties": false,
+        "properties": {
+          "boards": {
+            "description": "Each board that changed, or whose nodes, branch outputs, or connections changed, sorted by the board's ID, [] for none.",
+            "items": {
+              "$ref": "#/components/schemas/BoardChanges"
+            },
+            "type": "array"
+          },
+          "from": {
+            "$ref": "#/components/schemas/DiffSide"
+          },
+          "project": {
+            "$ref": "#/components/schemas/ProjectChanges"
+          },
+          "schemaVersion": {
+            "description": "The version of the published game format, its schemaVersion, that both sides were compared at.",
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/DiffSummary"
+          },
+          "to": {
+            "$ref": "#/components/schemas/DiffSide"
+          },
+          "truncated": {
+            "description": "Whether changes were left out to size the diff for display, which the omitted counts of the project and of each board count. The summary counts every change all the same (PRD FR-SYNC-02 AC2).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "boards",
+          "from",
+          "project",
+          "schemaVersion",
+          "summary",
+          "to",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "DiffInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "description": "The ID of the snapshot that the diff is from, a ready one of the project's, as the release that a game has pinned, whether or not it is the newest (PRD FR-SYNC-02 AC1)",
+            "type": "string"
+          },
+          "limit": {
+            "description": "The most changes that the answer lists, from 1 to 5,000. Without it, 1,000.",
+            "format": "int64",
+            "maximum": 5000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "to": {
+            "description": "The ID of the snapshot that the diff is into, a ready one of the project's, or draft, for the project's draft as it is now, which an API token needs project:read for",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
+      },
+      "DiffSide": {
+        "additionalProperties": false,
+        "properties": {
+          "contentHash": {
+            "description": "The hash of the side's content, as its manifest's snapshot has it (PRD §7.3).",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "id": {
+            "description": "The release's ID. The draft has none.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "A release, snapshot, or the draft.",
+            "enum": [
+              "snapshot",
+              "draft"
+            ],
+            "type": "string"
+          },
+          "version": {
+            "description": "The release's version. The draft has none.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contentHash",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "DiffSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "added": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cosmetic": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kinds": {
+            "$ref": "#/components/schemas/KindCounts"
+          },
+          "modified": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "moved": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "removed": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "added",
+          "cosmetic",
+          "kinds",
+          "modified",
+          "moved",
+          "removed"
+        ],
+        "type": "object"
+      },
       "Edge": {
         "additionalProperties": false,
         "properties": {
@@ -5592,6 +5836,103 @@
           "site",
           "node_id",
           "node_title"
+        ],
+        "type": "object"
+      },
+      "EntityChange": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "description": "A branch output's branch, a node's ID.",
+            "type": "string"
+          },
+          "change": {
+            "description": "What happened to the entity: added, which only the to side has; removed, which only the from side has; modified, which both sides have, whose fields differ; or moved, a node or a connection that the two sides have on different boards, whose fields may differ too (PRD §7.4).",
+            "enum": [
+              "added",
+              "removed",
+              "modified",
+              "moved"
+            ],
+            "type": "string"
+          },
+          "componentType": {
+            "description": "An attribute definition's component type's ID.",
+            "type": "string"
+          },
+          "cosmetic": {
+            "description": "Set on a modified node whose position alone changed, which a view collapses by default (PRD §7.4).",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "The changes of the entity's fields, sorted by field, and the values of a component's attributes by the attribute's ID, of an entity that was modified, or moved with fields that differ too. An entity that was added or removed lists none.",
+            "items": {
+              "$ref": "#/components/schemas/FieldChange"
+            },
+            "type": "array"
+          },
+          "from": {
+            "description": "The node that a connection leaves.",
+            "type": "string"
+          },
+          "fromBoard": {
+            "$ref": "#/components/schemas/BoardRef",
+            "description": "The board that a moved node or connection was on, as the from side has it."
+          },
+          "id": {
+            "description": "The entity's ID.",
+            "type": "string"
+          },
+          "key": {
+            "description": "A variable's, a component type's, an attribute definition's, or a component's key.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "The entity's kind.",
+            "enum": [
+              "variable",
+              "component_type",
+              "attribute",
+              "component",
+              "node",
+              "branch_output",
+              "connection"
+            ],
+            "type": "string"
+          },
+          "label": {
+            "description": "A connection's label's plain text, where it has one.",
+            "type": "string"
+          },
+          "name": {
+            "description": "A component type's, an attribute definition's, or a component's name.",
+            "type": "string"
+          },
+          "preview": {
+            "description": "An element's text's preview, where it has a text.",
+            "type": "string"
+          },
+          "title": {
+            "description": "A node's title, where it has one.",
+            "type": "string"
+          },
+          "to": {
+            "description": "The node that a connection enters.",
+            "type": "string"
+          },
+          "toBoard": {
+            "$ref": "#/components/schemas/BoardRef",
+            "description": "The board that a moved node or connection is on, as the to side has it."
+          },
+          "type": {
+            "description": "A variable's type, or a node's: element, branch, or jumper.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "change",
+          "id",
+          "kind"
         ],
         "type": "object"
       },
@@ -5716,6 +6057,40 @@
         "required": [
           "source",
           "is_valid"
+        ],
+        "type": "object"
+      },
+      "FieldChange": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "description": "The field's value on the to side, as its file holds it, or a rich text's plain text, or an expression's source. Without it, the to side does not have the field."
+          },
+          "attribute": {
+            "description": "Of a component's attributes, the attribute definition's ID whose value this is.",
+            "type": "string"
+          },
+          "before": {
+            "description": "The field's value on the from side, as after has it. Without it, the from side does not have the field."
+          },
+          "field": {
+            "description": "The field's name, as its file has it, as key or condition; componentType and order for an attribute definition's component type and its place among the type's, from 0; and branch for a branch output's branch.",
+            "type": "string"
+          },
+          "refsChanged": {
+            "description": "Of an expression, whether the variables, the components' attributes, and the nodes that it names differ between the two sides.",
+            "type": "boolean"
+          },
+          "words": {
+            "description": "Of a rich text, the word-level diff of its plain texts, before into after, in order.",
+            "items": {
+              "$ref": "#/components/schemas/WordRun"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "field"
         ],
         "type": "object"
       },
@@ -6464,6 +6839,50 @@
         },
         "required": [
           "email"
+        ],
+        "type": "object"
+      },
+      "KindCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "attribute": {
+            "$ref": "#/components/schemas/ChangeCounts"
+          },
+          "board": {
+            "$ref": "#/components/schemas/ChangeCounts"
+          },
+          "branch_output": {
+            "$ref": "#/components/schemas/ChangeCounts"
+          },
+          "component": {
+            "$ref": "#/components/schemas/ChangeCounts"
+          },
+          "component_type": {
+            "$ref": "#/components/schemas/ChangeCounts"
+          },
+          "connection": {
+            "$ref": "#/components/schemas/ChangeCounts"
+          },
+          "node": {
+            "$ref": "#/components/schemas/ChangeCounts"
+          },
+          "project": {
+            "$ref": "#/components/schemas/ChangeCounts"
+          },
+          "variable": {
+            "$ref": "#/components/schemas/ChangeCounts"
+          }
+        },
+        "required": [
+          "attribute",
+          "board",
+          "branch_output",
+          "component",
+          "component_type",
+          "connection",
+          "node",
+          "project",
+          "variable"
         ],
         "type": "object"
       },
@@ -9027,6 +9446,61 @@
           "seq",
           "created_at",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "ProjectChanges": {
+        "additionalProperties": false,
+        "properties": {
+          "attributes": {
+            "description": "The changes of the component types' attribute definitions, sorted by ID, [] for none.",
+            "items": {
+              "$ref": "#/components/schemas/EntityChange"
+            },
+            "type": "array"
+          },
+          "componentTypes": {
+            "description": "The changes of the component types, sorted by ID, [] for none.",
+            "items": {
+              "$ref": "#/components/schemas/EntityChange"
+            },
+            "type": "array"
+          },
+          "components": {
+            "description": "The changes of the components, sorted by ID, [] for none.",
+            "items": {
+              "$ref": "#/components/schemas/EntityChange"
+            },
+            "type": "array"
+          },
+          "fields": {
+            "description": "The changes of the project's own fields, its name and slug, as its manifest has them, and its entry and signals, as its settings have them, sorted by field, [] for none.",
+            "items": {
+              "$ref": "#/components/schemas/FieldChange"
+            },
+            "type": "array"
+          },
+          "omitted": {
+            "description": "How many changes of the project's variables, component types, attribute definitions, and components were left out to size the diff, 0 for none.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "variables": {
+            "description": "The changes of the variables, global and of each board, sorted by ID, [] for none.",
+            "items": {
+              "$ref": "#/components/schemas/EntityChange"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "attributes",
+          "componentTypes",
+          "components",
+          "fields",
+          "omitted",
+          "variables"
         ],
         "type": "object"
       },
@@ -12147,6 +12621,29 @@
           "version",
           "go_version",
           "published_schema"
+        ],
+        "type": "object"
+      },
+      "WordRun": {
+        "additionalProperties": false,
+        "properties": {
+          "op": {
+            "description": "Whether the text is in both sides, equal; in the before side alone, delete; or in the after side alone, insert.",
+            "enum": [
+              "equal",
+              "delete",
+              "insert"
+            ],
+            "type": "string"
+          },
+          "text": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "text"
         ],
         "type": "object"
       },
@@ -19197,6 +19694,121 @@
         "summary": "List the contributions to an edge between two boards",
         "tags": [
           "Dependencies"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/diff": {
+      "post": {
+        "description": "Returns the entity-level diff of the project's snapshot from into its snapshot to, or into its draft as it is now, read as of one moment, for to draft (PRD FR-SNAP-04, FR-SYNC-02, §7.4): the variables, component types, attribute definitions, components, boards, nodes, branch outputs, and connections that only to has, added, or only from has, removed; those that both have whose fields differ, modified, each changed field with its value on either side, a rich text's as its plain text with a word-level diff, and an expression's as its source with whether what it names changed, a node whose position alone changed being cosmetic; and the nodes and connections that the two have on different boards, moved, with both boards. The changes of what boards hold are grouped by board, and the summary counts every change of each kind. Both sides are compared at the version of the published game format that the server writes, as its schemaVersion says, and the Godot addon, which computes the same diff of the files that it holds, follows schema/diff-corpus. Either snapshot may be any of the project's that is ready, the newest or an older one, in either order (PRD FR-SYNC-02 AC1); one that is building or failed, which has no files, is answered with 409 snapshot_not_ready, whose details.status says which, of the first of from and to that is not ready. The answer is sized for display: it lists at most limit changes, 1,000 unless the request asks for up to 5,000, and at most 8 MiB of them, in its order, the project's variables, component types, attribute definitions, and components first and then each board's changes, and leaves out every change after the first that does not fit, which truncated, the project's omitted, and each board's omitted count, while the summary still counts every change (PRD FR-SYNC-02 AC2). The draft is not a release, so an API token needs project:read for a diff into it, and one that holds snapshot:read alone is answered with 403 insufficient_scope. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A snapshot that the project does not have is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope snapshot:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "diffSnapshots",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiffInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Diff"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Diff two snapshots",
+        "tags": [
+          "Snapshots"
         ]
       }
     },

@@ -338,6 +338,19 @@ export interface Board {
   updated_at: string;
 }
 
+export interface BoardChanges {
+  /** The board, as the to side has it, or as the from side has it for a board that the to side does not have. */
+  board: BoardRef;
+  /** What happened to the board itself: added or removed, with every node, branch output, and connection of it, or modified, with the changes of its fields. Without it, the board itself did not change, and only what it holds did. */
+  change?: "added" | "removed" | "modified";
+  /** The changes of what the board holds: its nodes, then their branch outputs, then its connections, each kind sorted by ID, [] for none. A node or a connection that was added, modified, or moved is listed on the board that the to side has it on, and one that was removed on the board that the from side had it on. */
+  changes: Array<EntityChange>;
+  /** The changes of the board's fields, its entryNodeId, name, and slug, sorted by field, of a board that was modified. */
+  fields?: Array<FieldChange>;
+  /** How many changes of what the board holds were left out to size the diff, 0 for none. */
+  omitted: number;
+}
+
 /** A command of the type board.create. */
 export interface BoardCreateCommand {
   /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
@@ -424,6 +437,12 @@ export interface BoardMovePayload {
   id: string;
   /** The board's place among the children of the folder, or of the top. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the children by its bytes, and those with the same key by their IDs without the prefix, bd_ or fld_, compared by their bytes too: pick one between the keys of the children that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the board goes after the last child, or stays where it is if it is the last child of the folder already that is not deleted. */
   order?: string;
+}
+
+export interface BoardRef {
+  id: string;
+  name: string;
+  slug: string;
 }
 
 /** A command of the type board.rename. */
@@ -656,6 +675,14 @@ export interface BranchOutputUpdatePayload {
   condition?: string;
   /** The output's ID */
   id: string;
+}
+
+export interface ChangeCounts {
+  added: number;
+  cosmetic: number;
+  modified: number;
+  moved: number;
+  removed: number;
 }
 
 export interface ChangeRoleBody {
@@ -1727,6 +1754,48 @@ export interface Cursor {
   phase: "awaiting_choice" | "ended";
 }
 
+export interface Diff {
+  /** Each board that changed, or whose nodes, branch outputs, or connections changed, sorted by the board's ID, [] for none. */
+  boards: Array<BoardChanges>;
+  from: DiffSide;
+  project: ProjectChanges;
+  /** The version of the published game format, its schemaVersion, that both sides were compared at. */
+  schemaVersion: number;
+  summary: DiffSummary;
+  to: DiffSide;
+  /** Whether changes were left out to size the diff for display, which the omitted counts of the project and of each board count. The summary counts every change all the same (PRD FR-SYNC-02 AC2). */
+  truncated: boolean;
+}
+
+export interface DiffInputBody {
+  /** The ID of the snapshot that the diff is from, a ready one of the project's, as the release that a game has pinned, whether or not it is the newest (PRD FR-SYNC-02 AC1) */
+  from: string;
+  /** The most changes that the answer lists, from 1 to 5,000. Without it, 1,000. */
+  limit?: number;
+  /** The ID of the snapshot that the diff is into, a ready one of the project's, or draft, for the project's draft as it is now, which an API token needs project:read for */
+  to: string;
+}
+
+export interface DiffSide {
+  /** The hash of the side's content, as its manifest's snapshot has it (PRD §7.3). */
+  contentHash: string;
+  /** The release's ID. The draft has none. */
+  id?: string;
+  /** A release, snapshot, or the draft. */
+  kind: "snapshot" | "draft";
+  /** The release's version. The draft has none. */
+  version?: string;
+}
+
+export interface DiffSummary {
+  added: number;
+  cosmetic: number;
+  kinds: KindCounts;
+  modified: number;
+  moved: number;
+  removed: number;
+}
+
 export interface Edge {
   /** How many contributions the edge has that the filters keep, which its list of contributions lists: of variable and attribute, the triples of the variable or the attribute, a site that writes it, and a site that reads it; of jumper, the jumpers; and of visit, the pairs of the node visited and the expression that reads it */
   contributions: number;
@@ -1749,6 +1818,43 @@ export interface End {
   node_title: string;
   /** What the end is: a node itself, a jumper, its target, or the node visited; a node's on-enter or on-exit script, or its text; a connection's condition, its on-traverse script, or its label; or a branch output's condition */
   site: "node" | "node_on_enter" | "node_on_exit" | "node_text" | "connection_condition" | "connection_on_traverse" | "connection_label" | "branch_output_condition";
+}
+
+export interface EntityChange {
+  /** A branch output's branch, a node's ID. */
+  branch?: string;
+  /** What happened to the entity: added, which only the to side has; removed, which only the from side has; modified, which both sides have, whose fields differ; or moved, a node or a connection that the two sides have on different boards, whose fields may differ too (PRD §7.4). */
+  change: "added" | "removed" | "modified" | "moved";
+  /** An attribute definition's component type's ID. */
+  componentType?: string;
+  /** Set on a modified node whose position alone changed, which a view collapses by default (PRD §7.4). */
+  cosmetic?: boolean;
+  /** The changes of the entity's fields, sorted by field, and the values of a component's attributes by the attribute's ID, of an entity that was modified, or moved with fields that differ too. An entity that was added or removed lists none. */
+  fields?: Array<FieldChange>;
+  /** The node that a connection leaves. */
+  from?: string;
+  /** The board that a moved node or connection was on, as the from side has it. */
+  fromBoard?: BoardRef;
+  /** The entity's ID. */
+  id: string;
+  /** A variable's, a component type's, an attribute definition's, or a component's key. */
+  key?: string;
+  /** The entity's kind. */
+  kind: "variable" | "component_type" | "attribute" | "component" | "node" | "branch_output" | "connection";
+  /** A connection's label's plain text, where it has one. */
+  label?: string;
+  /** A component type's, an attribute definition's, or a component's name. */
+  name?: string;
+  /** An element's text's preview, where it has a text. */
+  preview?: string;
+  /** A node's title, where it has one. */
+  title?: string;
+  /** The node that a connection enters. */
+  to?: string;
+  /** The board that a moved node or connection is on, as the to side has it. */
+  toBoard?: BoardRef;
+  /** A variable's type, or a node's: element, branch, or jumper. */
+  type?: string;
 }
 
 export interface EntityCounts {
@@ -1794,6 +1900,21 @@ export interface Expression {
   is_valid: boolean;
   /** The expression's source, as its author wrote it (PRD §5.8) */
   source: string;
+}
+
+export interface FieldChange {
+  /** The field's value on the to side, as its file holds it, or a rich text's plain text, or an expression's source. Without it, the to side does not have the field. */
+  after?: unknown;
+  /** Of a component's attributes, the attribute definition's ID whose value this is. */
+  attribute?: string;
+  /** The field's value on the from side, as after has it. Without it, the from side does not have the field. */
+  before?: unknown;
+  /** The field's name, as its file has it, as key or condition; componentType and order for an attribute definition's component type and its place among the type's, from 0; and branch for a branch output's branch. */
+  field: string;
+  /** Of an expression, whether the variables, the components' attributes, and the nodes that it names differ between the two sides. */
+  refsChanged?: boolean;
+  /** Of a rich text, the word-level diff of its plain texts, before into after, in order. */
+  words?: Array<WordRun>;
 }
 
 export interface Finding {
@@ -2035,6 +2156,18 @@ export interface InviteTokenBody {
 export interface IssueLinkBody {
   /** The email address of the account, in any case */
   email: string;
+}
+
+export interface KindCounts {
+  attribute: ChangeCounts;
+  board: ChangeCounts;
+  branch_output: ChangeCounts;
+  component: ChangeCounts;
+  component_type: ChangeCounts;
+  connection: ChangeCounts;
+  node: ChangeCounts;
+  project: ChangeCounts;
+  variable: ChangeCounts;
 }
 
 export interface LimitUsageBody {
@@ -2868,6 +3001,21 @@ export interface ProjectBody {
   updated_at: string;
   /** The ID of the project's workspace */
   workspace_id: string;
+}
+
+export interface ProjectChanges {
+  /** The changes of the component types' attribute definitions, sorted by ID, [] for none. */
+  attributes: Array<EntityChange>;
+  /** The changes of the component types, sorted by ID, [] for none. */
+  componentTypes: Array<EntityChange>;
+  /** The changes of the components, sorted by ID, [] for none. */
+  components: Array<EntityChange>;
+  /** The changes of the project's own fields, its name and slug, as its manifest has them, and its entry and signals, as its settings have them, sorted by field, [] for none. */
+  fields: Array<FieldChange>;
+  /** How many changes of the project's variables, component types, attribute definitions, and components were left out to size the diff, 0 for none. */
+  omitted: number;
+  /** The changes of the variables, global and of each board, sorted by ID, [] for none. */
+  variables: Array<EntityChange>;
 }
 
 /** A command of the type project.delete. Only a session may apply it: a batch with it that an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). */
@@ -3901,6 +4049,12 @@ export interface VersionBody {
   version: string;
 }
 
+export interface WordRun {
+  /** Whether the text is in both sides, equal; in the before side alone, delete; or in the after side alone, insert. */
+  op: "equal" | "delete" | "insert";
+  text: string;
+}
+
 export interface WorkspaceBody {
   /** When the workspace was created */
   created_at: string;
@@ -4225,6 +4379,23 @@ export interface Operations {
     };
     responses: {
       204: undefined;
+    };
+  };
+  /**
+   * Diff two snapshots
+   *
+   * Returns the entity-level diff of the project's snapshot from into its snapshot to, or into its draft as it is now, read as of one moment, for to draft (PRD FR-SNAP-04, FR-SYNC-02, §7.4): the variables, component types, attribute definitions, components, boards, nodes, branch outputs, and connections that only to has, added, or only from has, removed; those that both have whose fields differ, modified, each changed field with its value on either side, a rich text's as its plain text with a word-level diff, and an expression's as its source with whether what it names changed, a node whose position alone changed being cosmetic; and the nodes and connections that the two have on different boards, moved, with both boards. The changes of what boards hold are grouped by board, and the summary counts every change of each kind. Both sides are compared at the version of the published game format that the server writes, as its schemaVersion says, and the Godot addon, which computes the same diff of the files that it holds, follows schema/diff-corpus. Either snapshot may be any of the project's that is ready, the newest or an older one, in either order (PRD FR-SYNC-02 AC1); one that is building or failed, which has no files, is answered with 409 snapshot_not_ready, whose details.status says which, of the first of from and to that is not ready. The answer is sized for display: it lists at most limit changes, 1,000 unless the request asks for up to 5,000, and at most 8 MiB of them, in its order, the project's variables, component types, attribute definitions, and components first and then each board's changes, and leaves out every change after the first that does not fit, which truncated, the project's omitted, and each board's omitted count, while the summary still counts every change (PRD FR-SYNC-02 AC2). The draft is not a release, so an API token needs project:read for a diff into it, and one that holds snapshot:read alone is answered with 403 insufficient_scope. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A snapshot that the project does not have is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope snapshot:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
+   */
+  diffSnapshots: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      body: DiffInputBody;
+    };
+    responses: {
+      200: Diff;
     };
   };
   /**
@@ -6106,6 +6277,7 @@ export const routes = {
   createWorkspace: { method: "POST", path: "/api/v1/workspaces" },
   createWorkspaceToken: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/tokens" },
   deleteProject: { method: "DELETE", path: "/api/v1/projects/{project_id}" },
+  diffSnapshots: { method: "POST", path: "/api/v1/projects/{project_id}/diff" },
   exportDraft: { method: "GET", path: "/api/v1/projects/{project_id}/draft/export", blob: true },
   exportSnapshot: { method: "GET", path: "/api/v1/projects/{project_id}/snapshots/{snapshot_id}/export", blob: true },
   getAccount: { method: "GET", path: "/api/v1/auth/account" },

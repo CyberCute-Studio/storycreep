@@ -1,0 +1,63 @@
+{
+  "astVersion": 1,
+  "boards": [
+    {
+      "entryNodeId": "nd_000000000000000000000000N1",
+      "file": "boards/harbour-intro.json",
+      "id": "bd_000000000000000000000000B1",
+      "name": "Harbour Intro\u2028Part one",
+      "slug": "harbour-intro"
+    },
+    {
+      "entryNodeId": "nd_00000000000000000000000N10",
+      "file": "boards/keepers-gate.json",
+      "id": "bd_000000000000000000000000B2",
+      "name": "Keeper's \"Gate\" \\ back",
+      "slug": "keepers-gate"
+    },
+    {
+      "file": "boards/empty.json",
+      "id": "bd_000000000000000000000000B3",
+      "name": "Empty",
+      "slug": "empty"
+    }
+  ],
+  "counts": {
+    "boards": 3,
+    "components": 2,
+    "connections": 7,
+    "nodes": 7,
+    "variables": 9
+  },
+  "entry": {
+    "boardId": "bd_000000000000000000000000B1",
+    "nodeId": "nd_000000000000000000000000N1"
+  },
+  "files": {
+    "boards/empty.json": "sha256:222527202cd6ef57a793f0f994a280f74b9a29afaf2a0a7a82f6387cb5dd90db",
+    "boards/harbour-intro.json": "sha256:07639e053c1f6a3f9112df60e48d5efc01bfd7a0c31d624aa3801d05802b55eb",
+    "boards/keepers-gate.json": "sha256:37d6209b3e6b00e24dbd31ae818af194dee42ce2660347f95824be33d216b4dc",
+    "project/component_types.json": "sha256:ad7aa2505638b339872c8fc0f4cac72f1b73ac519f058761188fce8523367a82",
+    "project/components.json": "sha256:a27c565eeab1218a4a2a1281df1d72ef3b4a905cf36d3c15013a6bb6103521d2",
+    "project/settings.json": "sha256:380c2a5b1f407f9e568d6a623b61307f7a49991b3f2117dec770c26c2c8c992d",
+    "project/variables.json": "sha256:39e9cb84318550d59ca1330f425e4c6dc1fe5a72c3d06980f5a80af02a1ae6c9"
+  },
+  "generator": {
+    "name": "storycreep",
+    "version": "golden"
+  },
+  "project": {
+    "id": "prj_000000000000000000000000GD",
+    "name": "Harbour <Tales> & \"Sea\" 🐚",
+    "slug": "harbour-tales"
+  },
+  "schemaVersion": 1,
+  "snapshot": {
+    "channel": "release",
+    "contentHash": "sha256:3a52166ed756cfc97500bfcdc5bdecfcadf904c976b32d4ff5df341dc9a3c284",
+    "id": "snp_000000000000000000000000G1",
+    "note": "Golden <note> & \"quotes\"",
+    "publishedAt": "2026-11-19T12:34:56Z",
+    "version": "1.4.0"
+  }
+}

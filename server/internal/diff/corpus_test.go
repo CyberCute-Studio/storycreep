@@ -1,0 +1,445 @@
+package diff
+
+import (
+	"bytes"
+	"encoding/json"
+	"flag"
+	"io/fs"
+	"maps"
+	"os"
+	"path"
+	"path/filepath"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/published"
+	"github.com/CyberCute-Studio/storycreep/server/internal/schemaversion"
+	"github.com/CyberCute-Studio/storycreep/server/internal/serializer"
+)
+
+var update = flag.Bool("update", false, "rewrite the diff corpus, schema/diff-corpus, from its sets and cases, "+
+	"and the diff's JSON Schema from its Go types")
+
+// corpusRoot is the diff corpus in the repository.
+var corpusRoot = filepath.Join("..", "..", "..", "schema", "diff-corpus")
+
+// caseJSON is a case of cases.json.
+type caseJSON struct {
+	Description string          `json:"description"`
+	Diff        json.RawMessage `json:"diff"`
+	From        string          `json:"from"`
+	Name        string          `json:"name"`
+	To          string          `json:"to"`
+}
+
+// wordsJSON is a case of words.json.
+type wordsJSON struct {
+	After  string    `json:"after"`
+	Before string    `json:"before"`
+	Name   string    `json:"name"`
+	Words  []WordRun `json:"words"`
+}
+
+// layout returns v's JSON laid out as the published format's files are
+// (§6.2).
+func layout(t *testing.T, v any) []byte {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := serializer.Layout(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// sideJSON returns the side that a diff names of the snapshot of the
+// manifest m, as m has it.
+func sideJSON(m published.Manifest) map[string]any {
+	switch s := m.Snapshot.(type) {
+	case *published.ReleaseSnapshot:
+		return map[string]any{"contentHash": s.ContentHash, "id": s.ID, "kind": SideSnapshot, "version": s.Version}
+	case *published.DraftSnapshot:
+		return map[string]any{"contentHash": s.ContentHash, "kind": SideDraft}
+	}
+	return nil
+}
+
+// complete returns the expected diff of c, of the sets whose manifests are
+// from and to, with what a case leaves out filled in: its sides and schema
+// version, each list and count that is empty or 0, and truncated, false.
+func complete(t *testing.T, c corpusCase, from, to published.Manifest) json.RawMessage {
+	t.Helper()
+	var d map[string]any
+	if err := json.Unmarshal([]byte(c.expand()), &d); err != nil {
+		t.Fatalf("the case %s's diff: %v", c.name, err)
+	}
+	d["from"], d["to"], d["schemaVersion"], d["truncated"] = sideJSON(from), sideJSON(to), published.SchemaVersion,
+		false
+	object := func(m map[string]any, key string) map[string]any {
+		o, _ := m[key].(map[string]any)
+		if o == nil {
+			o = map[string]any{}
+			m[key] = o
+		}
+		return o
+	}
+	fill := func(m map[string]any, v any, keys ...string) {
+		for _, k := range keys {
+			if _, ok := m[k]; !ok {
+				m[k] = v
+			}
+		}
+	}
+	boards, _ := d["boards"].([]any)
+	if boards == nil {
+		boards = []any{}
+	}
+	for _, b := range boards {
+		fill(b.(map[string]any), []any{}, "changes")
+		fill(b.(map[string]any), 0, "omitted")
+	}
+	d["boards"] = boards
+	project := object(d, "project")
+	fill(project, []any{}, "attributes", "componentTypes", "components", "fields", "variables")
+	fill(project, 0, "omitted")
+	counts := []string{Added, "cosmetic", Modified, Moved, Removed}
+	summary := object(d, "summary")
+	fill(summary, 0, counts...)
+	kinds := object(summary, "kinds")
+	for _, k := range []string{KindAttribute, KindBoard, KindBranchOutput, KindComponent, KindComponentType,
+		KindConnection, KindNode, KindProject, KindVariable} {
+		fill(object(kinds, k), 0, counts...)
+	}
+	return layout(t, d)
+}
+
+// corpusFiles returns the files of the corpus, by their paths from its root,
+// as its sets and cases write them, but its README.md.
+func corpusFiles(t *testing.T) map[string][]byte {
+	t.Helper()
+	sets := buildSets(t)
+	out := map[string][]byte{}
+	manifests := map[string]published.Manifest{}
+	for _, cs := range corpusSets {
+		files := sets[cs.name].files(t)
+		if err := schemaversion.Validate(files); err != nil {
+			t.Fatalf("the set %s does not validate against version 1: %v", cs.name, err)
+		}
+		manifests[cs.name] = load(t, files).manifest
+		for p, data := range files {
+			out[path.Join("sets", cs.name, p)] = data
+		}
+	}
+	cases := []caseJSON{}
+	for _, c := range corpusCases {
+		cases = append(cases, caseJSON{Name: c.name, Description: c.description, From: c.from, To: c.to,
+			Diff: complete(t, c, manifests[c.from], manifests[c.to])})
+	}
+	out["cases.json"] = layout(t, map[string]any{"cases": cases})
+	words := []wordsJSON{}
+	for _, c := range wordsCases {
+		words = append(words, wordsJSON{Name: c.name, Before: c.before, After: c.after, Words: c.words})
+	}
+	out["words.json"] = layout(t, map[string]any{"cases": words})
+	return out
+}
+
+// readCorpus returns the corpus's files in the repository, by their paths
+// from its root, but its README.md.
+func readCorpus(t *testing.T) map[string][]byte {
+	t.Helper()
+	files := map[string][]byte{}
+	err := filepath.WalkDir(corpusRoot, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, err := filepath.Rel(corpusRoot, p)
+		if err != nil || rel == "README.md" {
+			return err
+		}
+		files[filepath.ToSlash(rel)], err = os.ReadFile(p)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
+
+// TestCorpusFiles checks that the diff corpus in the repository is what its
+// sets and cases write, each set a snapshot that validates against version 1
+// of the published format, so that a set's file cannot drift from its
+// manifest's hashes, and a case's expected diff from the one written here.
+// Run go test ./internal/diff -run TestCorpusFiles -update in server/ to
+// write it again.
+func TestCorpusFiles(t *testing.T) {
+	want := corpusFiles(t)
+	if *update {
+		if err := os.RemoveAll(filepath.Join(corpusRoot, "sets")); err != nil {
+			t.Fatal(err)
+		}
+		for p, data := range want {
+			file := filepath.Join(corpusRoot, filepath.FromSlash(p))
+			if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(file, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	got := readCorpus(t)
+	for _, p := range slices.Sorted(maps.Keys(want)) {
+		if data, ok := got[p]; !ok || !bytes.Equal(data, want[p]) {
+			t.Errorf("schema/diff-corpus/%s is not what the corpus writes; run go test ./internal/diff -run "+
+				"TestCorpusFiles -update", p)
+		}
+	}
+	for p := range got {
+		if _, ok := want[p]; !ok {
+			t.Errorf("schema/diff-corpus/%s is no file of the corpus", p)
+		}
+	}
+}
+
+// TestBaseIsTheFixture checks that the corpus's base set, written as its sets
+// are, is version 1's fixture project byte for byte, so that the sets are
+// written as the serializer writes a snapshot.
+func TestBaseIsTheFixture(t *testing.T) {
+	fixture := readFixture(t)
+	base := load(t, fixture).files(t)
+	if !maps.EqualFunc(base, fixture, bytes.Equal) {
+		for _, p := range slices.Sorted(maps.Keys(fixture)) {
+			if !bytes.Equal(base[p], fixture[p]) {
+				t.Errorf("the base set's %s is not the fixture's", p)
+			}
+		}
+	}
+}
+
+// corpusSet returns the files of the corpus's set name, as the repository
+// holds them.
+func corpusSetFiles(t *testing.T, name string) map[string][]byte {
+	t.Helper()
+	files := map[string][]byte{}
+	for p, data := range readCorpus(t) {
+		if rest, ok := strings.CutPrefix(p, "sets/"+name+"/"); ok {
+			files[rest] = data
+		}
+	}
+	if len(files) == 0 {
+		t.Fatalf("the corpus has no set %s", name)
+	}
+	return files
+}
+
+// readCases returns the cases of the corpus's cases.json.
+func readCases(t *testing.T) []caseJSON {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(corpusRoot, "cases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		Cases []caseJSON `json:"cases"`
+	}
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatal(err)
+	}
+	return f.Cases
+}
+
+// sameJSON reports whether a and b are the same JSON value, each number
+// compared as the double that it is.
+func sameJSON(t *testing.T, a, b []byte) bool {
+	t.Helper()
+	var x, y any
+	if err := json.Unmarshal(a, &x); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(b, &y); err != nil {
+		t.Fatal(err)
+	}
+	return reflect.DeepEqual(x, y)
+}
+
+// compareCase returns the diff of the corpus's case c, as Compare makes it of
+// its sets as the repository holds them, as JSON.
+func compareCase(t *testing.T, c caseJSON) (*Diff, []byte) {
+	t.Helper()
+	d, err := Compare(corpusSetFiles(t, c.From), corpusSetFiles(t, c.To))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d, layout(t, d)
+}
+
+// TestCorpus checks that Compare gives the expected diff of every case of the
+// corpus, of its sets as the repository holds them, as the Godot addon's diff
+// must too (FR-GODOT-03 AC7), each number compared as the double that it is.
+//
+// Verifies: FR-SNAP-04/AC4
+func TestCorpus(t *testing.T) {
+	cases := readCases(t)
+	if len(cases) != len(corpusCases) {
+		t.Fatalf("cases.json has %d cases, and the corpus %d", len(cases), len(corpusCases))
+	}
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			_, got := compareCase(t, c)
+			if !sameJSON(t, got, c.Diff) {
+				t.Errorf("the diff of %s into %s is\n%s\nwant\n%s", c.From, c.To, got, c.Diff)
+			}
+		})
+	}
+}
+
+// caseNamed returns the corpus's case name.
+func caseNamed(t *testing.T, name string) caseJSON {
+	t.Helper()
+	for _, c := range readCases(t) {
+		if c.Name == name {
+			return c
+		}
+	}
+	t.Fatalf("the corpus has no case %s", name)
+	return caseJSON{}
+}
+
+// TestRenamedVariable checks that a renamed variable is modified on its key,
+// not removed and added, as the corpus's case renamed-variable has it.
+//
+// Verifies: FR-SNAP-04/AC1
+func TestRenamedVariable(t *testing.T) {
+	d, _ := compareCase(t, caseNamed(t, "renamed-variable"))
+	k := d.Summary.Kinds.Variable
+	if k.Added != 0 || k.Removed != 0 || k.Modified != 1 {
+		t.Errorf("the variables' counts are %+v, want one modified, none added or removed", k)
+	}
+	want := []FieldChange{{Field: "key", Before: json.RawMessage(`"met_elara"`), After: json.RawMessage(`"met_lara"`)}}
+	if len(d.Project.Variables) != 1 || d.Project.Variables[0].ID != v1 ||
+		d.Project.Variables[0].Change != Modified || !reflect.DeepEqual(d.Project.Variables[0].Fields, want) {
+		t.Errorf("the variables' changes are %+v, want %s modified on its key alone", d.Project.Variables, v1)
+	}
+}
+
+// TestMovedNode checks that a node that the two sides have on different
+// boards is moved, with the board that it was on and the one that it is on,
+// not removed and added, as the corpus's case moved has it.
+//
+// Verifies: FR-SNAP-04/AC2
+func TestMovedNode(t *testing.T) {
+	d, _ := compareCase(t, caseNamed(t, "moved"))
+	if k := d.Summary.Kinds.Node; k.Added != 0 || k.Removed != 0 || k.Moved != 2 {
+		t.Errorf("the nodes' counts are %+v, want two moved, none added or removed", k)
+	}
+	if len(d.Boards) != 1 || d.Boards[0].Board.ID != b2 {
+		t.Fatalf("the boards that changed are %+v, want the board that the nodes moved to alone", d.Boards)
+	}
+	for _, c := range d.Boards[0].Changes {
+		if c.Change != Moved || c.FromBoard == nil || c.FromBoard.ID != b3 || c.ToBoard == nil || c.ToBoard.ID != b2 {
+			t.Errorf("%s is %s from %+v to %+v, want moved from %s to %s", c.ID, c.Change, c.FromBoard, c.ToBoard,
+				b3, b2)
+		}
+	}
+}
+
+// TestWordsCorpus checks that Words gives the runs of every case of the
+// corpus's words.json, as the Godot addon's word diff must too, and that the
+// equal and delete runs of each make its before text, and the equal and
+// insert runs its after text.
+//
+// Verifies: FR-SNAP-04/AC4
+func TestWordsCorpus(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(corpusRoot, "words.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		Cases []wordsJSON `json:"cases"`
+	}
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Cases) != len(wordsCases) {
+		t.Fatalf("words.json has %d cases, and the corpus %d", len(f.Cases), len(wordsCases))
+	}
+	for _, c := range f.Cases {
+		got := Words(c.Before, c.After)
+		if !reflect.DeepEqual(got, c.Words) {
+			t.Errorf("%s: the words of %q into %q are %+v, want %+v", c.Name, c.Before, c.After, got, c.Words)
+		}
+		var before, after strings.Builder
+		for _, r := range got {
+			if r.Op != Insert {
+				before.WriteString(r.Text)
+			}
+			if r.Op != Delete {
+				after.WriteString(r.Text)
+			}
+		}
+		if before.String() != c.Before || after.String() != c.After {
+			t.Errorf("%s: the runs make %q into %q", c.Name, before.String(), after.String())
+		}
+	}
+}
+
+// TestSchemaFile checks that the diff's JSON Schema in the repository is the
+// one that Schema generates from its types, so that the documented diff
+// cannot drift from the one that the server writes, that its $id names its
+// version, and that every expected diff of the corpus validates against it.
+// Run go test ./internal/diff -run TestSchemaFile -update in server/ to write
+// it again.
+//
+// Verifies: FR-SNAP-04/AC4, FR-DATA-04/AC3
+func TestSchemaFile(t *testing.T) {
+	file := filepath.Join("..", "..", "..", filepath.FromSlash(SchemaPath))
+	want := Schema()
+	if *update {
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, want, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("%s is not what Schema generates; run go test ./internal/diff -run TestSchemaFile -update",
+			SchemaPath)
+	}
+	if !strings.Contains(SchemaID, "/v1/") || !strings.HasSuffix(SchemaID, SchemaPath) {
+		t.Errorf("the schema's $id %s does not name the version at %s", SchemaID, SchemaPath)
+	}
+	c := jsonschema.NewCompiler()
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(want))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AddResource(SchemaID, doc); err != nil {
+		t.Fatal(err)
+	}
+	s, err := c.Compile(SchemaID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cs := range readCases(t) {
+		v, err := jsonschema.UnmarshalJSON(bytes.NewReader(cs.Diff))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Validate(v); err != nil {
+			t.Errorf("the case %s's diff does not validate against the schema: %v", cs.Name, err)
+		}
+	}
+}

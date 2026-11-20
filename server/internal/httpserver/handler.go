@@ -299,6 +299,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerDependencies(s.main, s.dependencies)
 	registerValidation(s.main, s.validation)
 	registerSnapshots(s.main, s.snapshots)
+	registerDiffs(s.main, s.snapshots)
 	registerSearch(s.main, s.search)
 	registerStatistics(s.main, s.statistics)
 	registerClipboard(s.main, s.clipboard)

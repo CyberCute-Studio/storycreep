@@ -1,0 +1,481 @@
+{
+  "$defs": {
+    "BoardChanges": {
+      "additionalProperties": false,
+      "properties": {
+        "board": {
+          "$ref": "#/$defs/BoardRef",
+          "description": "The board, as the to side has it, or as the from side has it for a board that the to side does not have."
+        },
+        "change": {
+          "description": "What happened to the board itself: added or removed, with every node, branch output, and connection of it, or modified, with the changes of its fields. Without it, the board itself did not change, and only what it holds did.",
+          "enum": [
+            "added",
+            "removed",
+            "modified"
+          ],
+          "type": "string"
+        },
+        "changes": {
+          "description": "The changes of what the board holds: its nodes, then their branch outputs, then its connections, each kind sorted by ID, [] for none. A node or a connection that was added, modified, or moved is listed on the board that the to side has it on, and one that was removed on the board that the from side had it on.",
+          "items": {
+            "$ref": "#/$defs/EntityChange"
+          },
+          "type": "array"
+        },
+        "fields": {
+          "description": "The changes of the board's fields, its entryNodeId, name, and slug, sorted by field, of a board that was modified.",
+          "items": {
+            "$ref": "#/$defs/FieldChange"
+          },
+          "type": "array"
+        },
+        "omitted": {
+          "description": "How many changes of what the board holds were left out to size the diff, 0 for none.",
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "board",
+        "changes",
+        "omitted"
+      ],
+      "type": "object"
+    },
+    "BoardRef": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "slug"
+      ],
+      "type": "object"
+    },
+    "ChangeCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "added": {
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cosmetic": {
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "modified": {
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "moved": {
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "removed": {
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "added",
+        "cosmetic",
+        "modified",
+        "moved",
+        "removed"
+      ],
+      "type": "object"
+    },
+    "Diff": {
+      "additionalProperties": false,
+      "properties": {
+        "boards": {
+          "description": "Each board that changed, or whose nodes, branch outputs, or connections changed, sorted by the board's ID, [] for none.",
+          "items": {
+            "$ref": "#/$defs/BoardChanges"
+          },
+          "type": "array"
+        },
+        "from": {
+          "$ref": "#/$defs/DiffSide"
+        },
+        "project": {
+          "$ref": "#/$defs/ProjectChanges"
+        },
+        "schemaVersion": {
+          "description": "The version of the published game format, its schemaVersion, that both sides were compared at.",
+          "format": "int64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "summary": {
+          "$ref": "#/$defs/DiffSummary"
+        },
+        "to": {
+          "$ref": "#/$defs/DiffSide"
+        },
+        "truncated": {
+          "description": "Whether changes were left out to size the diff for display, which the omitted counts of the project and of each board count. The summary counts every change all the same (PRD FR-SYNC-02 AC2).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "boards",
+        "from",
+        "project",
+        "schemaVersion",
+        "summary",
+        "to",
+        "truncated"
+      ],
+      "type": "object"
+    },
+    "DiffSide": {
+      "additionalProperties": false,
+      "properties": {
+        "contentHash": {
+          "description": "The hash of the side's content, as its manifest's snapshot has it (PRD §7.3).",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "id": {
+          "description": "The release's ID. The draft has none.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "A release, snapshot, or the draft.",
+          "enum": [
+            "snapshot",
+            "draft"
+          ],
+          "type": "string"
+        },
+        "version": {
+          "description": "The release's version. The draft has none.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "contentHash",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "DiffSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "added": {
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cosmetic": {
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kinds": {
+          "$ref": "#/$defs/KindCounts"
+        },
+        "modified": {
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "moved": {
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "removed": {
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "added",
+        "cosmetic",
+        "kinds",
+        "modified",
+        "moved",
+        "removed"
+      ],
+      "type": "object"
+    },
+    "EntityChange": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "description": "A branch output's branch, a node's ID.",
+          "type": "string"
+        },
+        "change": {
+          "description": "What happened to the entity: added, which only the to side has; removed, which only the from side has; modified, which both sides have, whose fields differ; or moved, a node or a connection that the two sides have on different boards, whose fields may differ too (PRD §7.4).",
+          "enum": [
+            "added",
+            "removed",
+            "modified",
+            "moved"
+          ],
+          "type": "string"
+        },
+        "componentType": {
+          "description": "An attribute definition's component type's ID.",
+          "type": "string"
+        },
+        "cosmetic": {
+          "description": "Set on a modified node whose position alone changed, which a view collapses by default (PRD §7.4).",
+          "type": "boolean"
+        },
+        "fields": {
+          "description": "The changes of the entity's fields, sorted by field, and the values of a component's attributes by the attribute's ID, of an entity that was modified, or moved with fields that differ too. An entity that was added or removed lists none.",
+          "items": {
+            "$ref": "#/$defs/FieldChange"
+          },
+          "type": "array"
+        },
+        "from": {
+          "description": "The node that a connection leaves.",
+          "type": "string"
+        },
+        "fromBoard": {
+          "$ref": "#/$defs/BoardRef",
+          "description": "The board that a moved node or connection was on, as the from side has it."
+        },
+        "id": {
+          "description": "The entity's ID.",
+          "type": "string"
+        },
+        "key": {
+          "description": "A variable's, a component type's, an attribute definition's, or a component's key.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "The entity's kind.",
+          "enum": [
+            "variable",
+            "component_type",
+            "attribute",
+            "component",
+            "node",
+            "branch_output",
+            "connection"
+          ],
+          "type": "string"
+        },
+        "label": {
+          "description": "A connection's label's plain text, where it has one.",
+          "type": "string"
+        },
+        "name": {
+          "description": "A component type's, an attribute definition's, or a component's name.",
+          "type": "string"
+        },
+        "preview": {
+          "description": "An element's text's preview, where it has a text.",
+          "type": "string"
+        },
+        "title": {
+          "description": "A node's title, where it has one.",
+          "type": "string"
+        },
+        "to": {
+          "description": "The node that a connection enters.",
+          "type": "string"
+        },
+        "toBoard": {
+          "$ref": "#/$defs/BoardRef",
+          "description": "The board that a moved node or connection is on, as the to side has it."
+        },
+        "type": {
+          "description": "A variable's type, or a node's: element, branch, or jumper.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "change",
+        "id",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "FieldChange": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "description": "The field's value on the to side, as its file holds it, or a rich text's plain text, or an expression's source. Without it, the to side does not have the field."
+        },
+        "attribute": {
+          "description": "Of a component's attributes, the attribute definition's ID whose value this is.",
+          "type": "string"
+        },
+        "before": {
+          "description": "The field's value on the from side, as after has it. Without it, the from side does not have the field."
+        },
+        "field": {
+          "description": "The field's name, as its file has it, as key or condition; componentType and order for an attribute definition's component type and its place among the type's, from 0; and branch for a branch output's branch.",
+          "type": "string"
+        },
+        "refsChanged": {
+          "description": "Of an expression, whether the variables, the components' attributes, and the nodes that it names differ between the two sides.",
+          "type": "boolean"
+        },
+        "words": {
+          "description": "Of a rich text, the word-level diff of its plain texts, before into after, in order.",
+          "items": {
+            "$ref": "#/$defs/WordRun"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "type": "object"
+    },
+    "KindCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "attribute": {
+          "$ref": "#/$defs/ChangeCounts"
+        },
+        "board": {
+          "$ref": "#/$defs/ChangeCounts"
+        },
+        "branch_output": {
+          "$ref": "#/$defs/ChangeCounts"
+        },
+        "component": {
+          "$ref": "#/$defs/ChangeCounts"
+        },
+        "component_type": {
+          "$ref": "#/$defs/ChangeCounts"
+        },
+        "connection": {
+          "$ref": "#/$defs/ChangeCounts"
+        },
+        "node": {
+          "$ref": "#/$defs/ChangeCounts"
+        },
+        "project": {
+          "$ref": "#/$defs/ChangeCounts"
+        },
+        "variable": {
+          "$ref": "#/$defs/ChangeCounts"
+        }
+      },
+      "required": [
+        "attribute",
+        "board",
+        "branch_output",
+        "component",
+        "component_type",
+        "connection",
+        "node",
+        "project",
+        "variable"
+      ],
+      "type": "object"
+    },
+    "ProjectChanges": {
+      "additionalProperties": false,
+      "properties": {
+        "attributes": {
+          "description": "The changes of the component types' attribute definitions, sorted by ID, [] for none.",
+          "items": {
+            "$ref": "#/$defs/EntityChange"
+          },
+          "type": "array"
+        },
+        "componentTypes": {
+          "description": "The changes of the component types, sorted by ID, [] for none.",
+          "items": {
+            "$ref": "#/$defs/EntityChange"
+          },
+          "type": "array"
+        },
+        "components": {
+          "description": "The changes of the components, sorted by ID, [] for none.",
+          "items": {
+            "$ref": "#/$defs/EntityChange"
+          },
+          "type": "array"
+        },
+        "fields": {
+          "description": "The changes of the project's own fields, its name and slug, as its manifest has them, and its entry and signals, as its settings have them, sorted by field, [] for none.",
+          "items": {
+            "$ref": "#/$defs/FieldChange"
+          },
+          "type": "array"
+        },
+        "omitted": {
+          "description": "How many changes of the project's variables, component types, attribute definitions, and components were left out to size the diff, 0 for none.",
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "variables": {
+          "description": "The changes of the variables, global and of each board, sorted by ID, [] for none.",
+          "items": {
+            "$ref": "#/$defs/EntityChange"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "attributes",
+        "componentTypes",
+        "components",
+        "fields",
+        "omitted",
+        "variables"
+      ],
+      "type": "object"
+    },
+    "WordRun": {
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "description": "Whether the text is in both sides, equal; in the before side alone, delete; or in the after side alone, insert.",
+          "enum": [
+            "equal",
+            "delete",
+            "insert"
+          ],
+          "type": "string"
+        },
+        "text": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "text"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/CyberCute-Studio/storycreep/main/schema/diff/v1/diff.schema.json",
+  "$ref": "#/$defs/Diff",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The entity-level diff of two snapshots of a Storycreep project's published game format, a release's or the draft's, compared at one version of the format (PRD §7.4, FR-SNAP-04): the entities that only one side has, those whose fields differ, with each field's value on either side, and the nodes and connections that changed boards, grouped by board, with counts of every change. POST /api/v1/projects/{project_id}/diff answers with it, and the Godot addon computes it of the files that it holds; schema/diff-corpus holds both to the same diff of each of its cases.",
+  "title": "Storycreep entity diff, version 1"
+}

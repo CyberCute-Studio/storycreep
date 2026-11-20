@@ -319,6 +319,117 @@ func BenchmarkSnapshotBuild(b *testing.B) {
 	}
 }
 
+// diffTarget is NFR-PERF-13's target, the diff of two snapshots of the large
+// fixture's project, server-side, and FR-SNAP-04 AC3's, of two snapshots of
+// 5,000 entities, which large's exceed.
+const diffTarget = 2 * time.Second
+
+// diffRuns is how many diffs BenchmarkDiff times, whatever -benchtime asks,
+// as BenchmarkSnapshotBuild times snapshotBuilds builds: a diff of large
+// reads two snapshots of megabytes, so the 300 iterations of CI's benchmark
+// job would take minutes of the ten that a run of every benchmark has.
+const diffRuns = 20
+
+// diffEdits is how many times BenchmarkDiff's second release follows the
+// first by each of roundTrips' batches, as an author edits between two
+// releases: texts, scripts, positions, connected nodes added, conditions,
+// and defaults, every edit a change of the diff.
+const diffEdits = 40
+
+// BenchmarkDiff times the diff of two releases of the large fixture's
+// project through the API, as the web app's diff view reads it: the
+// fixture's, and one after diffEdits of each of roundTrips' batches, which
+// the owner publishes and the benchmark builds first, as
+// BenchmarkSnapshotBuild does. It times diffRuns diffs, or fewer if the loop
+// ends first, and the loop's later iterations do nothing, so it reports the
+// mean of the diffs as its ns/op, and checks their p95 against the target.
+//
+// Verifies: NFR-PERF-13, FR-SNAP-04/AC3
+func BenchmarkDiff(b *testing.B) {
+	bs := newBenchServer(b, fixture.Large)
+	res := send(bs.s.main, http.MethodGet, projectPath(bs.project), nil, "", bs.header)
+	var p struct {
+		WorkspaceID string `json:"workspace_id"`
+	}
+	if res.status != http.StatusOK || json.Unmarshal(res.body, &p) != nil {
+		b.Fatalf("the project: %d %s", res.status, res.body)
+	}
+	ws, err := ids.Decode(ids.Workspace, p.WorkspaceID)
+	if err != nil {
+		b.Fatal(err)
+	}
+	release := func(version string) string {
+		b.Helper()
+		res := send(bs.s.main, http.MethodGet, validationPath(bs.project), nil, "", bs.header)
+		var report validation.Report
+		if res.status != http.StatusOK || json.Unmarshal(res.body, &report) != nil {
+			b.Fatalf("the report: %d %s", res.status, res.body)
+		}
+		res = send(bs.s.main, http.MethodPost, snapshotsPath(bs.project), publishBody(b, version, report), "",
+			bs.header)
+		var published snapshot.Snapshot
+		if res.status != http.StatusAccepted || json.Unmarshal(res.body, &published) != nil {
+			b.Fatalf("the publication of %s: %d %s", version, res.status, res.body)
+		}
+		id, err := ids.Decode(ids.Snapshot, published.ID)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := bs.s.snapshots.Build(context.Background(), ws, id); err != nil {
+			b.Fatal(err)
+		}
+		return published.ID
+	}
+	from := release("1.0.0")
+	r := rand.New(rand.NewPCG(80, 13))
+	n := firstBatch
+	for range diffEdits {
+		var cmds []wireCommand
+		for _, rt := range roundTrips {
+			n++
+			cmds = append(cmds, rt.batch(bs.model, r, n)...)
+		}
+		if res := send(bs.s.main, http.MethodPost, bs.path, commandBatch(b, cmds...), "", bs.header); res.status !=
+			http.StatusOK {
+			b.Fatalf("the edits: %d %s", res.status, res.body)
+		}
+	}
+	to := release("1.1.0")
+	body := jsonBody(b, map[string]any{"from": from, "to": to})
+	var took []time.Duration
+	var last response
+	for b.Loop() {
+		if len(took) == diffRuns {
+			continue
+		}
+		start := time.Now()
+		last = send(bs.s.main, http.MethodPost, diffPath(bs.project), body, "", bs.header)
+		took = append(took, time.Since(start))
+		if last.status != http.StatusOK {
+			b.Fatalf("the diff: %d %s", last.status, last.body)
+		}
+	}
+	var d struct {
+		Summary   map[string]any `json:"summary"`
+		Truncated bool           `json:"truncated"`
+	}
+	if err := json.Unmarshal(last.body, &d); err != nil {
+		b.Fatal(err)
+	}
+	b.Logf("timed %d diffs; the diff is %d bytes, truncated %v, of %v", len(took), len(last.body), d.Truncated,
+		d.Summary)
+	var total time.Duration
+	for _, t := range took {
+		total += t
+	}
+	b.ReportMetric(float64(total)/float64(len(took)), "ns/op")
+	p95 := percentile(took, 95)
+	b.ReportMetric(float64(p95)/float64(time.Millisecond), "p95-ms")
+	if p95 >= diffTarget {
+		b.Errorf("NFR-PERF-13: the p95 of the diff is %v, want under %v", p95, diffTarget)
+	}
+}
+
 // searchTarget is NFR-PERF-09's target, the p95 of a project search's first
 // page, server-side, on large, which is FR-PROJ-03 AC1's of a project of
 // 5,000 nodes, the large fixture's half.

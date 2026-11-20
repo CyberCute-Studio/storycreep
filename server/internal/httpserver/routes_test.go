@@ -70,6 +70,9 @@ var tokenRoutes = map[api.Route]scope.Scope{
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/snapshots/{snapshot_id}/export"}:     scope.SnapshotRead,
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/snapshots/{snapshot_id}/validation"}: scope.ProjectRead,
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/draft/export"}:                       scope.ProjectRead,
+	// A diff of two of them needs snapshot:read, and the route checks that a
+	// diff into the draft needs project:read too (FR-SYNC-02).
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/diff"}: scope.SnapshotRead,
 	// So are its component types and components, which change through its
 	// commands.
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/component-types"}:                     scope.ProjectRead,

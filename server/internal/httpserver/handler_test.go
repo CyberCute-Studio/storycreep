@@ -226,7 +226,7 @@ func TestRoutesDeclareCapabilities(t *testing.T) {
 			"POST /api/v1/projects/{project_id}/archive", "POST /api/v1/projects/{project_id}/assets",
 			"POST /api/v1/projects/{project_id}/clipboard/copy",
 			"POST /api/v1/projects/{project_id}/clipboard/resolve",
-			"POST /api/v1/projects/{project_id}/commands",
+			"POST /api/v1/projects/{project_id}/commands", "POST /api/v1/projects/{project_id}/diff",
 			"POST /api/v1/projects/{project_id}/restore",
 			"POST /api/v1/projects/{project_id}/snapshots",
 			"POST /api/v1/projects/{project_id}/tokens", "POST /api/v1/projects/{project_id}/unarchive",

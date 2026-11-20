@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "variables": [
+    {
+      "default": true,
+      "description": "Met <Elara> & co.\tTab",
+      "id": "var_000000000000000000000000V1",
+      "key": "met_lara",
+      "scope": "global",
+      "type": "bool"
+    },
+    {
+      "default": 0.1,
+      "id": "var_000000000000000000000000V2",
+      "key": "luck",
+      "scope": "global",
+      "type": "float"
+    },
+    {
+      "default": 1e+21,
+      "id": "var_000000000000000000000000V3",
+      "key": "big",
+      "scope": "global",
+      "type": "float"
+    },
+    {
+      "default": 1e-7,
+      "id": "var_000000000000000000000000V4",
+      "key": "tiny",
+      "scope": "global",
+      "type": "float"
+    },
+    {
+      "default": 0,
+      "id": "var_000000000000000000000000V5",
+      "key": "negzero",
+      "scope": "global",
+      "type": "float"
+    },
+    {
+      "default": 3,
+      "id": "var_000000000000000000000000V6",
+      "key": "coins",
+      "scope": "global",
+      "type": "int"
+    },
+    {
+      "boardId": "bd_000000000000000000000000B1",
+      "default": 0,
+      "id": "var_000000000000000000000000V7",
+      "key": "visits_here",
+      "resetOnEnter": true,
+      "scope": "board",
+      "type": "int"
+    },
+    {
+      "default": "say \"hi\"\u2028\u2029 <b>&\u0007",
+      "id": "var_000000000000000000000000V8",
+      "key": "motto",
+      "scope": "global",
+      "type": "string"
+    },
+    {
+      "boardId": "bd_000000000000000000000000B2",
+      "default": "open",
+      "id": "var_000000000000000000000000V9",
+      "key": "gate_word",
+      "scope": "board",
+      "type": "string"
+    }
+  ]
+}

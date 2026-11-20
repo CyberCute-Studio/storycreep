@@ -1234,8 +1234,13 @@ func sampleValue(t *testing.T, registry huma.Registry, s *huma.Schema) any {
 // greater than any before it, since a project's versions increase, which a
 // sample of the schema's pattern would not be, and acknowledges the
 // project's report as its owner reads it, every warning of it, so that the
-// publish gate lets it through.
+// publish gate lets it through. A diff's is of the project's snapshot into
+// itself, which a sample of the schema would not name.
 var sampleBodies = map[api.Route]func(t *testing.T, f *rolesFixture, params map[string]string) []byte{
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/diff"}: func(t *testing.T,
+		_ *rolesFixture, params map[string]string) []byte {
+		return jsonBody(t, map[string]any{"from": params["snapshot_id"], "to": params["snapshot_id"]})
+	},
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/snapshots"}: func(t *testing.T,
 		f *rolesFixture, params map[string]string) []byte {
 		report := validationReport(t, f.s.main, f.as["owner"], params["project_id"])
@@ -1264,11 +1269,12 @@ var sampleBodies = map[api.Route]func(t *testing.T, f *rolesFixture, params map[
 }
 
 // postReads are the routes that read, and change nothing, but are POSTs, as
-// what they read does not fit in a URL: the clipboard's, which a role that
-// reads the project's content may use, as a GET of it.
+// what they read does not fit in a URL: the clipboard's and the diff's, which
+// a role that reads the project's content may use, as a GET of it.
 var postReads = map[api.Route]bool{
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/clipboard/copy"}:    true,
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/clipboard/resolve"}: true,
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/diff"}:              true,
 }
 
 // routeCall is a request of a route of a workspace or of a project, with a
