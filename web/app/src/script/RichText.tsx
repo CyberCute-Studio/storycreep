@@ -25,7 +25,7 @@ export type TextNames = Pick<LabelContext, "componentName" | "valueName"> & {
 };
 
 /** Returns what wraps marks around content, the link outermost, and code innermost, as the editor nests them. */
-function marked(content: ReactNode, marks: RichTextMarks | undefined) {
+export function marked(content: ReactNode, marks: RichTextMarks | undefined) {
   if (marks === undefined || marks.length === 0) {
     return content;
   }
