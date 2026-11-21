@@ -1,0 +1,69 @@
+{
+  "board": {
+    "id": "bd_000000000000000000000000B4",
+    "name": "Lighthouse",
+    "slug": "lighthouse"
+  },
+  "connections": [
+    {
+      "from": "nd_00000000000000000000000N20",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000000K20",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Listen"
+          }
+        ]
+      },
+      "order": 0,
+      "to": "nd_00000000000000000000000N21"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "nd_00000000000000000000000N20",
+      "isEnding": false,
+      "kind": "dialogue",
+      "position": {
+        "x": 40,
+        "y": 80
+      },
+      "text": {
+        "preview": "Gulls cry.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Gulls cry."
+          }
+        ]
+      },
+      "title": "Quay",
+      "type": "element"
+    },
+    {
+      "id": "nd_00000000000000000000000N21",
+      "isEnding": true,
+      "kind": "narration",
+      "position": {
+        "x": 300,
+        "y": 0
+      },
+      "text": {
+        "preview": "Silence.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Silence."
+          }
+        ]
+      },
+      "type": "element"
+    }
+  ],
+  "schemaVersion": 1
+}

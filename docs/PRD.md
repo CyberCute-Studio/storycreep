@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Document version | 1.57 |
+| Document version | 1.58 |
 | Date | 2026-11-20 |
 | Status | Approved for implementation |
 | Product | Storycreep — branching narrative design tool for games |
@@ -942,6 +942,8 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 #### FR-SNAP-04 — Entity-level diff
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-SNAP-01
 - **Requirement:** A diff service comparing two snapshots, or a snapshot and the current draft, producing a structured result: per entity type, lists of added, removed, and modified entities with changed field names, old and new values for scalar fields, and a text diff for rich text. Grouped by board. Summary counts included.
+
+  §7.4 says what the diff compares and how it classifies each change, and `/schema/diff-corpus/README.md` specifies it whole: the fields of each kind of entity, the values that a change shows, a rich text's plain texts and their word-level diff, of runs of white space and of other characters as tokens, by Myers's algorithm, as that README's steps make it, an expression's sources and whether what it names changed, how the changes are grouped and ordered, and what the summary counts. An added or removed entity is named by what identifies it, and lists no fields. Both sides are compared at one version of the published format.
 - **Acceptance criteria:**
   - AC1 — A renamed variable appears as `modified` with field `key`, not as add+remove.
   - AC2 — A node moved between boards appears as `moved` with source and target board, not as add+remove.
@@ -976,6 +978,8 @@ Each journey lists the requirements it exercises; a journey is "done" for a phas
 #### FR-SYNC-02 — Diff endpoint for clients
 - **Priority:** Must · **Phase:** MVP · **Depends on:** FR-SNAP-04
 - **Requirement:** `POST /api/v1/projects/{id}/diff` accepting `{from: snapshotId, to: snapshotId | "draft"}` and returning the structured diff of FR-SNAP-04, sized for display (with truncation markers and counts when very large). This endpoint serves the web UI, CI, and third-party clients. The Godot addon does not depend on it: it computes diffs locally from files (§7.5), so diffing works offline and after draft pulls.
+
+  `from` and `to` are any of the project's `ready` snapshots, in either order, or `to` is `draft`, the project's draft as it is now, read with the snapshot as of one moment, as the draft's export reads it (FR-SYNC-01), and named as the draft, with its content hash: its files are the export's, which stand in for what no release may hold (§7.8), so that the diff shows what a draft pull would bring in, as the Godot addon's diff of the pulled files does. Both are compared at the version of the published format that the server writes, which the diff names, and a snapshot is named by its ID and version. A diff of two snapshots needs `snapshot:read`, and one into the draft `project:read` too (FR-AUTH-04), so that a token that holds `snapshot:read` alone is answered with 403 `insufficient_scope`, a refusal that the audit log records as a route's refusal of a token is (FR-TEN-07). A snapshot that the project does not have is answered with 404 `not_found`, and one that is `building` or `failed`, which has no files, with 409 `snapshot_not_ready`, whose `details.status` is its status; one stored at a newer version than the server writes, as only a server that reads both holds, whose content the server's version cannot express, with 409 `schema_unrepresentable`, as an export at that version is (FR-SYNC-01). The answer lists at most `limit` changes, 1,000 unless the request asks for up to 5,000, and at most 8 MiB of them, in the diff's order, the project's variables, component types, attribute definitions, and components, then each board's changes: every change after the first that does not fit is left out, which `truncated` and the project's and each board's `omitted` count, and every board, the project's and each board's own fields, and the summary, which counts every change, are kept (AC2). It reads, but is a POST, as the clipboard's copy is, and counts in the rate limit of writes (FR-API-04).
 - **Acceptance criteria:** AC1 — A client can request a diff from its locally pinned snapshot even if that snapshot is older than the latest. AC2 — Truncation never hides the summary counts.
 
 #### FR-SYNC-03 — Pull is always explicit
@@ -2229,7 +2233,9 @@ draft ──publish()──► snapshot(building) ──build ok──► snapsh
 
 ### 7.4 Entity-level diff
 
-Diffs are computed over entities, not files or text, so the result reads like a change list rather than a patch. One diff structure (published in `/schema`) is consumed by the web UI, the Godot addon, and CI.
+Diffs are computed over entities, not files or text, so the result reads like a change list rather than a patch. One diff structure, whose JSON Schema is `/schema/diff/v1/diff.schema.json`, generated from the server's Go types (FR-DATA-04), is consumed by the web UI, the Godot addon, and CI. `/schema/diff-corpus/README.md` specifies it whole, with a corpus of pairs of file sets and their diffs that every implementation gives (FR-SNAP-04 AC4).
+
+Both sides are snapshots' files at one version of the published format, which the diff names as its `schemaVersion`. An entity is compared by its ID, by every field that its file holds it with but its ID and what is an entity of its own: a branch's outputs, whose branch is a field of their own, and a component type's attribute definitions, whose type and place among the type's are fields of their own, as each value of a component's attributes is. A key that the format does not define, which a consumer ignores (§6.4), is no field, and an optional field written with the value that the format leaves out, a `resetOnEnter` of `false` or `tags` of `[]`, is one that its side does not have. A field that one side has and the other does not is a changed field. Two values are the same where they are one JSON value, each number read as the double that it is, `-0` as `0`, as a consumer reads each value of a declaration's type, a variable's default, an attribute definition's default, or a component's value of an attribute, so that `2` and `2.0` of an `int` are one value. A rich text and an expression are compared as their files hold them, and shown as their plain texts and their sources, so that a text whose marks alone changed is modified with the same plain text on both sides. Both sides are snapshots that validate.
 
 Classification rules:
 
@@ -2238,34 +2244,60 @@ Classification rules:
 | Entity ID present in `to` only | `added` |
 | Entity ID present in `from` only | `removed` |
 | Same ID, different field values | `modified`, with a per-field before/after list |
-| Same ID, different parent board | `moved` (plus `modified` if fields also changed) |
+| A node or a connection with the same ID on a different board | `moved`, with its source and target board, and the fields that also changed, never `cosmetic` |
+| A branch output with the same ID on a different board, as one whose branch moved, or that another board's branch holds | never `moved`: `modified` if its own fields changed, its `branch` among them |
 | Variable with same ID, different `key` | `modified` on field `key` (never add+remove) |
-| Rich-text field changed | `modified` with a word-level text diff for display |
-| Expression changed | `modified` with both `source` strings and a flag for whether the referenced entity set changed |
+| Variable with same ID, of another board or scope | `modified` on `boardId`, and on `scope` too where its scope changed |
+| Rich-text field changed | `modified` with both plain texts and a word-level text diff for display |
+| Expression changed | `modified` with both `source` strings and a flag, `refsChanged`, for whether the referenced entity set changed |
 | Only `position` changed | `modified` but tagged `cosmetic`, collapsed by default in the UI |
+
+A change names its entity by what identifies it, as the `to` side has it, or as the `from` side had it where it was removed, each that is not empty: a node's type, title, and preview, a variable's key and type, a connection's label and its two nodes. An added or removed entity lists no fields. The changes of the project's files are listed by kind, and those of what boards hold are grouped by board, the nodes, then their branch outputs, then the connections, each sorted by ID, an entity that was removed on the board that it was on and every other on the board that it is on. `summary` counts every change, of every kind, and of each kind. The server's diff (FR-SYNC-02) may leave changes out to size it for display, which `truncated` and each list's `omitted` count; its summary still counts every change.
 
 ```json
 {
-  "from": { "id": "snp_01HQ…", "kind": "snapshot", "version": "1.3.0" },
-  "to": { "id": "snp_01HQ…", "kind": "snapshot", "version": "1.4.0" },
-  "schemaVersion": 1,
-  "summary": { "added": 14, "cosmetic": 23, "modified": 9, "moved": 1, "removed": 2 },
-  "project": {
-    "variables": [
-      { "change": "added", "id": "var_01HQ…", "key": "harbour_rumours", "type": "int" },
-      { "change": "modified", "fields": [{ "after": "int", "before": "bool", "field": "type" }], "id": "var_01HQ…", "key": "keeper_state" }
-    ]
-  },
   "boards": [
     {
       "board": { "id": "bd_01HQ…", "name": "Harbourmaster", "slug": "harbourmaster" },
-      "change": "modified",
       "changes": [
-        { "change": "added", "id": "nd_01HQ…", "kind": "node", "title": "Harbourmaster greets you" },
-        { "change": "modified", "fields": [{ "field": "condition", "after": "met_elara == true", "before": "met_elara == true && harbour_open" }], "id": "cn_01HQ…", "kind": "connection", "label": "The keeper sent me." }
-      ]
+        { "change": "added", "id": "nd_01HQ…", "kind": "node", "preview": "Harbour's closed to strangers. State your business.", "title": "Harbourmaster greets you", "type": "element" },
+        { "change": "modified", "fields": [{ "after": "met_elara == true", "before": "met_elara == true && harbour_open", "field": "condition", "refsChanged": true }], "from": "nd_01HQ…", "id": "cn_01HQ…", "kind": "connection", "label": "The keeper sent me.", "to": "nd_01HQ…" }
+      ],
+      "omitted": 0
     }
   ],
+  "from": { "contentHash": "sha256:5f2c…", "id": "snp_01HQ…", "kind": "snapshot", "version": "1.3.0" },
+  "project": {
+    "attributes": [],
+    "componentTypes": [],
+    "components": [],
+    "fields": [],
+    "omitted": 0,
+    "variables": [
+      { "change": "added", "id": "var_01HQ…", "key": "harbour_rumours", "kind": "variable", "type": "int" },
+      { "change": "modified", "fields": [{ "after": 0, "before": false, "field": "default" }, { "after": "int", "before": "bool", "field": "type" }], "id": "var_01HQ…", "key": "keeper_state", "kind": "variable", "type": "int" }
+    ]
+  },
+  "schemaVersion": 1,
+  "summary": {
+    "added": 14,
+    "cosmetic": 23,
+    "kinds": {
+      "attribute": { "added": 0, "cosmetic": 0, "modified": 0, "moved": 0, "removed": 0 },
+      "board": { "added": 0, "cosmetic": 0, "modified": 0, "moved": 0, "removed": 0 },
+      "branch_output": { "added": 0, "cosmetic": 0, "modified": 0, "moved": 0, "removed": 0 },
+      "component": { "added": 0, "cosmetic": 0, "modified": 0, "moved": 0, "removed": 0 },
+      "component_type": { "added": 0, "cosmetic": 0, "modified": 0, "moved": 0, "removed": 0 },
+      "connection": { "added": 1, "cosmetic": 0, "modified": 5, "moved": 0, "removed": 0 },
+      "node": { "added": 12, "cosmetic": 23, "modified": 3, "moved": 1, "removed": 2 },
+      "project": { "added": 0, "cosmetic": 0, "modified": 0, "moved": 0, "removed": 0 },
+      "variable": { "added": 1, "cosmetic": 0, "modified": 1, "moved": 0, "removed": 0 }
+    },
+    "modified": 9,
+    "moved": 1,
+    "removed": 2
+  },
+  "to": { "contentHash": "sha256:9a41…", "id": "snp_01HQ…", "kind": "snapshot", "version": "1.4.0" },
   "truncated": false
 }
 ```
@@ -3467,3 +3499,4 @@ No metric below depends on telemetry from running instances (ADR-026); every one
 | 1.55 | 2026-11-19 | **Schema versioning and migrations** (plan note N84): FR-DATA-03 asked for forward migrations of stored content, down-rendering to the previous version, a migration log stored with the project, and a fixture project for each version; FR-SYNC-01 and FR-SYNC-07 asked that the server declare its supported range and that a runtime refuse data outside its own range. None said where the server declares the range, what a migration reports or where its log is kept, or when a runtime refuses another version. §6.4 now says that the server declares the versions it reads at `/version`, as `published_schema`, and that a release declares real versions alone, every one until its support window ends. A runtime refuses a manifest outside its range as `schema_unsupported` before anything else of it, a newer `astVersion` included, but the rules of JSON that every version's files keep. A migration runs one version at a time, and each step reports every value that the next version cannot hold, which the project's migration log stores once per snapshot and step, in the transaction that stores what the migration wrote. A renderer names each construct that the older version cannot express. Whatever a migration or a renderer takes and returns validates against its version, and a version's fixture never changes once another version supersedes it. |
 | 1.56 | 2026-11-20 | **Snapshot publish and build** (plan note N85): FR-SNAP-01, FR-DEP-04, and §7.3 asked for a publish request with a pre-check, acknowledged warnings, and `acknowledged_seq`, a build job of one `REPEATABLE READ` view that re-validates, serialises, and validates against the schema, immutability through a trigger and revoked grants, a version index that excludes `failed` rows, and a proposed patch bump, but FR-DEP-04 AC1 asked for 409 `validation_failed`, which is the 422 of a request body that is not valid, and none said how a warning is acknowledged, whether a muted warning needs it, what a version may be, how long a note is, what becomes of a build that fails itself, or what is proposed for a first release. FR-DEP-04 AC1 now answers 409 `publish_blocked`; §7.3 says that a warning that is neither muted nor acknowledged is answered with 409 `warnings_unacknowledged`, that an acknowledgement names a warning as the report does, that a muted warning needs none, since its mute is the recorded decision to publish with it, that a version that is not newer is answered with 409 `version_not_newer`, that a build that fails itself fails the snapshot with `build_failed`, and that a first release is proposed `0.1.0`; FR-SNAP-01 says that each number of a version is from 0 to 999,999,999 without a leading zero, and that a note has 1 to 2,000 characters, not all of them blank; §7.3 says that the snapshot keeps the acknowledgements of the warnings of the draft that the pre-check validated; and §5.3's `snapshot` row gains acknowledged_warnings and built_at, and `snapshot_file` keeps its bytes in the database. |
 | 1.57 | 2026-11-20 | **Snapshot list and exports** (plan note N86): FR-SNAP-02 asked for a list of a project's snapshots with metadata and status, and a zip download of the published layout; FR-SYNC-01 for an export at a requested schema version, as a zip or individually addressable files, with 409 and the supported range for a version that the server does not read, and a draft export always marked as draft; and §7.5 checked for a newer release with `?limit=1`, which a building or failed snapshot that is the newest would answer. None said in which order the list is, whether it filters by status, who the publisher is shown as, what the zip holds and in which order, what answers an export of a snapshot that is not ready, or one at an older version that cannot express the content, as the maintainer chose: FR-SNAP-02 now lists the snapshots newest first, by their IDs, with a `status` filter and the publisher's display name as it is now, and §7.5's check reads `?status=ready&limit=1`; FR-SYNC-01 serves a zip alone, of the files at their paths, in the order of their paths, without directories, with one fixed modification time, the stored bytes at the snapshot's own version, and a rendering that validates at another, which records nothing in the migration log; a snapshot that is building or failed is answered with 409 `snapshot_not_ready`, an older version that cannot express the content with 409 `schema_unrepresentable`, which §6.4 names too, and an unsupported one with 409 `schema_unsupported` and `min` and `max`; and the draft's export takes `schema` and stands in for what no release may hold. |
+| 1.58 | 2026-11-20 | **Entity diff and diff endpoint** (plan note N87): FR-SNAP-04 and §7.4 asked for a diff of two snapshots, or of a snapshot and the draft, of added, removed, modified, moved, and cosmetic entities, with before and after values, word-level text diffs, an expression flag, board grouping, and summary counts, in one documented structure that the web UI and the Godot addon share, specified by a corpus; FR-SYNC-02 for `POST /projects/{id}/diff` with truncation that keeps the counts. None said which fields each kind of entity is compared by, how values are compared, what an added or removed entity carries, what the word-level diff's words are, which entities may be moved, how the changes are ordered and grouped, what the summary counts, what the endpoint truncates, or what it answers a snapshot that is not ready. The maintainer chose that an added or removed entity is named by what identifies it alone, and that the endpoint lists at most `limit` changes, 1,000 by default and up to 5,000, and 8 MiB. §7.4 now says what is compared and classified, with a variable's board change a modification, a branch output never moved, and an example of the structure as the schema has it; FR-SNAP-04 points to `/schema/diff-corpus/README.md`, which specifies the diff whole, its word-level diff among it; and FR-SYNC-02 says which snapshots may be compared, at which version, with which scopes, refusals, truncation, and rate limit. |

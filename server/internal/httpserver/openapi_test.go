@@ -122,6 +122,32 @@ func TestOpenAPIDocumentsEveryRoute(t *testing.T) {
 	}
 }
 
+// TestPostReadsDeclareCSRF checks that each route that reads but is a POST
+// (postReads) declares the X-CSRF-Token header, which a request of it made
+// with the session cookie needs, as every POST does, so that the document and
+// the TypeScript client hold it (SessionCSRFInput), and that its description
+// says so (tokenPostReadDoc).
+func TestPostReadsDeclareCSRF(t *testing.T) {
+	s := newServer(loadConfig(t, nil), slog.New(slog.DiscardHandler))
+	for r := range postReads {
+		item := s.main.OpenAPI().Paths[r.Pattern]
+		if item == nil || api.Operations(item)[r.Method] == nil {
+			t.Errorf("the OpenAPI document does not describe %s", r)
+			continue
+		}
+		op := api.Operations(item)[r.Method]
+		if !slices.ContainsFunc(op.Parameters, func(p *huma.Param) bool {
+			return p.In == "header" && p.Name == csrfHeader
+		}) {
+			t.Errorf("%s does not declare the %s header; embed SessionCSRFInput in its input", r, csrfHeader)
+		}
+		if !strings.Contains(op.Description, sessionCSRFDoc("It is a POST")) {
+			t.Errorf("%s's description does not say that a session's request needs the CSRF token; end it with "+
+				"tokenPostReadDoc", r)
+		}
+	}
+}
+
 // TestOpenAPIDocumentServed checks /api/v1/openapi.json: it answers with the
 // document, and its ETag lets a client revalidate its copy. Its requests
 // count in the read bucket, as every operation's of the API, so the server

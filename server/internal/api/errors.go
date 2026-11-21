@@ -168,7 +168,9 @@ var codes = []codeSpec{
 			"that implies it (PRD FR-AUTH-04 AC2): `snapshot:read` to list the token's workspace and its projects " +
 			"and to read a project, which every scope but `export:read` implies, `project:read` to read a " +
 			"project's assets, which `project:write` implies, and `project:write` to change a project's settings " +
-			"and to upload an asset. `details.scope` names the scope that the route needs, and " +
+			"and to upload an asset; or the scope that what the request asks for needs beyond the route's, as " +
+			"`project:read` for a diff into the draft of `POST /api/v1/projects/{project_id}/diff`, whose diff of " +
+			"two snapshots needs `snapshot:read`. `details.scope` names the scope that the request needs, and " +
 			"so does the `WWW-Authenticate` header, with the `Bearer` scheme's `error=\"insufficient_scope\"` and " +
 			"`scope` (RFC 6750 §3.1). A token never does more than its owner's role allows either, which is " +
 			"answered with `insufficient_role` when the token holds the scope."},
@@ -394,8 +396,9 @@ var codes = []codeSpec{
 			"its patch bump, which `GET /api/v1/projects/{project_id}/snapshots/next-version` proposes too. " +
 			"`details.errors` names the field, with its `location` and a `message`, as for `validation_failed`."},
 	{CodeSnapshotNotReady, http.StatusConflict, i18n.K("error.snapshot_not_ready"),
-		"The snapshot is not ready, and only a ready snapshot has files to export (PRD FR-SYNC-01, §7.3): " +
-			"`GET /api/v1/projects/{project_id}/snapshots/{snapshot_id}/export` was asked for a snapshot that is " +
+		"The snapshot is not ready, and only a ready snapshot has files to export or to compare (PRD " +
+			"FR-SYNC-01, FR-SYNC-02, §7.3): `GET /api/v1/projects/{project_id}/snapshots/{snapshot_id}/export` " +
+			"was asked for a snapshot, or `POST /api/v1/projects/{project_id}/diff` for a diff of one, that is " +
 			"`building`, whose build has not ended yet, or `failed`, which never has files. `details.status` is " +
 			"the snapshot's status: a client waits for a building snapshot's build, reading the snapshot until " +
 			"its status changes, and gives up on a failed one."},
@@ -407,8 +410,11 @@ var codes = []codeSpec{
 			"upgrade whichever side reads none in common (FR-SYNC-07)."},
 	{CodeSchemaUnrepresentable, http.StatusConflict, i18n.K("error.schema_unrepresentable"),
 		"The export was asked for an older version of the published game format that cannot express what the " +
-			"snapshot, or the draft, holds, so it is not rendered at that version, and nothing of it is dropped " +
-			"silently (PRD §6.4, FR-DATA-03 AC3). `details.schema` is the version asked for, and " +
+			"snapshot, or the draft, holds, so it is not rendered at that version, or `POST " +
+			"/api/v1/projects/{project_id}/diff` for a diff of a snapshot stored at a newer version than the " +
+			"server writes, as only a server that reads both holds, that the server's version cannot express, " +
+			"so the two are not compared at it, and nothing of it is dropped silently (PRD §6.4, FR-DATA-03 AC3, " +
+			"FR-SYNC-02). `details.schema` is the version asked for, or the server's of a diff, and " +
 			"`details.constructs` lists each value that it cannot express, in the order of their files' paths: " +
 			"its `file`, its `entity`'s ID, which a value of the file's own has none of, its `field`, and a " +
 			"`message` that says why, in English. Ask for a newer version, or change the content."},

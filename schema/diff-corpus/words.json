@@ -1,0 +1,281 @@
+{
+  "cases": [
+    {
+      "after": "The tide turns.",
+      "before": "The tide turns.",
+      "name": "same",
+      "words": [
+        {
+          "op": "equal",
+          "text": "The tide turns."
+        }
+      ]
+    },
+    {
+      "after": "Gulls cry.",
+      "before": "",
+      "name": "from-nothing",
+      "words": [
+        {
+          "op": "insert",
+          "text": "Gulls cry."
+        }
+      ]
+    },
+    {
+      "after": "",
+      "before": "Gulls cry.",
+      "name": "to-nothing",
+      "words": [
+        {
+          "op": "delete",
+          "text": "Gulls cry."
+        }
+      ]
+    },
+    {
+      "after": "Leave quietly",
+      "before": "Leave",
+      "name": "appended",
+      "words": [
+        {
+          "op": "equal",
+          "text": "Leave"
+        },
+        {
+          "op": "insert",
+          "text": " quietly"
+        }
+      ]
+    },
+    {
+      "after": "the dog sat",
+      "before": "the cat sat",
+      "name": "word-replaced",
+      "words": [
+        {
+          "op": "equal",
+          "text": "the "
+        },
+        {
+          "op": "delete",
+          "text": "cat"
+        },
+        {
+          "op": "insert",
+          "text": "dog"
+        },
+        {
+          "op": "equal",
+          "text": " sat"
+        }
+      ]
+    },
+    {
+      "after": "The very end <3 & \"farewell\"",
+      "before": "The end <3 & \"bye\"",
+      "name": "words-inserted",
+      "words": [
+        {
+          "op": "equal",
+          "text": "The "
+        },
+        {
+          "op": "insert",
+          "text": "very "
+        },
+        {
+          "op": "equal",
+          "text": "end <3 & "
+        },
+        {
+          "op": "delete",
+          "text": "\"bye\""
+        },
+        {
+          "op": "insert",
+          "text": "\"farewell\""
+        }
+      ]
+    },
+    {
+      "after": "a b",
+      "before": "a  b",
+      "name": "white-space-changed",
+      "words": [
+        {
+          "op": "equal",
+          "text": "a"
+        },
+        {
+          "op": "delete",
+          "text": "  "
+        },
+        {
+          "op": "insert",
+          "text": " "
+        },
+        {
+          "op": "equal",
+          "text": "b"
+        }
+      ]
+    },
+    {
+      "after": "uno dos three",
+      "before": "one two three",
+      "name": "phrase-rewritten",
+      "words": [
+        {
+          "op": "delete",
+          "text": "one two"
+        },
+        {
+          "op": "insert",
+          "text": "uno dos"
+        },
+        {
+          "op": "equal",
+          "text": " three"
+        }
+      ]
+    },
+    {
+      "after": "x y z d",
+      "before": "a b c d",
+      "name": "three-words-rewritten",
+      "words": [
+        {
+          "op": "delete",
+          "text": "a b c"
+        },
+        {
+          "op": "insert",
+          "text": "x y z"
+        },
+        {
+          "op": "equal",
+          "text": " d"
+        }
+      ]
+    },
+    {
+      "after": "b a",
+      "before": "a b",
+      "name": "swapped",
+      "words": [
+        {
+          "op": "delete",
+          "text": "a "
+        },
+        {
+          "op": "equal",
+          "text": "b"
+        },
+        {
+          "op": "insert",
+          "text": " a"
+        }
+      ]
+    },
+    {
+      "after": "a",
+      "before": "a b a",
+      "name": "repeated",
+      "words": [
+        {
+          "op": "equal",
+          "text": "a"
+        },
+        {
+          "op": "delete",
+          "text": " b a"
+        }
+      ]
+    },
+    {
+      "after": "First line\nthird line",
+      "before": "First line\nsecond line",
+      "name": "lines",
+      "words": [
+        {
+          "op": "equal",
+          "text": "First line\n"
+        },
+        {
+          "op": "delete",
+          "text": "second"
+        },
+        {
+          "op": "insert",
+          "text": "third"
+        },
+        {
+          "op": "equal",
+          "text": " line"
+        }
+      ]
+    },
+    {
+      "after": "a x　c",
+      "before": "a b　c",
+      "name": "unicode-white-space",
+      "words": [
+        {
+          "op": "equal",
+          "text": "a "
+        },
+        {
+          "op": "delete",
+          "text": "b"
+        },
+        {
+          "op": "insert",
+          "text": "x"
+        },
+        {
+          "op": "equal",
+          "text": "　c"
+        }
+      ]
+    },
+    {
+      "after": "a﻿c",
+      "before": "a﻿b",
+      "name": "no-break-is-no-space",
+      "words": [
+        {
+          "op": "delete",
+          "text": "a﻿b"
+        },
+        {
+          "op": "insert",
+          "text": "a﻿c"
+        }
+      ]
+    },
+    {
+      "after": "start b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b11 b12 b13 b14 b15 b16 b17 b18 b19 b20 b21 b22 b23 b24 b25 b26 b27 b28 b29 b30 b31 b32 b33 b34 b35 b36 b37 b38 b39 b40 b41 b42 b43 b44 b45 b46 b47 b48 b49 b50 b51 b52 b53 b54 b55 b56 b57 b58 b59 b60 b61 b62 b63 b64 b65 b66 b67 b68 b69 b70 b71 b72 b73 b74 b75 b76 b77 b78 b79 b80 b81 b82 b83 b84 b85 b86 b87 b88 b89 b90 b91 b92 b93 b94 b95 b96 b97 b98 b99 b100 b101 b102 b103 b104 b105 b106 b107 b108 b109 b110 b111 b112 b113 b114 b115 b116 b117 b118 b119 b120 b121 b122 b123 b124 b125 b126 b127 b128 b129 b130 b131 b132 b133 b134 b135 b136 b137 b138 b139 b140 b141 b142 b143 b144 b145 b146 b147 b148 b149 b150 b151 b152 b153 b154 b155 b156 b157 b158 b159 b160 b161 b162 b163 b164 b165 b166 b167 b168 b169 b170 b171 b172 b173 b174 b175 b176 b177 b178 b179 b180 b181 b182 b183 b184 b185 b186 b187 b188 b189 b190 b191 b192 b193 b194 b195 b196 b197 b198 b199 b200 b201 b202 b203 b204 b205 b206 b207 b208 b209 b210 b211 b212 b213 b214 b215 b216 b217 b218 b219 b220 b221 b222 b223 b224 b225 b226 b227 b228 b229 b230 b231 b232 b233 b234 b235 b236 b237 b238 b239 b240 b241 b242 b243 b244 b245 b246 b247 b248 b249 b250 b251 b252 b253 b254 b255 b256 b257 b258 b259 b260 b261 b262 b263 b264 b265 b266 b267 b268 b269 b270 b271 b272 b273 b274 b275 b276 b277 b278 b279 b280 b281 b282 b283 b284 b285 b286 b287 b288 b289 b290 b291 b292 b293 b294 b295 b296 b297 b298 b299 end",
+      "before": "start a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24 a25 a26 a27 a28 a29 a30 a31 a32 a33 a34 a35 a36 a37 a38 a39 a40 a41 a42 a43 a44 a45 a46 a47 a48 a49 a50 a51 a52 a53 a54 a55 a56 a57 a58 a59 a60 a61 a62 a63 a64 a65 a66 a67 a68 a69 a70 a71 a72 a73 a74 a75 a76 a77 a78 a79 a80 a81 a82 a83 a84 a85 a86 a87 a88 a89 a90 a91 a92 a93 a94 a95 a96 a97 a98 a99 a100 a101 a102 a103 a104 a105 a106 a107 a108 a109 a110 a111 a112 a113 a114 a115 a116 a117 a118 a119 a120 a121 a122 a123 a124 a125 a126 a127 a128 a129 a130 a131 a132 a133 a134 a135 a136 a137 a138 a139 a140 a141 a142 a143 a144 a145 a146 a147 a148 a149 a150 a151 a152 a153 a154 a155 a156 a157 a158 a159 a160 a161 a162 a163 a164 a165 a166 a167 a168 a169 a170 a171 a172 a173 a174 a175 a176 a177 a178 a179 a180 a181 a182 a183 a184 a185 a186 a187 a188 a189 a190 a191 a192 a193 a194 a195 a196 a197 a198 a199 a200 a201 a202 a203 a204 a205 a206 a207 a208 a209 a210 a211 a212 a213 a214 a215 a216 a217 a218 a219 a220 a221 a222 a223 a224 a225 a226 a227 a228 a229 a230 a231 a232 a233 a234 a235 a236 a237 a238 a239 a240 a241 a242 a243 a244 a245 a246 a247 a248 a249 a250 a251 a252 a253 a254 a255 a256 a257 a258 a259 a260 a261 a262 a263 a264 a265 a266 a267 a268 a269 a270 a271 a272 a273 a274 a275 a276 a277 a278 a279 a280 a281 a282 a283 a284 a285 a286 a287 a288 a289 a290 a291 a292 a293 a294 a295 a296 a297 a298 a299 end",
+      "name": "too-many-edits",
+      "words": [
+        {
+          "op": "equal",
+          "text": "start "
+        },
+        {
+          "op": "delete",
+          "text": "a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 a20 a21 a22 a23 a24 a25 a26 a27 a28 a29 a30 a31 a32 a33 a34 a35 a36 a37 a38 a39 a40 a41 a42 a43 a44 a45 a46 a47 a48 a49 a50 a51 a52 a53 a54 a55 a56 a57 a58 a59 a60 a61 a62 a63 a64 a65 a66 a67 a68 a69 a70 a71 a72 a73 a74 a75 a76 a77 a78 a79 a80 a81 a82 a83 a84 a85 a86 a87 a88 a89 a90 a91 a92 a93 a94 a95 a96 a97 a98 a99 a100 a101 a102 a103 a104 a105 a106 a107 a108 a109 a110 a111 a112 a113 a114 a115 a116 a117 a118 a119 a120 a121 a122 a123 a124 a125 a126 a127 a128 a129 a130 a131 a132 a133 a134 a135 a136 a137 a138 a139 a140 a141 a142 a143 a144 a145 a146 a147 a148 a149 a150 a151 a152 a153 a154 a155 a156 a157 a158 a159 a160 a161 a162 a163 a164 a165 a166 a167 a168 a169 a170 a171 a172 a173 a174 a175 a176 a177 a178 a179 a180 a181 a182 a183 a184 a185 a186 a187 a188 a189 a190 a191 a192 a193 a194 a195 a196 a197 a198 a199 a200 a201 a202 a203 a204 a205 a206 a207 a208 a209 a210 a211 a212 a213 a214 a215 a216 a217 a218 a219 a220 a221 a222 a223 a224 a225 a226 a227 a228 a229 a230 a231 a232 a233 a234 a235 a236 a237 a238 a239 a240 a241 a242 a243 a244 a245 a246 a247 a248 a249 a250 a251 a252 a253 a254 a255 a256 a257 a258 a259 a260 a261 a262 a263 a264 a265 a266 a267 a268 a269 a270 a271 a272 a273 a274 a275 a276 a277 a278 a279 a280 a281 a282 a283 a284 a285 a286 a287 a288 a289 a290 a291 a292 a293 a294 a295 a296 a297 a298 a299"
+        },
+        {
+          "op": "insert",
+          "text": "b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b11 b12 b13 b14 b15 b16 b17 b18 b19 b20 b21 b22 b23 b24 b25 b26 b27 b28 b29 b30 b31 b32 b33 b34 b35 b36 b37 b38 b39 b40 b41 b42 b43 b44 b45 b46 b47 b48 b49 b50 b51 b52 b53 b54 b55 b56 b57 b58 b59 b60 b61 b62 b63 b64 b65 b66 b67 b68 b69 b70 b71 b72 b73 b74 b75 b76 b77 b78 b79 b80 b81 b82 b83 b84 b85 b86 b87 b88 b89 b90 b91 b92 b93 b94 b95 b96 b97 b98 b99 b100 b101 b102 b103 b104 b105 b106 b107 b108 b109 b110 b111 b112 b113 b114 b115 b116 b117 b118 b119 b120 b121 b122 b123 b124 b125 b126 b127 b128 b129 b130 b131 b132 b133 b134 b135 b136 b137 b138 b139 b140 b141 b142 b143 b144 b145 b146 b147 b148 b149 b150 b151 b152 b153 b154 b155 b156 b157 b158 b159 b160 b161 b162 b163 b164 b165 b166 b167 b168 b169 b170 b171 b172 b173 b174 b175 b176 b177 b178 b179 b180 b181 b182 b183 b184 b185 b186 b187 b188 b189 b190 b191 b192 b193 b194 b195 b196 b197 b198 b199 b200 b201 b202 b203 b204 b205 b206 b207 b208 b209 b210 b211 b212 b213 b214 b215 b216 b217 b218 b219 b220 b221 b222 b223 b224 b225 b226 b227 b228 b229 b230 b231 b232 b233 b234 b235 b236 b237 b238 b239 b240 b241 b242 b243 b244 b245 b246 b247 b248 b249 b250 b251 b252 b253 b254 b255 b256 b257 b258 b259 b260 b261 b262 b263 b264 b265 b266 b267 b268 b269 b270 b271 b272 b273 b274 b275 b276 b277 b278 b279 b280 b281 b282 b283 b284 b285 b286 b287 b288 b289 b290 b291 b292 b293 b294 b295 b296 b297 b298 b299"
+        },
+        {
+          "op": "equal",
+          "text": " end"
+        }
+      ]
+    }
+  ]
+}

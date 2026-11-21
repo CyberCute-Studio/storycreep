@@ -1,0 +1,120 @@
+{
+  "board": {
+    "entryNodeId": "nd_00000000000000000000000N10",
+    "id": "bd_000000000000000000000000B2",
+    "name": "Keeper's \"Gate\" \\ back",
+    "slug": "keepers-gate"
+  },
+  "connections": [
+    {
+      "from": "nd_00000000000000000000000N20",
+      "fromPort": "out",
+      "id": "cn_00000000000000000000000K20",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Listen"
+          }
+        ]
+      },
+      "order": 0,
+      "to": "nd_00000000000000000000000N21"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "nd_00000000000000000000000N10",
+      "isEnding": true,
+      "kind": "narration",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "text": {
+        "preview": "Say {gate_word}, met: {met_elara}",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Say "
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "gate_word",
+            "ref": "var_000000000000000000000000V9"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": ", met: "
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "met_elara",
+            "ref": "var_000000000000000000000000V1"
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_00000000000000000000000N11",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "target": {
+        "boardId": "bd_000000000000000000000000B1",
+        "nodeId": "nd_000000000000000000000000N1"
+      },
+      "type": "jumper"
+    },
+    {
+      "id": "nd_00000000000000000000000N20",
+      "isEnding": false,
+      "kind": "dialogue",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "text": {
+        "preview": "Gulls cry.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Gulls cry."
+          }
+        ]
+      },
+      "title": "Quay",
+      "type": "element"
+    },
+    {
+      "id": "nd_00000000000000000000000N21",
+      "isEnding": true,
+      "kind": "narration",
+      "position": {
+        "x": 300,
+        "y": 0
+      },
+      "text": {
+        "preview": "Silence.",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Silence."
+          }
+        ]
+      },
+      "title": "Hush",
+      "type": "element"
+    }
+  ],
+  "schemaVersion": 1
+}

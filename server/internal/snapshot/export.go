@@ -107,26 +107,11 @@ func (s *Service) Export(ctx context.Context, actor commands.Actor, projectID, s
 		return Export{}, err
 	}
 	var row queries.SnapshotRow
-	files := schemaversion.Files{}
+	var files schemaversion.Files
 	err := s.projects.ReadContent(ctx, s.db, actor, projectID, func(tx pgx.Tx, ws ids.UUID) error {
 		var err error
-		if row, err = get(ctx, tx, ws, projectID, snapshotID); err != nil {
-			return err
-		}
-		// A ready snapshot's files never change, so they are read as they
-		// were when its row was.
-		if status := Status(row.Status); status != Ready {
-			return &NotReadyError{Status: status}
-		}
-		rows, err := queries.New(tx).SnapshotFiles(ctx, queries.SnapshotFilesParams{WorkspaceID: nullUUID(ws),
-			SnapshotID: nullUUID(snapshotID)})
-		if err != nil {
-			return fmt.Errorf("snapshot: read the snapshot's files: %w", err)
-		}
-		for _, f := range rows {
-			files[f.Path] = f.Bytes
-		}
-		return nil
+		row, files, err = readyFiles(ctx, tx, ws, projectID, snapshotID)
+		return err
 	})
 	if err != nil {
 		return Export{}, err
@@ -140,6 +125,33 @@ func (s *Service) Export(ctx context.Context, actor commands.Actor, projectID, s
 		return Export{}, err
 	}
 	return Export{Files: out, SchemaVersion: version, Name: name}, nil
+}
+
+// readyFiles returns the row of the snapshot snapshotID of the project
+// projectID of the workspace ws, which it reads in tx, and its files, by their
+// paths, or ErrNotFound for a snapshot that the project does not have, and a
+// *NotReadyError for one that is not ready, which has no files.
+func readyFiles(ctx context.Context, tx pgx.Tx, ws, projectID, snapshotID ids.UUID) (queries.SnapshotRow,
+	schemaversion.Files, error) {
+	row, err := get(ctx, tx, ws, projectID, snapshotID)
+	if err != nil {
+		return queries.SnapshotRow{}, nil, err
+	}
+	// A ready snapshot's files never change, so they are read as they were
+	// when its row was.
+	if status := Status(row.Status); status != Ready {
+		return queries.SnapshotRow{}, nil, &NotReadyError{Status: status}
+	}
+	rows, err := queries.New(tx).SnapshotFiles(ctx, queries.SnapshotFilesParams{WorkspaceID: nullUUID(ws),
+		SnapshotID: nullUUID(snapshotID)})
+	if err != nil {
+		return queries.SnapshotRow{}, nil, fmt.Errorf("snapshot: read the snapshot's files: %w", err)
+	}
+	files := schemaversion.Files{}
+	for _, f := range rows {
+		files[f.Path] = f.Bytes
+	}
+	return row, files, nil
 }
 
 // ExportDraft returns the files of the draft of the project projectID, as
@@ -182,7 +194,7 @@ func (s *Service) ExportDraft(ctx context.Context, actor commands.Actor, project
 	if err != nil {
 		return Export{}, err
 	}
-	built, err := serializer.Serialize(draft, serializer.Stamp{Generator: serializer.Generator(), At: time.Now()})
+	built, err := serializeDraft(draft)
 	if err != nil {
 		return Export{}, err
 	}
@@ -191,6 +203,16 @@ func (s *Service) ExportDraft(ctx context.Context, actor commands.Actor, project
 		return Export{}, err
 	}
 	return Export{Files: out, SchemaVersion: version, Name: built.Manifest.Project.Slug + "-draft.zip"}, nil
+}
+
+// serializeDraft returns the snapshot that the serializer writes of draft,
+// which serializer.Load read, as the draft's export writes it, stamped with
+// the server's generator and the moment that it is written, its manifest's
+// pulledAt (§7.8): ExportDraft's and DiffDraft's, so that a diff into the
+// draft is of the files that the draft's export, and so a draft pull, brings
+// in (FR-SYNC-02).
+func serializeDraft(draft *serializer.Draft) (*serializer.Snapshot, error) {
+	return serializer.Serialize(draft, serializer.Stamp{Generator: serializer.Generator(), At: time.Now()})
 }
 
 // checkSchema returns an *schemaversion.UnsupportedError for schema, a

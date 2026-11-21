@@ -104,21 +104,7 @@ func addSnapshot(t *testing.T, admin *pgx.Conn, ws, projectID ids.UUID, version,
 // /schema/fixtures/v1, by their paths, which validate against version 1.
 var fixtureFiles = func() func(t *testing.T) map[string][]byte {
 	read := sync.OnceValues(func() (map[string][]byte, error) {
-		root := filepath.Join("..", "..", "..", "schema", "fixtures", "v1")
-		files := map[string][]byte{}
-		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return err
-			}
-			data, err := os.ReadFile(p)
-			if err != nil {
-				return err
-			}
-			rel, err := filepath.Rel(root, p)
-			files[filepath.ToSlash(rel)] = data
-			return err
-		})
-		return files, err
+		return readFileTree(filepath.Join("..", "..", "..", "schema", "fixtures", "v1"))
 	})
 	return func(t *testing.T) map[string][]byte {
 		t.Helper()
@@ -129,6 +115,28 @@ var fixtureFiles = func() func(t *testing.T) map[string][]byte {
 		return maps.Clone(files)
 	}
 }()
+
+// readFileTree returns the files under the directory root, at any depth, by
+// their paths from it, with forward slashes, as a snapshot's files are named.
+func readFileTree(root string) (map[string][]byte, error) {
+	files := map[string][]byte{}
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		files[filepath.ToSlash(rel)] = data
+		return nil
+	})
+	return files, err
+}
 
 // publishBody returns the body of a publication of the version, which
 // acknowledges the report r, its seq and every warning of it.

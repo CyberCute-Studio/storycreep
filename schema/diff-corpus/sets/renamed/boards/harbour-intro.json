@@ -1,0 +1,483 @@
+{
+  "board": {
+    "entryNodeId": "nd_000000000000000000000000N1",
+    "id": "bd_000000000000000000000000B1",
+    "name": "Harbour Intro\u2028Part one",
+    "slug": "harbour-intro"
+  },
+  "connections": [
+    {
+      "condition": {
+        "ast": {
+          "kind": "binary",
+          "left": {
+            "kind": "binary",
+            "left": {
+              "kind": "var",
+              "name": "visits_here",
+              "ref": "var_000000000000000000000000V7"
+            },
+            "op": "lt",
+            "right": {
+              "kind": "lit",
+              "type": "int",
+              "value": 3
+            }
+          },
+          "op": "and",
+          "right": {
+            "kind": "unary",
+            "op": "not",
+            "operand": {
+              "args": [
+                {
+                  "kind": "node_ref",
+                  "ref": "nd_000000000000000000000000N3"
+                }
+              ],
+              "function": "visited",
+              "kind": "call"
+            }
+          }
+        },
+        "source": "visits_here < 3 and not visited(node(\"nd_000000000000000000000000N3\"))"
+      },
+      "from": "nd_000000000000000000000000N1",
+      "fromPort": "out",
+      "id": "cn_000000000000000000000000K1",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Go on"
+          }
+        ]
+      },
+      "order": 2,
+      "to": "nd_000000000000000000000000N2"
+    },
+    {
+      "from": "nd_000000000000000000000000N1",
+      "fromPort": "out",
+      "id": "cn_000000000000000000000000K2",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Leave"
+          }
+        ]
+      },
+      "onTraverse": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "visits_here",
+                "ref": "var_000000000000000000000000V7"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "int",
+                "value": 0
+              }
+            },
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "bell"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "visits_here = 0\nsignal(\"bell\")"
+      },
+      "order": 0,
+      "to": "nd_000000000000000000000000N3"
+    },
+    {
+      "from": "nd_000000000000000000000000N1",
+      "fromPort": "out",
+      "id": "cn_000000000000000000000000K3",
+      "label": {
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Jump"
+          }
+        ]
+      },
+      "order": 1,
+      "to": "nd_000000000000000000000000N4"
+    },
+    {
+      "from": "nd_000000000000000000000000N2",
+      "fromPort": "bo_000000000000000000000000Q2",
+      "id": "cn_000000000000000000000000K4",
+      "order": 0,
+      "to": "nd_000000000000000000000000N3"
+    },
+    {
+      "from": "nd_000000000000000000000000N2",
+      "fromPort": "bo_000000000000000000000000Q1",
+      "id": "cn_000000000000000000000000K5",
+      "order": 0,
+      "to": "nd_000000000000000000000000N5"
+    },
+    {
+      "from": "nd_000000000000000000000000N2",
+      "fromPort": "bo_000000000000000000000000Q3",
+      "id": "cn_000000000000000000000000K6",
+      "order": 0,
+      "to": "nd_000000000000000000000000N4"
+    },
+    {
+      "from": "nd_000000000000000000000000N5",
+      "fromPort": "out",
+      "id": "cn_000000000000000000000000K7",
+      "order": 0,
+      "to": "nd_000000000000000000000000N3"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "nd_000000000000000000000000N1",
+      "isEnding": false,
+      "kind": "dialogue",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "+=",
+              "target": {
+                "kind": "var",
+                "name": "coins",
+                "ref": "var_000000000000000000000000V6"
+              },
+              "value": {
+                "kind": "lit",
+                "type": "int",
+                "value": 1
+              }
+            },
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "door_open"
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "coins += 1\nsignal(\"door_open\")"
+      },
+      "onExit": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "args": [
+                {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "bell"
+                },
+                {
+                  "kind": "binary",
+                  "left": {
+                    "kind": "var",
+                    "name": "coins",
+                    "ref": "var_000000000000000000000000V6"
+                  },
+                  "op": "mul",
+                  "right": {
+                    "kind": "lit",
+                    "type": "float",
+                    "value": 1.5
+                  }
+                }
+              ],
+              "function": "signal",
+              "kind": "call"
+            }
+          ]
+        },
+        "source": "signal(\"bell\", coins * 1.5)"
+      },
+      "position": {
+        "x": 0.13,
+        "y": -0.05
+      },
+      "speaker": "cmp_000000000000000000000000C1",
+      "tags": [
+        "zeta",
+        "Alpha"
+      ],
+      "text": {
+        "preview": "Hello Elara <the Keeper>, trust {elara.trust} luck {luck} Second • one • two",
+        "segments": [
+          {
+            "href": "https://example.com/a?b=1&c=<2>",
+            "kind": "text",
+            "marks": [
+              "bold",
+              "link"
+            ],
+            "value": "Hello"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": " "
+          },
+          {
+            "kind": "mention",
+            "marks": [],
+            "ref": "cmp_000000000000000000000000C1",
+            "value": "Elara <the Keeper>"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": ", trust "
+          },
+          {
+            "attribute": "atr_000000000000000000000000A1",
+            "decimals": 0,
+            "kind": "value",
+            "marks": [],
+            "name": "elara.trust",
+            "ref": "cmp_000000000000000000000000C1"
+          },
+          {
+            "kind": "break"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "luck "
+          },
+          {
+            "decimals": 2,
+            "kind": "value",
+            "marks": [],
+            "name": "luck",
+            "ref": "var_000000000000000000000000V2"
+          },
+          {
+            "kind": "paragraph"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Second"
+          },
+          {
+            "depth": 1,
+            "kind": "item",
+            "list": "bullet"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "one"
+          },
+          {
+            "depth": 1,
+            "kind": "item",
+            "list": "bullet"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "two"
+          }
+        ]
+      },
+      "title": "Arrival",
+      "type": "element"
+    },
+    {
+      "id": "nd_000000000000000000000000N2",
+      "onEnter": {
+        "ast": {
+          "kind": "script",
+          "statements": [
+            {
+              "kind": "assign",
+              "op": "=",
+              "target": {
+                "kind": "var",
+                "name": "luck",
+                "ref": "var_000000000000000000000000V2"
+              },
+              "value": {
+                "kind": "binary",
+                "left": {
+                  "kind": "var",
+                  "name": "luck",
+                  "ref": "var_000000000000000000000000V2"
+                },
+                "op": "add",
+                "right": {
+                  "kind": "lit",
+                  "type": "float",
+                  "value": 1e-7
+                }
+              }
+            }
+          ]
+        },
+        "source": "luck = luck + 0.0000001"
+      },
+      "outputs": [
+        {
+          "condition": {
+            "ast": {
+              "kind": "binary",
+              "left": {
+                "kind": "binary",
+                "left": {
+                  "kind": "var",
+                  "name": "met_lara",
+                  "ref": "var_000000000000000000000000V1"
+                },
+                "op": "and",
+                "right": {
+                  "kind": "binary",
+                  "left": {
+                    "attribute": "atr_000000000000000000000000A1",
+                    "kind": "attr",
+                    "name": "elara.trust",
+                    "ref": "cmp_000000000000000000000000C1"
+                  },
+                  "op": "gte",
+                  "right": {
+                    "kind": "lit",
+                    "type": "int",
+                    "value": 2
+                  }
+                }
+              },
+              "op": "and",
+              "right": {
+                "kind": "binary",
+                "left": {
+                  "attribute": "atr_000000000000000000000000A2",
+                  "kind": "attr",
+                  "name": "elara.mood",
+                  "ref": "cmp_000000000000000000000000C1"
+                },
+                "op": "eq",
+                "right": {
+                  "kind": "lit",
+                  "type": "string",
+                  "value": "tense"
+                }
+              }
+            },
+            "source": "met_lara and elara.trust >= 2 and elara.mood == \"tense\""
+          },
+          "id": "bo_000000000000000000000000Q2",
+          "kind": "if",
+          "order": 0
+        },
+        {
+          "condition": {
+            "ast": {
+              "kind": "binary",
+              "left": {
+                "kind": "var",
+                "name": "luck",
+                "ref": "var_000000000000000000000000V2"
+              },
+              "op": "gt",
+              "right": {
+                "kind": "lit",
+                "type": "float",
+                "value": 0.5
+              }
+            },
+            "source": "luck > 0.5"
+          },
+          "id": "bo_000000000000000000000000Q1",
+          "kind": "elseif",
+          "order": 1
+        },
+        {
+          "id": "bo_000000000000000000000000Q3",
+          "kind": "else",
+          "order": 2
+        }
+      ],
+      "position": {
+        "x": 999999999.99,
+        "y": 240
+      },
+      "type": "branch"
+    },
+    {
+      "id": "nd_000000000000000000000000N3",
+      "isEnding": true,
+      "kind": "narration",
+      "position": {
+        "x": -1000000000,
+        "y": 0.01
+      },
+      "text": {
+        "preview": "The end <3 & \"bye\"",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "The end <3 & \"bye\""
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_000000000000000000000000N4",
+      "position": {
+        "x": 1.5,
+        "y": 2.5
+      },
+      "target": {
+        "boardId": "bd_000000000000000000000000B2",
+        "nodeId": "nd_00000000000000000000000N10"
+      },
+      "title": "To the gate",
+      "type": "jumper"
+    },
+    {
+      "id": "nd_000000000000000000000000N5",
+      "isEnding": false,
+      "kind": "dialogue",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "speaker": "cmp_000000000000000000000000C2",
+      "type": "element"
+    }
+  ],
+  "schemaVersion": 1
+}

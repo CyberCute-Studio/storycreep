@@ -803,6 +803,19 @@ func denyToken(ctx context.Context, q *queries.Queries, tx pgx.Tx, workspaceID i
 		Result: audit.ResultDenied, IP: actor.Client.IP, UserAgent: actor.Client.UserAgent, Metadata: metadata})
 }
 
+// DenyToken records in tx, a transaction of the workspace of the actor's API
+// token, which is not nil, that the token is refused a request, because of
+// denied, a *scope.InsufficientError or ErrSessionRequired, as token.use_denied
+// in the audit log, once a minute at most for each token, as the pipeline
+// records its refusals of a batch: for a service that refuses a token what a
+// request asks for beyond the scope that its route takes the token with, which
+// the authentication of the token has let through, as a diff into the draft,
+// which needs project:read, of a route that takes snapshot:read (package
+// snapshot), so that every refusal of a token is audited (NFR-SEC-05).
+func DenyToken(ctx context.Context, tx pgx.Tx, actor Actor, denied error) error {
+	return denyToken(ctx, queries.New(tx), tx, actor.Token.WorkspaceID, actor, denied)
+}
+
 // applyLocked applies the decoded commands cmds, whose IDs are commandIDs,
 // and which a client sent if sent is set, in t, the batch's transaction, once
 // it holds the lock of the project, whose seq is seq, and check has found

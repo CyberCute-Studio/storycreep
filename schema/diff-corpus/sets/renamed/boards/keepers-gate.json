@@ -1,0 +1,61 @@
+{
+  "board": {
+    "entryNodeId": "nd_00000000000000000000000N10",
+    "id": "bd_000000000000000000000000B2",
+    "name": "Keeper's \"Gate\" \\ back",
+    "slug": "keepers-gate"
+  },
+  "connections": [],
+  "nodes": [
+    {
+      "id": "nd_00000000000000000000000N10",
+      "isEnding": true,
+      "kind": "narration",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "text": {
+        "preview": "Say {gate_word}, met: {met_lara}",
+        "segments": [
+          {
+            "kind": "text",
+            "marks": [],
+            "value": "Say "
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "gate_word",
+            "ref": "var_000000000000000000000000V9"
+          },
+          {
+            "kind": "text",
+            "marks": [],
+            "value": ", met: "
+          },
+          {
+            "kind": "value",
+            "marks": [],
+            "name": "met_lara",
+            "ref": "var_000000000000000000000000V1"
+          }
+        ]
+      },
+      "type": "element"
+    },
+    {
+      "id": "nd_00000000000000000000000N11",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "target": {
+        "boardId": "bd_000000000000000000000000B1",
+        "nodeId": "nd_000000000000000000000000N1"
+      },
+      "type": "jumper"
+    }
+  ],
+  "schemaVersion": 1
+}

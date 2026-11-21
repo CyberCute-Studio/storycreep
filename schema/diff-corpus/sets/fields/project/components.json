@@ -1,0 +1,28 @@
+{
+  "components": [
+    {
+      "attributes": {
+        "atr_000000000000000000000000A1": 2,
+        "atr_000000000000000000000000A2": "tense",
+        "atr_000000000000000000000000A3": "Keeper of\nthe light"
+      },
+      "componentTypeId": "ct_000000000000000000000000T1",
+      "id": "cmp_000000000000000000000000C1",
+      "image": "ast_00000000000000000000000AS1",
+      "key": "elara",
+      "name": "Elara <the Keeper>"
+    },
+    {
+      "attributes": {
+        "atr_000000000000000000000000A1": 6,
+        "atr_000000000000000000000000A2": "calm",
+        "atr_000000000000000000000000A3": ""
+      },
+      "componentTypeId": "ct_000000000000000000000000T1",
+      "id": "cmp_000000000000000000000000C2",
+      "key": "mira",
+      "name": "Mira the Pilot"
+    }
+  ],
+  "schemaVersion": 1
+}
