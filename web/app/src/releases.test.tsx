@@ -291,6 +291,8 @@ describe("the list of a project's releases", () => {
     expect(screen.getByText("Failed")).toBeDefined();
     expect(screen.getByText("Building")).toBeDefined();
     expect(screen.getByText(/gained a warning/)).toBeDefined();
+    // A failed release's version may have been published since.
+    expect(screen.queryByText(/still free/)).toBeNull();
     expect(screen.getByText(/Published by a former member/)).toBeDefined();
     expect(screen.getByText("Keeper gate")).toBeDefined();
     expect(
@@ -704,6 +706,39 @@ describe("publishing a release", () => {
       await within(dialog).findByText(/proposed version could not be read/),
     ).toBeDefined();
     expect(within(dialog).queryByText(/first release/)).toBeNull();
+    // It cannot tell whether a major version is due, and says so.
+    expect(
+      await within(dialog).findByText(/could not be compared/),
+    ).toBeDefined();
+  });
+
+  it("keeps a field's own error through an edit of the other, and leaves the focus", async () => {
+    releasesPage();
+    await openReleases();
+    const user = userEvent.setup();
+    const dialog = await openDialog(user);
+    const version = within(dialog).getByRole("textbox", {
+      name: /Version/,
+    }) as HTMLInputElement;
+    const note = within(dialog).getByRole("textbox", {
+      name: /Changelog note/,
+    }) as HTMLTextAreaElement;
+    await waitFor(() => expect(version.value).toBe("1.4.1"));
+    await user.clear(version);
+    await user.type(version, "abc");
+    await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+    await waitFor(() =>
+      expect(version.getAttribute("aria-invalid")).toBe("true"),
+    );
+    expect(note.getAttribute("aria-invalid")).toBe("true");
+
+    await user.type(note, "A note");
+    expect(document.activeElement).toBe(note);
+    expect(note.getAttribute("aria-invalid")).not.toBe("true");
+    expect(version.getAttribute("aria-invalid")).toBe("true");
+
+    await user.type(version, "d");
+    expect(version.getAttribute("aria-invalid")).not.toBe("true");
   });
 
   it("suggests a major version where the diff removes content, and takes it", async () => {
@@ -1277,6 +1312,9 @@ describe("a release's read-only view", () => {
     });
     await screen.findByRole("heading", { level: 1, name: "Release 1.4.0" });
     await screen.findByText("Welcome to the harbour.");
+    expect(
+      screen.getByText(/read-only view of what was published/),
+    ).toBeDefined();
     expect(screen.getByText("Spoken by Elara")).toBeDefined();
     expect(screen.getByText("gold > 0")).toBeDefined();
     expect(screen.getByText("Not reached from the entry node")).toBeDefined();
@@ -1677,6 +1715,10 @@ describe("a release's read-only view", () => {
       session: testSession,
     });
     await screen.findByText(/found validation errors/);
+    // Nothing was published, so the page does not call this what was.
+    expect(
+      screen.queryByText(/read-only view of what was published/),
+    ).toBeNull();
     expect(
       await screen.findByRole("heading", { name: "Validation report" }),
     ).toBeDefined();
@@ -1792,6 +1834,22 @@ describe("comparing releases", () => {
         diffOf({
           project: {
             ...diffOf().project,
+            attributes: [
+              {
+                id: "atr_health_a",
+                kind: "attribute",
+                change: "modified",
+                name: "Health",
+                componentType: "cty_hero",
+              },
+              {
+                id: "atr_health_b",
+                kind: "attribute",
+                change: "modified",
+                name: "Health",
+                componentType: "cty_foe",
+              },
+            ],
             components: [
               {
                 id: "cmp_elara",
@@ -1826,6 +1884,19 @@ describe("comparing releases", () => {
                   change: "modified",
                   type: "branch",
                 },
+                {
+                  id: "out_yes",
+                  kind: "branch_output",
+                  change: "added",
+                  branch: "nd_fork",
+                },
+                {
+                  id: "con_plain",
+                  kind: "connection",
+                  change: "added",
+                  from: "nd_a",
+                  to: "nd_b",
+                },
               ],
             },
           ],
@@ -1838,6 +1909,10 @@ describe("comparing releases", () => {
     expect(await screen.findByText("atr_mood")).toBeDefined();
     expect(screen.getByText("atr_trust")).toBeDefined();
     expect(screen.getByText(/nd_untitled/)).toBeDefined();
+    expect(screen.getByText("Of component type cty_hero")).toBeDefined();
+    expect(screen.getByText("Of component type cty_foe")).toBeDefined();
+    expect(screen.getByText("Of branch nd_fork")).toBeDefined();
+    expect(screen.getByText("From nd_a to nd_b")).toBeDefined();
   });
 
   it("compares the newest two by default, and with the draft once asked", async () => {

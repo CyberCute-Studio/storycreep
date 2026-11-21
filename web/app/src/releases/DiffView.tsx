@@ -86,6 +86,26 @@ function changeName(c: EntityChange): string {
   }
 }
 
+/** Returns where a change's entity is, by the IDs that are all the diff says of it there, which tell apart two rows of one name. */
+function changePlace(t: TFunction, c: EntityChange): string | undefined {
+  switch (c.kind) {
+    case "attribute":
+      return c.componentType === undefined
+        ? undefined
+        : t("releases.diff.attribute_of", { type: c.componentType });
+    case "branch_output":
+      return c.branch === undefined
+        ? undefined
+        : t("releases.diff.output_of", { branch: c.branch });
+    case "connection":
+      return c.from === undefined || c.to === undefined
+        ? undefined
+        : t("releases.diff.connection_ends", { from: c.from, to: c.to });
+    default:
+      return undefined;
+  }
+}
+
 /** Returns a field's value on one side as text: a string as it is, and any other value as its JSON. */
 function valueText(t: TFunction, value: unknown): string {
   if (value === undefined) {
@@ -283,6 +303,7 @@ function Changes({ changes }: { changes: readonly EntityChange[] }) {
 
 function ChangeItem({ change }: { change: EntityChange }) {
   const { t } = useTranslation();
+  const place = changePlace(t, change);
   return (
     <li className="space-y-1 border-t border-border py-2">
       <p className="break-words">
@@ -296,6 +317,9 @@ function ChangeItem({ change }: { change: EntityChange }) {
           </span>
         )}
       </p>
+      {place !== undefined && (
+        <p className="break-words text-fg-muted">{place}</p>
+      )}
       {change.fromBoard !== undefined && change.toBoard !== undefined && (
         <p className="break-words text-fg-muted">
           {t("releases.diff.moved_boards", {

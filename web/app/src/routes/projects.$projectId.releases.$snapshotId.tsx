@@ -85,9 +85,11 @@ function Release() {
           {t("releases.view.back")}
         </Link>
       </p>
-      <p className="rounded-md border border-border bg-surface px-4 py-3">
-        {t("releases.view.read_only")}
-      </p>
+      {release.status === "ready" && (
+        <p className="rounded-md border border-border bg-surface px-4 py-3">
+          {t("releases.view.read_only")}
+        </p>
+      )}
       <div className="space-y-2">
         <StatusLabel status={release.status} />
         <ReleaseFacts release={release} />

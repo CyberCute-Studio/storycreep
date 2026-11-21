@@ -152,6 +152,8 @@ interface PublishRequest {
 interface Problems {
   version?: string;
   note?: string;
+  /** What the fields held then: a problem lasts while its own field does. */
+  held: { version: string; note: string };
 }
 
 function PublishForm({
@@ -229,15 +231,15 @@ function PublishForm({
     publish.variables !== undefined &&
     report.data.seq > publish.variables.acknowledged_seq &&
     (typeof refusedSeq !== "number" || report.data.seq >= refusedSeq);
-  // What the form found of the version holds while the field holds no
-  // version, which a proposal that arrives after the attempt may fill.
-  const versionProblem = versionPattern.test(version)
-    ? undefined
-    : problems?.version;
+  // What the form found of a field holds while the field holds what it was
+  // found in, whatever else the author edits: a proposal that arrives after
+  // the attempt may fill an empty version, which ends its problem too.
+  const versionProblem =
+    problems?.held.version === version ? problems.version : undefined;
   const versionError = versionProblem ?? refusedVersion;
   // A refusal of the note holds while the field holds the note that was sent.
   const noteError =
-    problems?.note ??
+    (problems?.held.note === note ? problems.note : undefined) ??
     (publish.variables?.note === note.trim()
       ? refusal?.fields.note
       : undefined);
@@ -253,7 +255,7 @@ function PublishForm({
       return;
     }
     const text = note.trim();
-    const found: Problems = {};
+    const found: Problems = { held: { version, note } };
     if (!versionPattern.test(version)) {
       found.version = t("releases.publish.version_invalid");
     }
@@ -278,10 +280,10 @@ function PublishForm({
       acknowledged_warnings: warnings.map(acknowledgementOf),
     });
   };
-  const edited = () => {
-    setProblems(undefined);
-    setAnswered(publish.error);
-  };
+  // An edit answers the form's alert. Each field's own error goes with a
+  // change of that field, and problems stays the same object, so that an
+  // edit of one field does not send the focus to the other's error.
+  const edited = () => setAnswered(publish.error);
   const latest = proposal.data?.latest_version;
   return (
     <form ref={form} noValidate onSubmit={onSubmit} className="space-y-4">
@@ -389,6 +391,12 @@ function PublishForm({
           }}
         />
       )}
+      {/* With no proposal there is no latest version to compare from. */}
+      {proposal.data === undefined &&
+        proposal.isError &&
+        report.data !== undefined && (
+          <p className="text-fg-muted">{t("releases.publish.no_diff")}</p>
+        )}
       <TextAreaField
         label={t("releases.publish.note")}
         hint={t("releases.publish.note_hint", { max: maxNote })}
