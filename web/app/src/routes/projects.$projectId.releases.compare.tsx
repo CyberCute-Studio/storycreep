@@ -1,5 +1,6 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
@@ -57,6 +58,14 @@ function Compare() {
   const ready = useSuspenseQuery(readyReleasesQuery(projectId)).data;
   const doc = useProjectDocument(projectId);
   const { from, to } = comparedPair(ready, search.from, search.to);
+  // The address takes a side that it left out once it is picked, so that a
+  // release that becomes ready later neither moves what the page shows nor
+  // spends another diff.
+  useEffect(() => {
+    if (from !== undefined && (search.from !== from || search.to !== to)) {
+      void navigate({ search: { from, to }, replace: true });
+    }
+  }, [from, to, search.from, search.to, navigate]);
   const diff = useQuery({
     ...diffQuery(doc, from ?? "", to, session),
     enabled: from !== undefined,

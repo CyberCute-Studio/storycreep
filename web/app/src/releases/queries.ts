@@ -105,6 +105,7 @@ export function latestReleaseQuery(projectId: string) {
           { signal },
         )
       ).body.items[0] ?? null,
+    meta: { showsRefusals: true },
   });
 }
 
@@ -120,6 +121,7 @@ export function nextVersionQuery(projectId: string) {
           { signal },
         )
       ).body,
+    meta: { showsRefusals: true },
   });
 }
 
@@ -163,7 +165,7 @@ export function releaseQuery(projectId: string, snapshotId: string) {
           { signal },
         )
       ).body,
-    meta: { showsNotFound: true },
+    meta: { showsNotFound: true, showsRefusals: true },
     refetchInterval: (query) =>
       query.state.data?.status === "building"
         ? nextPoll(query.state.error)

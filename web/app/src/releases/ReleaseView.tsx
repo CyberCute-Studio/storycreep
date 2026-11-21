@@ -194,7 +194,8 @@ function BoardContent({
       <ol className="space-y-3">
         {items.map((node, i) => (
           <li key={node.id}>
-            {i === firstUnreached && (
+            {/* A board with no entry node reaches none, and has no such part. */}
+            {i === firstUnreached && i > 0 && (
               <p className="pb-2 font-medium">{t("releases.view.unreached")}</p>
             )}
             <NodeEntry node={node} board={board} content={content} />
@@ -301,13 +302,15 @@ function NodeEntry({
               </p>
               <Choices
                 choices={leaving.filter((c) => c.fromPort === output.id)}
-                board={board}
+                nodes={content.nodes}
               />
             </li>
           ))}
         </ul>
       )}
-      {node.type === "element" && <Choices choices={leaving} board={board} />}
+      {node.type === "element" && (
+        <Choices choices={leaving} nodes={content.nodes} />
+      )}
     </article>
   );
 }
@@ -325,20 +328,15 @@ function Code({ label, code }: { label: string; code: string | undefined }) {
 /** The connections that leave a port, each with its label, condition, script, and where it leads. */
 function Choices({
   choices,
-  board,
+  nodes,
 }: {
   choices: readonly Connection[];
-  board: ReleaseBoard;
+  nodes: ReleaseContent["nodes"];
 }) {
   const { t } = useTranslation();
   if (choices.length === 0) {
     return null;
   }
-  const titleOf = (id: string) =>
-    nodeName(
-      t,
-      [...board.reached, ...board.unreached].find((n) => n.id === id),
-    );
   return (
     <ul className="space-y-1 border-s border-border ps-3">
       {choices.map((choice) => (
@@ -347,7 +345,9 @@ function Choices({
             <SegmentsText segments={choice.label.segments} />
           )}
           <p className="text-fg-muted break-words">
-            {t("releases.view.leads_to", { node: titleOf(choice.to) })}
+            {t("releases.view.leads_to", {
+              node: nodeName(t, nodes.get(choice.to)?.node),
+            })}
           </p>
           <Code
             label={t("releases.view.condition")}

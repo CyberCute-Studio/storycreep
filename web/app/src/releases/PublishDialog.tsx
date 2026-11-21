@@ -185,7 +185,8 @@ function PublishForm({
         : undefined,
   );
   // That the version is not newer is about the version's field, only while
-  // it holds the version refused, which a proposal read again may replace.
+  // it holds the version refused, which the author may have changed while
+  // the request was under way.
   const refusedCode = codeOf(publish.error);
   const notNewer = refusedCode === "version_not_newer";
   const refusedVersion = notNewer
@@ -235,6 +236,9 @@ function PublishForm({
       return;
     }
     setProblems(undefined);
+    // The field holds what was sent from now on, so that a proposal read
+    // again after a refusal cannot put another version in it without a word.
+    setTypedVersion(version);
     publish.mutate({
       version,
       note: text,

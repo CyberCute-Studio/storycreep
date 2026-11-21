@@ -147,7 +147,9 @@ function StoredReport({
     variable: (id) => content?.variables.find((v) => v.id === id)?.key,
     component: (id) => content?.components.find((c) => c.id === id)?.name,
   };
-  if (report.isError) {
+  // A failed read again leaves the report that the page holds, which is of
+  // a build that has ended, and so stays as it is.
+  if (report.isError && report.data === undefined) {
     return <Alert message={refusalOf(report.error, t).message} />;
   }
   if (report.data === undefined || report.data === null) {

@@ -17,7 +17,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { readProjectAgain } from "./project/queries";
-import { readReleasesAgain } from "./releases/queries";
+import { readReleasesAgain, releaseReportQuery } from "./releases/queries";
 import { renderApp, testSession } from "./test/app";
 import { fakeApi, refused, startPage, testProject } from "./test/fake";
 import { fakeRealtime } from "./test/realtime";
@@ -789,9 +789,9 @@ describe("publishing a release", () => {
     expect(screen.getByRole("dialog")).toBeDefined();
   });
 
-  it("drops a refusal of the version once a newer proposal replaces it", async () => {
+  it("keeps a refused version in its field as a newer proposal arrives", async () => {
     let proposed = "1.4.1";
-    releasesPage({
+    const calls = releasesPage({
       next: () => ({ version: proposed, latest_version: "1.4.0" }),
       publish: () => {
         proposed = "1.4.2";
@@ -810,10 +810,21 @@ describe("publishing a release", () => {
       "A note",
     );
     await user.click(within(dialog).getByRole("button", { name: "Publish" }));
-    await waitFor(() => expect(version.value).toBe("1.4.2"));
     await waitFor(() =>
-      expect(version.getAttribute("aria-invalid")).not.toBe("true"),
+      expect(version.getAttribute("aria-invalid")).toBe("true"),
     );
+    await waitFor(() =>
+      expect(callsOf(calls, "getNextSnapshotVersion").length).toBeGreaterThan(
+        1,
+      ),
+    );
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(version.value).toBe("1.4.1");
+    expect(version.getAttribute("aria-invalid")).toBe("true");
+    expect(within(dialog).getByText(/is not greater/i)).toBeDefined();
+    await user.clear(version);
+    await user.type(version, "1.4.2");
+    expect(version.getAttribute("aria-invalid")).not.toBe("true");
     expect(within(dialog).queryByText(/is not greater/i)).toBeNull();
   });
 
@@ -1030,6 +1041,44 @@ describe("a release's read-only view", () => {
     expect(
       screen.queryByRole("link", { name: "Jumps to Reply on Harbour" }),
     ).toBeNull();
+  });
+
+  it("calls no node unreached on a board without an entry node", async () => {
+    const files = filesWith(
+      "boards/tower.json",
+      (file: { board: { entryNodeId?: string } }) => {
+        delete file.board.entryNodeId;
+      },
+    );
+    releasesPage({ zip: await zipOf(files) });
+    renderApp(
+      `/projects/${testProject.id}/releases/${newerId}?board=${towerId}`,
+      { session: testSession },
+    );
+    await screen.findByText("The wind howls.");
+    expect(screen.queryByText("Not reached from the entry node")).toBeNull();
+  });
+
+  it("keeps the stored report on the page where reading it again fails", async () => {
+    let fails = false;
+    releasesPage({
+      stored: () => {
+        if (fails) {
+          throw refused(429, { code: "rate_limited" });
+        }
+        return report([warning()]);
+      },
+    });
+    const { queryClient } = renderApp(
+      `/projects/${testProject.id}/releases/${newerId}`,
+      { session: testSession },
+    );
+    await screen.findByText("Nothing leaves this node.");
+    fails = true;
+    const { queryKey } = releaseReportQuery(testProject.id, newerId);
+    await act(() => queryClient.invalidateQueries({ queryKey }));
+    expect(queryClient.getQueryState(queryKey)?.status).toBe("error");
+    expect(screen.getByText("Nothing leaves this node.")).toBeDefined();
   });
 
   it("shows the blank line of a text that begins with an empty paragraph", async () => {
@@ -1292,6 +1341,34 @@ describe("comparing releases", () => {
         ),
       ).toBe(true),
     );
+  });
+
+  it("holds the pair that it picked as a newer release becomes ready", async () => {
+    let list = [newer, older];
+    const calls = releasesPage({ list: () => list });
+    const { router, queryClient } = renderApp(
+      `/projects/${testProject.id}/releases/compare`,
+      { session: testSession },
+    );
+    await screen.findByText("These two are the same.");
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({
+        from: olderId,
+        to: newerId,
+      }),
+    );
+    list = [
+      snapshot({ id: newId("snapshot"), version: "1.5.0" }),
+      newer,
+      older,
+    ];
+    await act(() => readReleasesAgain(queryClient, testProject.id));
+    await waitFor(() => expect(screen.getAllByText("1.5.0")).toHaveLength(2));
+    expect(
+      (screen.getByRole("combobox", { name: "From" }) as HTMLSelectElement)
+        .value,
+    ).toBe(olderId);
+    expect(callsOf(calls, "diffSnapshots")).toHaveLength(1);
   });
 
   it("shows no diff of the pair before while it reads the next", async () => {
