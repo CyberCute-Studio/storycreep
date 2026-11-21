@@ -227,7 +227,21 @@ export function releaseFiles(): Map<string, Uint8Array<ArrayBuffer>> {
   const types = {
     schemaVersion: 1,
     componentTypes: [
-      { id: "ct_person", key: "person", name: "Person", attributes: [] },
+      {
+        id: "ct_person",
+        key: "person",
+        name: "Person",
+        attributes: [
+          {
+            id: "atr_mood",
+            key: "mood",
+            name: "Mood",
+            type: "string",
+            default: "",
+            runtime: false,
+          },
+        ],
+      },
     ],
   };
   const components = {
@@ -238,7 +252,7 @@ export function releaseFiles(): Map<string, Uint8Array<ArrayBuffer>> {
         key: "elara",
         name: "Elara",
         componentTypeId: "ct_person",
-        attributes: {},
+        attributes: { atr_mood: "Wary of strangers" },
       },
     ],
   };

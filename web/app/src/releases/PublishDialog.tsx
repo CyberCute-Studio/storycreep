@@ -66,15 +66,25 @@ function codeOf(error: unknown): string | undefined {
 }
 
 /**
+ * Reports whether a publication that failed with error may have been made
+ * all the same: no answer came to it, or the server failed as it answered.
+ */
+function mayHavePublished(error: unknown): boolean {
+  return !(error instanceof ApiError) || error.status >= 500;
+}
+
+/**
  * The button that opens the dialog, whose form starts anew each time it
- * opens. onPublished is told of the snapshot that it published, building,
- * as the dialog closes.
+ * opens. onPublishing is told as an attempt is sent, and onPublished of the
+ * snapshot that it published, building, as the dialog closes.
  */
 export function PublishButton({
   project,
+  onPublishing,
   onPublished,
 }: {
   project: ProjectBody;
+  onPublishing: () => void;
   onPublished: (snapshot: Snapshot) => void;
 }) {
   const { t } = useTranslation();
@@ -84,6 +94,7 @@ export function PublishButton({
   const publish = useMutation({
     mutationFn: (body: PublishInputBody) =>
       publishRelease(project.id, body, session),
+    onMutate: () => onPublishing(),
     onSuccess: (snapshot) => {
       setOpen(false);
       onPublished(snapshot);
@@ -99,7 +110,9 @@ export function PublishButton({
         void client.invalidateQueries({
           queryKey: validationKey(project.id),
         });
-      } else if (code === "version_not_newer") {
+      } else if (code === "version_not_newer" || mayHavePublished(error)) {
+        // A release that the lost answer was of shows in the list, and
+        // moves the proposal on, rather than be published a second time.
         void readReleasesAgain(client, project.id);
       }
     },
@@ -157,6 +170,7 @@ function PublishForm({
   const [ackedKey, setAckedKey] = useState<string>();
   const [problems, setProblems] = useState<Problems>();
   const form = useRef<HTMLFormElement>(null);
+  const versionField = useRef<HTMLInputElement>(null);
   useFocusRefusal(form, publish.error);
   useFocusRefusal(form, problems);
 
@@ -208,7 +222,12 @@ function PublishForm({
     ? undefined
     : problems?.version;
   const versionError = versionProblem ?? refusedVersion;
-  const noteError = problems?.note ?? refusal?.fields.note;
+  // A refusal of the note holds while the field holds the note that was sent.
+  const noteError =
+    problems?.note ??
+    (publish.variables?.note === note.trim()
+      ? refusal?.fields.note
+      : undefined);
   const reportFailure = refusalOf(report.error, t)?.message;
 
   const ready = report.data !== undefined && errors.length === 0;
@@ -320,15 +339,17 @@ function PublishForm({
         )}
       </section>
       <TextField
+        ref={versionField}
         label={t("releases.publish.version")}
         hint={
-          proposal.isError
-            ? t("releases.publish.version_unread")
-            : proposal.data === undefined
-              ? t("releases.publish.version_format")
-              : latest === undefined
-                ? t("releases.publish.version_first")
-                : t("releases.publish.version_hint", { latest })
+          // A failed read again leaves the proposal that the field holds.
+          proposal.data === undefined
+            ? proposal.isError
+              ? t("releases.publish.version_unread")
+              : t("releases.publish.version_format")
+            : latest === undefined
+              ? t("releases.publish.version_first")
+              : t("releases.publish.version_hint", { latest })
         }
         error={versionError}
         value={version}
@@ -347,6 +368,8 @@ function PublishForm({
           onUse={(major) => {
             setTypedVersion(major);
             edited();
+            // The button goes with the suggestion that it took.
+            versionField.current?.focus();
           }}
         />
       )}
@@ -439,38 +462,58 @@ function MajorSuggestion({
   const diff = useQuery({
     ...diffQuery(doc, from ?? "", draft, session),
     // Once the newest release has been read, since the one kept from before
-    // may be older, and each diff counts in the rate limit of writes.
-    enabled: from !== undefined && release.isSuccess && !release.isFetching,
+    // may be older, and each diff counts in the rate limit of writes: so
+    // not after a failure either, which a query without data would send
+    // again each time that this turned true, as a read of the release does.
+    enabled: (query) =>
+      query.state.status !== "error" &&
+      from !== undefined &&
+      release.isSuccess &&
+      !release.isFetching,
   });
   const major = nextMajor(latest);
   const typedMajor = majorOf(version);
   const latestMajor = majorOf(latest);
-  if (
+  const moot =
     major === undefined ||
     (typedMajor !== undefined &&
       latestMajor !== undefined &&
-      typedMajor > latestMajor)
-  ) {
-    return null;
-  }
-  if (release.isError || diff.isError) {
-    return <p className="text-fg-muted">{t("releases.publish.no_diff")}</p>;
-  }
-  if (diff.data === undefined) {
-    return null;
-  }
-  const { removed, retyped, unsure } = majorChanges(diff.data);
-  if (removed === 0 && retyped === 0) {
-    return unsure ? (
-      <p className="text-fg-muted">{t("releases.publish.major_unsure")}</p>
-    ) : null;
-  }
+      typedMajor > latestMajor);
+  const changes = diff.data === undefined ? undefined : majorChanges(diff.data);
+  const offered =
+    !moot &&
+    changes !== undefined &&
+    (changes.removed > 0 || changes.retyped > 0)
+      ? major
+      : undefined;
+  // A failed read again of the release leaves the diff that the dialog holds.
+  const notice =
+    moot || offered !== undefined
+      ? undefined
+      : changes === undefined
+        ? release.isError || diff.isError
+          ? t("releases.publish.no_diff")
+          : undefined
+        : changes.unsure
+          ? t("releases.publish.major_unsure")
+          : undefined;
+  // The live region is there before the diff comes, so that what it says
+  // of the diff is announced.
   return (
     <div className="space-y-2">
-      <Status message={t("releases.publish.major_suggested", { major })} />
-      <Button onClick={() => onUse(major)}>
-        {t("releases.publish.use_version", { version: major })}
-      </Button>
+      {notice !== undefined && <p className="text-fg-muted">{notice}</p>}
+      <Status
+        message={
+          offered === undefined
+            ? undefined
+            : t("releases.publish.major_suggested", { major: offered })
+        }
+      />
+      {offered !== undefined && (
+        <Button onClick={() => onUse(offered)}>
+          {t("releases.publish.use_version", { version: offered })}
+        </Button>
+      )}
     </div>
   );
 }

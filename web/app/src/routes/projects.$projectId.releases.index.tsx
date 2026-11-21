@@ -91,7 +91,13 @@ function Releases() {
     >
       <p>{t("releases.intro")}</p>
       {publishes(project) && project.archived_at === undefined && (
-        <PublishButton project={project} onPublished={setPublished} />
+        <PublishButton
+          project={project}
+          // Cleared as an attempt is sent, so that the live region says the
+          // next build's start, of the same version too, as a change.
+          onPublishing={() => setPublished(undefined)}
+          onPublished={setPublished}
+        />
       )}
       <Status message={said} />
       {releases.length === 0 ? (

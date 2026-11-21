@@ -69,7 +69,7 @@ function changeText(t: TFunction, change: string): string {
 }
 
 /** Returns what names a change's entity, as what its kind shows of it, or its ID, which tells apart those that have no name. */
-function changeName(t: TFunction, c: EntityChange): string {
+function changeName(c: EntityChange): string {
   switch (c.kind) {
     case "variable":
       return c.key ?? c.id;
@@ -78,7 +78,7 @@ function changeName(t: TFunction, c: EntityChange): string {
     case "component":
       return c.name ?? c.key ?? c.id;
     case "node":
-      return c.title ?? c.preview ?? t("boards.untitled_node");
+      return c.title ?? c.preview ?? c.id;
     case "connection":
       return c.label ?? c.id;
     default:
@@ -288,7 +288,7 @@ function ChangeItem({ change }: { change: EntityChange }) {
       <p className="break-words">
         <span className="font-medium">{changeText(t, change.change)}</span>
         {": "}
-        {changeName(t, change)}
+        {changeName(change)}
         {change.type !== undefined && (
           <span className="text-fg-muted">
             {" · "}
@@ -311,15 +311,21 @@ function ChangeItem({ change }: { change: EntityChange }) {
   );
 }
 
-/** Each changed field, with what it held on either side. */
+/** Each changed field, with what it held on either side, a component's value by the ID of its attribute, which is all that the diff names it by. */
 function Fields({ fields }: { fields: readonly FieldChange[] }) {
   const { t } = useTranslation();
   return (
     <dl className="space-y-1">
       {fields.map((field) => (
         <div key={`${field.field}:${field.attribute ?? ""}`}>
-          <dt className="text-fg-muted">
+          <dt className="break-words text-fg-muted">
             <code>{field.field}</code>
+            {field.attribute !== undefined && (
+              <>
+                {" · "}
+                <code>{field.attribute}</code>
+              </>
+            )}
           </dt>
           <dd className="break-words whitespace-pre-wrap">
             {field.words !== undefined && field.words.length > 0 ? (

@@ -363,11 +363,9 @@ function Choices({
   );
 }
 
-/** Returns a variable's default as text. */
-function defaultText(variable: Variable): string {
-  return typeof variable.default === "string"
-    ? variable.default
-    : JSON.stringify(variable.default);
+/** Returns a variable's default, or a component's value, as text. */
+function valueText(value: Variable["default"]): string {
+  return typeof value === "string" ? value : JSON.stringify(value);
 }
 
 function VariablesList({ content }: { content: ReleaseContent }) {
@@ -403,7 +401,9 @@ function VariablesList({ content }: { content: ReleaseContent }) {
               </span>
             </p>
             <p className="break-words text-fg-muted">
-              {t("releases.view.default", { value: defaultText(variable) })}
+              {t("releases.view.default", {
+                value: valueText(variable.default),
+              })}
             </p>
             {variable.description !== undefined && (
               <p className="break-words">{variable.description}</p>
@@ -419,8 +419,8 @@ function VariablesList({ content }: { content: ReleaseContent }) {
 function ComponentsList({ content }: { content: ReleaseContent }) {
   const { t } = useTranslation();
   const { items, rest, more } = useShown(content.components);
-  const typeName = (id: string) =>
-    content.componentTypes.find((c) => c.id === id)?.name ?? id;
+  const typeOf = (id: string) =>
+    content.componentTypes.find((c) => c.id === id);
   return (
     <section aria-labelledby="release-components" className="space-y-2">
       <h2 id="release-components" className="text-xl font-semibold">
@@ -430,20 +430,40 @@ function ComponentsList({ content }: { content: ReleaseContent }) {
         <p>{t("releases.view.no_components")}</p>
       )}
       <ul>
-        {items.map((component) => (
-          <li
-            key={component.id}
-            className="border-t border-border py-2 break-words"
-          >
-            {component.name}
-            <span className="text-fg-muted">
-              {" · "}
-              <code className="font-mono">{component.key}</code>
-              {" · "}
-              {typeName(component.componentTypeId)}
-            </span>
-          </li>
-        ))}
+        {items.map((component) => {
+          const type = typeOf(component.componentTypeId);
+          const attributes = type?.attributes ?? [];
+          return (
+            <li
+              key={component.id}
+              className="space-y-1 border-t border-border py-2"
+            >
+              <p className="break-words">
+                {component.name}
+                <span className="text-fg-muted">
+                  {" · "}
+                  <code className="font-mono">{component.key}</code>
+                  {" · "}
+                  {type?.name ?? component.componentTypeId}
+                </span>
+              </p>
+              {attributes.length > 0 && (
+                <dl className="space-y-1">
+                  {attributes.map((attribute) => (
+                    <div key={attribute.id}>
+                      <dt className="break-words text-fg-muted">
+                        {attribute.name}
+                      </dt>
+                      <dd className="break-words whitespace-pre-wrap">
+                        {valueText(component.attributes[attribute.id])}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+            </li>
+          );
+        })}
       </ul>
       <ShowMore rest={rest} more={more} />
     </section>

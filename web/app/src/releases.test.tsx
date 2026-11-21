@@ -678,6 +678,164 @@ describe("publishing a release", () => {
     expect(
       within(dialog).queryByRole("button", { name: "Use 2.0.0" }),
     ).toBeNull();
+    // The button went, and the field that it changed has the focus.
+    expect(document.activeElement).toBe(version);
+  });
+
+  it("does not send a failed diff again as the newest release is read again", async () => {
+    const calls = releasesPage({
+      diff: () => {
+        throw refused(500, { code: "internal" });
+      },
+    });
+    const { queryClient } = await openReleases();
+    const dialog = await openDialog(userEvent.setup());
+    await within(dialog).findByText(/could not be compared/);
+    expect(callsOf(calls, "diffSnapshots")).toHaveLength(1);
+    const reads = callsOf(calls, "listSnapshots").length;
+    await act(() => readReleasesAgain(queryClient, testProject.id));
+    await waitFor(() =>
+      expect(callsOf(calls, "listSnapshots").length).toBeGreaterThan(reads),
+    );
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(callsOf(calls, "diffSnapshots")).toHaveLength(1);
+    expect(within(dialog).getByText(/could not be compared/)).toBeDefined();
+  });
+
+  it("keeps the suggestion and the version's hint through a failed read again", async () => {
+    let fails = false;
+    const failing = <T,>(answer: T): T => {
+      if (fails) {
+        throw refused(429, { code: "rate_limited" });
+      }
+      return answer;
+    };
+    releasesPage({
+      list: () => failing([newer, older]),
+      next: () => failing({ version: "1.4.1", latest_version: "1.4.0" }),
+      diff: () => diffOf({ summary: { ...diffOf().summary, removed: 1 } }),
+    });
+    const { queryClient } = await openReleases();
+    const dialog = await openDialog(userEvent.setup());
+    await within(dialog).findByRole("button", { name: "Use 2.0.0" });
+    fails = true;
+    await act(() => readReleasesAgain(queryClient, testProject.id));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(
+      within(dialog).getByRole("button", { name: "Use 2.0.0" }),
+    ).toBeDefined();
+    expect(within(dialog).queryByText(/could not be compared/)).toBeNull();
+    expect(
+      within(dialog).queryByText(/proposed version could not be read/),
+    ).toBeNull();
+  });
+
+  it("reads the lists again after a publication that no answer came to", async () => {
+    const calls = releasesPage({
+      publish: () => {
+        throw new NetworkError("no answer");
+      },
+    });
+    await openReleases();
+    const user = userEvent.setup();
+    const dialog = await openDialog(user);
+    const version = within(dialog).getByRole("textbox", { name: /Version/ });
+    await waitFor(() =>
+      expect((version as HTMLInputElement).value).toBe("1.4.1"),
+    );
+    await user.type(
+      within(dialog).getByRole("textbox", { name: /Changelog note/ }),
+      "A note",
+    );
+    const reads = callsOf(calls, "getNextSnapshotVersion").length;
+    await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+    await waitFor(() =>
+      expect(callsOf(calls, "getNextSnapshotVersion").length).toBeGreaterThan(
+        reads,
+      ),
+    );
+  });
+
+  it("does not mark a note changed since the one that the server refused", async () => {
+    let refuse: () => void = () => undefined;
+    const answer = new Promise<never>((_, reject) => {
+      refuse = () =>
+        reject(
+          refused(422, {
+            code: "validation_failed",
+            message: "The request is not valid.",
+            details: {
+              errors: [
+                { location: "body.note", message: "has a control character" },
+              ],
+            },
+          }),
+        );
+    });
+    releasesPage({ publish: () => answer as never });
+    await openReleases();
+    const user = userEvent.setup();
+    const dialog = await openDialog(user);
+    const version = within(dialog).getByRole("textbox", { name: /Version/ });
+    await waitFor(() =>
+      expect((version as HTMLInputElement).value).toBe("1.4.1"),
+    );
+    const note = within(dialog).getByRole("textbox", {
+      name: /Changelog note/,
+    });
+    await user.type(note, "A note");
+    const submit = within(dialog).getByRole("button", {
+      name: "Publish",
+    }) as HTMLButtonElement;
+    await user.click(submit);
+    await waitFor(() => expect(submit.disabled).toBe(true));
+    await user.type(note, " mended");
+    await act(async () => refuse());
+    await waitFor(() => expect(submit.disabled).toBe(false));
+    expect(note.getAttribute("aria-invalid")).not.toBe("true");
+    expect(within(dialog).queryByText(/control character/)).toBeNull();
+  });
+
+  it("says anew that a build started when the same version is published again", async () => {
+    let answer: (published: Snapshot) => void = () => undefined;
+    const pending = new Promise<Snapshot>((resolve) => {
+      answer = resolve;
+    });
+    let attempts = 0;
+    const building = snapshot({
+      id: newId("snapshot"),
+      status: "building",
+      version: "1.4.1",
+    });
+    releasesPage({
+      publish: () => {
+        attempts += 1;
+        return (attempts === 1 ? building : pending) as Snapshot;
+      },
+    });
+    await openReleases();
+    const user = userEvent.setup();
+    const publishOnce = async () => {
+      const dialog = await openDialog(user);
+      const version = within(dialog).getByRole("textbox", { name: /Version/ });
+      await waitFor(() =>
+        expect((version as HTMLInputElement).value).toBe("1.4.1"),
+      );
+      await user.type(
+        within(dialog).getByRole("textbox", { name: /Changelog note/ }),
+        "A note",
+      );
+      await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+    };
+    const said = /1\.4\.1.*build/i;
+    await publishOnce();
+    expect(await screen.findByText(said)).toBeDefined();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await publishOnce();
+    await waitFor(() => expect(attempts).toBe(2));
+    expect(screen.queryByText(said)).toBeNull();
+    await act(async () => answer(building));
+    expect(await screen.findByText(said)).toBeDefined();
   });
 
   it("suggests a major version where a variable is retyped", async () => {
@@ -965,6 +1123,8 @@ describe("a release's read-only view", () => {
     expect(screen.getByText("Not reached from the entry node")).toBeDefined();
     expect(screen.getByText("gold")).toBeDefined();
     expect(screen.getByText("Elara")).toBeDefined();
+    expect(screen.getByText("Mood")).toBeDefined();
+    expect(screen.getByText("Wary of strangers")).toBeDefined();
 
     // Nothing on the page edits: no field, and neither the undo nor the
     // redo that the project's other pages show an editor.
@@ -1317,6 +1477,60 @@ describe("comparing releases", () => {
       body: { from: olderId, to: newerId },
       headers: { "X-CSRF-Token": testSession.csrf_token },
     });
+  });
+
+  it("tells apart a component's attributes, and nodes that have no name", async () => {
+    releasesPage({
+      diff: () =>
+        diffOf({
+          project: {
+            ...diffOf().project,
+            components: [
+              {
+                id: "cmp_elara",
+                kind: "component",
+                change: "modified",
+                name: "Elara",
+                fields: [
+                  {
+                    field: "attributes",
+                    attribute: "atr_mood",
+                    before: "calm",
+                    after: "angry",
+                  },
+                  {
+                    field: "attributes",
+                    attribute: "atr_trust",
+                    before: 1,
+                    after: 2,
+                  },
+                ],
+              },
+            ],
+          },
+          boards: [
+            {
+              board: { id: harbourId, name: "Harbour", slug: "harbour" },
+              omitted: 0,
+              changes: [
+                {
+                  id: "nd_untitled",
+                  kind: "node",
+                  change: "modified",
+                  type: "branch",
+                },
+              ],
+            },
+          ],
+        }),
+    });
+    renderApp(
+      `/projects/${testProject.id}/releases/compare?from=${olderId}&to=${newerId}`,
+      { session: testSession },
+    );
+    expect(await screen.findByText("atr_mood")).toBeDefined();
+    expect(screen.getByText("atr_trust")).toBeDefined();
+    expect(screen.getByText(/nd_untitled/)).toBeDefined();
   });
 
   it("compares the newest two by default, and with the draft once asked", async () => {
