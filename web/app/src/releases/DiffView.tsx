@@ -323,7 +323,14 @@ function Fields({ fields }: { fields: readonly FieldChange[] }) {
           </dt>
           <dd className="break-words whitespace-pre-wrap">
             {field.words !== undefined && field.words.length > 0 ? (
-              <Words runs={field.words} />
+              <>
+                <Words runs={field.words} />
+                {field.words.every((run) => run.op === "equal") && (
+                  <span className="block text-fg-muted">
+                    {t("releases.diff.formatting_only")}
+                  </span>
+                )}
+              </>
             ) : (
               <>
                 <span className="block">

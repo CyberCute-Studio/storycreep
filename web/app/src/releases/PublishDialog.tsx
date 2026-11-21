@@ -23,11 +23,11 @@ import {
 } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Dialog } from "radix-ui";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, memo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
-import { useProjectDocument } from "../document/react";
+import { useDocumentState, useProjectDocument } from "../document/react";
 import { Button } from "../ui/Button";
 import { closesUnlessPending, DialogFrame, FormButtons } from "../ui/Dialog";
 import {
@@ -63,9 +63,6 @@ import {
 
 /** The longest note, in characters (PRD FR-SNAP-01). */
 const maxNote = 2000;
-
-/** How many findings of a severity the dialog lists, of which the validation's page lists the rest. */
-const findingsListed = 20;
 
 /** The code of a refusal of error, if the server answered with one. */
 function codeOf(error: unknown): string | undefined {
@@ -152,6 +149,9 @@ function PublishForm({
     meta: { showsNotFound: true, showsRefusals: true },
   });
   const proposal = useQuery(nextVersionQuery(projectId));
+  // A publication reads the draft as the server has it, so it waits for the
+  // page's batches, whose edits the page already shows.
+  const saving = useDocumentState(doc, (state) => state.sending > 0);
   const [typedVersion, setTypedVersion] = useState<string>();
   const [note, setNote] = useState("");
   const [ackedKey, setAckedKey] = useState<string>();
@@ -190,7 +190,7 @@ function PublishForm({
   const ready = report.data !== undefined && errors.length === 0;
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
-    if (publish.isPending || report.data === undefined || !ready) {
+    if (publish.isPending || report.data === undefined || !ready || saving) {
       return;
     }
     if (!acknowledged) {
@@ -289,9 +289,13 @@ function PublishForm({
       <TextField
         label={t("releases.publish.version")}
         hint={
-          latest === undefined
-            ? t("releases.publish.version_first")
-            : t("releases.publish.version_hint", { latest })
+          proposal.isError
+            ? t("releases.publish.version_unread")
+            : proposal.data === undefined
+              ? t("releases.publish.version_format")
+              : latest === undefined
+                ? t("releases.publish.version_first")
+                : t("releases.publish.version_hint", { latest })
         }
         error={versionError}
         value={version}
@@ -305,7 +309,6 @@ function PublishForm({
       {latest !== undefined && report.data !== undefined && (
         <MajorSuggestion
           projectId={projectId}
-          seq={report.data.seq}
           latest={latest}
           version={version}
           onUse={(major) => {
@@ -332,17 +335,21 @@ function PublishForm({
             : { ...refusal, fields: {} }
         }
       />
+      <Status message={saving ? t("releases.publish.saving") : undefined} />
       <FormButtons
         cancel={t("releases.publish.cancel")}
         submit={t("releases.publish.submit")}
         pending={publish.isPending}
-        disabled={!ready || !acknowledged}
+        disabled={!ready || !acknowledged || saving}
       />
     </form>
   );
 }
 
-/** The findings of a severity, each with where it is, of which it lists findingsListed. */
+/**
+ * Every finding of a severity, each with where it is: the box acknowledges
+ * all of the warnings, so the dialog leaves none of them out.
+ */
 function FindingLines({
   findings,
   names,
@@ -351,26 +358,34 @@ function FindingLines({
   names: FindingNames;
 }) {
   const { t } = useTranslation();
-  const rest = findings.length - findingsListed;
   return (
-    <>
-      <ul>
-        {findings.slice(0, findingsListed).map((finding) => (
-          <li
-            key={findingKey(finding)}
-            className="space-y-1 border-t border-border py-2"
-          >
-            <p className="break-words">{finding.message}</p>
-            <p className="break-words text-fg-muted">
-              {whereText(t, finding, names)}
-            </p>
-          </li>
-        ))}
-      </ul>
-      {rest > 0 && <p>{t("releases.publish.more", { count: rest })}</p>}
-    </>
+    <ul>
+      {findings.map((finding) => (
+        <FindingLine
+          key={findingKey(finding)}
+          message={finding.message}
+          where={whereText(t, finding, names)}
+        />
+      ))}
+    </ul>
   );
 }
+
+/** A finding, which typing in the form does not render again, however many the report has. */
+const FindingLine = memo(function FindingLine({
+  message,
+  where,
+}: {
+  message: string;
+  where: string;
+}) {
+  return (
+    <li className="space-y-1 border-t border-border py-2">
+      <p className="break-words">{message}</p>
+      <p className="break-words text-fg-muted">{where}</p>
+    </li>
+  );
+});
 
 /**
  * The major version that the diff of the last ready release into the draft
@@ -382,14 +397,11 @@ function FindingLines({
  */
 function MajorSuggestion({
   projectId,
-  seq,
   latest,
   version,
   onUse,
 }: {
   projectId: string;
-  /** The seq of the report, as of which the diff is read. */
-  seq: number;
   /** The newest version of the project's releases, building or ready. */
   latest: string;
   version: string;
@@ -400,7 +412,7 @@ function MajorSuggestion({
   const release = useQuery(latestReleaseQuery(projectId));
   const from = release.data?.id;
   const diff = useQuery({
-    ...diffQuery(projectId, from ?? "", draft, session, seq),
+    ...diffQuery(projectId, from ?? "", draft, session),
     enabled: from !== undefined,
   });
   if (release.isError || diff.isError) {

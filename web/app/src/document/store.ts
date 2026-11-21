@@ -51,6 +51,7 @@ import { dependenciesKey } from "../dependencies/queries";
 import type { ErrorLog } from "../errors/log";
 import { playStatesKey } from "../play/queries";
 import { conflictOf, projectQuery } from "../project/queries";
+import { draftDiffKey } from "../releases/queries";
 import { statisticsKey } from "../statistics/queries";
 import { validationKey } from "../validation/queries";
 import { type AnyCommand, applyCommands, canonical } from "./apply";
@@ -759,7 +760,7 @@ export class ProjectDocument {
    * (stepped); undefined once it has, or the socket is back.
    */
   private lostTimer: ReturnType<typeof setTimeout> | undefined;
-  /** What has the reads that the server derives of the whole project read again as operations apply: the writing statistics, the validation report, and the dependency graph (followed). */
+  /** What has the reads that the server derives of the whole project read again as operations apply: the writing statistics, the validation report, the dependency graph, and the diffs into the draft (followed). */
   private readonly followers: readonly Follower[];
   /** What has the threads of comments read again as operations apply (followed). */
   private readonly comments: Follower;
@@ -781,6 +782,7 @@ export class ProjectDocument {
         dependenciesKey(projectId),
         derivedPause,
       ),
+      new Follower(options.queryClient, draftDiffKey(projectId), derivedPause),
     ];
     this.comments = new Follower(
       options.queryClient,
@@ -1488,7 +1490,7 @@ export class ProjectDocument {
    * a connection's node, by which a link opens one (comments/queries.ts);
    * and the reads that the server derives of the whole project, which any
    * change of the draft may: the writing statistics, the validation report,
-   * and the dependency graph (Follower). What is no part of the draft
+   * the dependency graph, and a diff into the draft (Follower). What is no part of the draft
    * (outsideDraft) changes neither the trash nor what the server derives.
    */
   private followed(

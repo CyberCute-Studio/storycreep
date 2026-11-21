@@ -1,4 +1,4 @@
-import { ApiError, type Finding, NetworkError } from "@storycreep/shared/api";
+import { ApiError, NetworkError } from "@storycreep/shared/api";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
@@ -127,9 +127,10 @@ function Release() {
 
 /**
  * The validation report stored with the release, of what its build read:
- * its findings, named by what the release holds, once the page has read it,
- * as a failed release holds nothing, and no link to the editor, which shows
- * the draft rather than the release.
+ * its findings by severity, and those muted apart with their reasons (PRD
+ * FR-DEP-03 AC4), named by what the release holds, once the page has read
+ * it, as a failed release holds nothing, and no link to the editor, which
+ * shows the draft rather than the release.
  */
 function StoredReport({
   projectId,
@@ -152,7 +153,32 @@ function StoredReport({
   if (report.data === undefined || report.data === null) {
     return null;
   }
-  const findings: Finding[] = [...report.data.findings, ...report.data.muted];
+  const { findings, muted, counts } = report.data;
+  const errors = findings.filter((f) => f.severity === "error");
+  const warnings = findings.filter((f) => f.severity === "warning");
+  const infos = findings.filter((f) => f.severity === "info");
+  const groups = [
+    {
+      key: "errors",
+      heading: t("validation.errors", { count: errors.length }),
+      items: errors,
+    },
+    {
+      key: "warnings",
+      heading: t("validation.warnings", { count: warnings.length }),
+      items: warnings,
+    },
+    {
+      key: "infos",
+      heading: t("validation.infos", { count: infos.length }),
+      items: infos,
+    },
+    {
+      key: "muted",
+      heading: t("validation.muted", { count: muted.length }),
+      items: muted,
+    },
+  ].filter((group) => group.items.length > 0);
   return (
     <section aria-labelledby="release-report" className="space-y-2">
       <h2 id="release-report" className="text-xl font-semibold">
@@ -160,27 +186,37 @@ function StoredReport({
       </h2>
       <p>
         {t("releases.publish.counts", {
-          errors: report.data.counts.errors,
-          warnings: report.data.counts.warnings,
+          errors: counts.errors,
+          warnings: counts.warnings,
         })}
       </p>
-      {findings.length > 0 && (
-        <ul>
-          {findings.map((finding) => (
-            <li
-              key={findingKey(finding)}
-              className="space-y-1 border-t border-border py-2"
-            >
-              <p className="break-words">{finding.message}</p>
-              <p className="break-words text-fg-muted">
-                {whereText(t, finding, names)}
-                {" · "}
-                <code>{finding.code}</code>
-              </p>
-            </li>
-          ))}
-        </ul>
-      )}
+      {groups.map((group) => (
+        <div key={group.key} className="space-y-1">
+          <h3 className="text-lg font-semibold">{group.heading}</h3>
+          <ul>
+            {group.items.map((finding) => (
+              <li
+                key={findingKey(finding)}
+                className="space-y-1 border-t border-border py-2"
+              >
+                <p className="break-words">{finding.message}</p>
+                <p className="break-words text-fg-muted">
+                  {whereText(t, finding, names)}
+                  {" · "}
+                  <code>{finding.code}</code>
+                </p>
+                {finding.mute !== undefined && (
+                  <p className="break-words whitespace-pre-line">
+                    {t("validation.mute_reason", {
+                      reason: finding.mute.reason,
+                    })}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </section>
   );
 }

@@ -1,10 +1,19 @@
 import type { Diff, Finding, Report, Snapshot } from "@storycreep/shared/api";
 import { newId } from "@storycreep/shared/ids";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { focusManager } from "@tanstack/react-query";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readProjectAgain } from "./project/queries";
 import { renderApp, testSession } from "./test/app";
 import { fakeApi, refused, startPage, testProject } from "./test/fake";
+import { fakeRealtime } from "./test/realtime";
 import { harbourId, releaseFiles, towerId, zipOf } from "./test/release";
 import { validationKey } from "./validation/queries";
 
@@ -114,9 +123,15 @@ interface Answers {
   role?: (typeof testProject)["role"];
   list?: () => Snapshot[];
   validation?: () => Report;
-  diff?: () => Diff;
+  /** The report stored with a release. */
+  stored?: () => Report;
+  diff?: () => Diff | Promise<Diff>;
   publish?: (body: unknown) => Snapshot;
   zip?: Uint8Array<ArrayBuffer>;
+  /** The cursor of the list's next page, of which it has none otherwise. */
+  nextCursor?: string;
+  /** The version that publishing proposes. */
+  next?: () => unknown;
 }
 
 /** Answers the pages of the project's releases. */
@@ -135,7 +150,8 @@ function releasesPage(answers: Answers = {}) {
         );
         return {
           items: items.slice(0, query?.limit ?? items.length),
-          next_cursor: null,
+          next_cursor:
+            query?.status === undefined ? (answers.nextCursor ?? null) : null,
         };
       }
       case "getSnapshot": {
@@ -147,9 +163,11 @@ function releasesPage(answers: Answers = {}) {
         return found;
       }
       case "getSnapshotValidation":
-        return report([warning()]);
+        return answers.stored?.() ?? report([warning()]);
       case "getNextSnapshotVersion":
-        return { version: "1.4.1", latest_version: "1.4.0" };
+        return (
+          answers.next?.() ?? { version: "1.4.1", latest_version: "1.4.0" }
+        );
       case "validateProject":
         return (answers.validation ?? (() => report([])))();
       case "diffSnapshots":
@@ -281,6 +299,35 @@ describe("the list of a project's releases", () => {
     expect(
       await screen.findByText("Ready", undefined, { timeout: 4000 }),
     ).toBeDefined();
+  });
+
+  it("links the last release that it has read to the one before it, while older ones are unread", async () => {
+    releasesPage({ list: () => [newer], nextCursor: "next" });
+    await openReleases();
+    const compare = screen
+      .getByRole("link", { name: "Compare 1.4.0 with the release before it" })
+      .getAttribute("href");
+    expect(compare).toContain(`to=${newerId}`);
+    expect(compare).not.toContain("from=");
+  });
+
+  it("reads the newest ready release again once a build ends", async () => {
+    let status: Snapshot["status"] = "building";
+    const calls = releasesPage({
+      list: () => [snapshot({ id: newerId, version: "1.4.0", status }), older],
+    });
+    await openReleases();
+    await openDialog(userEvent.setup());
+    const latestReads = () =>
+      callsOf(calls, "listSnapshots").filter(
+        ([, input]) =>
+          (input as { query?: { limit?: number } }).query?.limit === 1,
+      ).length;
+    await waitFor(() => expect(latestReads()).toBe(1));
+    status = "ready";
+    await waitFor(() => expect(latestReads()).toBeGreaterThan(1), {
+      timeout: 4000,
+    });
   });
 
   it("downloads a release's zip under the server's name", async () => {
@@ -482,6 +529,68 @@ describe("publishing a release", () => {
     expect(callsOf(calls, "publishSnapshot")).toHaveLength(0);
   });
 
+  it("lists every warning that its box acknowledges", async () => {
+    const many = Array.from({ length: 25 }, (_, i) =>
+      warning({
+        entity_id: `nd_${i}`,
+        node_id: `nd_${i}`,
+        message: `Warning number ${i}.`,
+      }),
+    );
+    releasesPage({ validation: () => report(many) });
+    await openReleases();
+    const dialog = await openDialog(userEvent.setup());
+    for (const finding of many) {
+      expect(within(dialog).getByText(finding.message)).toBeDefined();
+    }
+    expect(
+      within(dialog).getByRole("checkbox", {
+        name: "I have read these 25 warnings and want to publish with them",
+      }),
+    ).toBeDefined();
+  });
+
+  it("waits for the page's batches before it publishes", async () => {
+    const calls = releasesPage();
+    const { documents } = await openReleases();
+    const user = userEvent.setup();
+    const dialog = await openDialog(user);
+    const version = within(dialog).getByRole("textbox", { name: /Version/ });
+    await waitFor(() =>
+      expect((version as HTMLInputElement).value).toBe("1.4.1"),
+    );
+    await user.type(
+      within(dialog).getByRole("textbox", { name: /Changelog note/ }),
+      "A note",
+    );
+    const doc = documents.get(testProject.id);
+    act(() => doc.store.setState({ sending: 1 }));
+    const submit = within(dialog).getByRole("button", {
+      name: "Publish",
+    }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    expect(within(dialog).getByText(/still being saved/)).toBeDefined();
+    fireEvent.submit(submit.closest("form") as HTMLFormElement);
+    expect(callsOf(calls, "publishSnapshot")).toHaveLength(0);
+    act(() => doc.store.setState({ sending: 0 }));
+    expect(submit.disabled).toBe(false);
+    expect(within(dialog).queryByText(/still being saved/)).toBeNull();
+  });
+
+  it("does not call a project with releases new where the proposed version could not be read", async () => {
+    releasesPage({
+      next: () => {
+        throw refused(500, { code: "internal" });
+      },
+    });
+    await openReleases();
+    const dialog = await openDialog(userEvent.setup());
+    expect(
+      await within(dialog).findByText(/proposed version could not be read/),
+    ).toBeDefined();
+    expect(within(dialog).queryByText(/first release/)).toBeNull();
+  });
+
   it("suggests a major version where the diff removes content, and takes it", async () => {
     releasesPage({
       diff: () => diffOf({ summary: { ...diffOf().summary, removed: 2 } }),
@@ -636,6 +745,85 @@ describe("a release's read-only view", () => {
       path: { project_id: testProject.id, snapshot_id: newerId },
       query: { schema: 1 },
     });
+  });
+
+  it("gives a jumper's target the focus on its board", async () => {
+    releasesPage();
+    renderApp(`/projects/${testProject.id}/releases/${newerId}`, {
+      session: testSession,
+    });
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("link", { name: "Jumps to Summit on Tower" }),
+    );
+    await screen.findByText("The wind howls.");
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("article", { name: "Summit" }),
+      ),
+    );
+  });
+
+  it("spends no export on a read that failed as the window gets the focus again", async () => {
+    const calls = releasesPage({ zip: new Uint8Array(8) });
+    renderApp(`/projects/${testProject.id}/releases/${newerId}`, {
+      session: testSession,
+    });
+    await screen.findByText(
+      "This release could not be read here. Download its zip instead.",
+    );
+    try {
+      await act(async () => {
+        focusManager.setFocused(false);
+        focusManager.setFocused(true);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+    } finally {
+      focusManager.setFocused(undefined);
+    }
+    expect(callsOf(calls, "exportSnapshot")).toHaveLength(1);
+  });
+
+  it("spends no export on its files as the project is read again", async () => {
+    const calls = releasesPage();
+    const { queryClient } = renderApp(
+      `/projects/${testProject.id}/releases/${newerId}`,
+      { session: testSession },
+    );
+    await screen.findByText("Welcome to the harbour.");
+    await act(() => readProjectAgain(queryClient, testProject.id));
+    expect(callsOf(calls, "exportSnapshot")).toHaveLength(1);
+  });
+
+  it("lists the stored report by severity, with what is muted apart", async () => {
+    const stored = report([
+      warning({
+        code: "expr_invalid",
+        severity: "error",
+        message: "The condition does not compile.",
+      }),
+      warning({ entity_id: "nd_b", node_id: "nd_b" }),
+    ]);
+    releasesPage({
+      stored: () => ({
+        ...stored,
+        muted: [
+          warning({
+            entity_id: "nd_c",
+            node_id: "nd_c",
+            message: "A muted warning.",
+            mute: { reason: "Fine.", muted_at: "2026-11-14T10:00:00Z" },
+          }),
+        ],
+      }),
+    });
+    renderApp(`/projects/${testProject.id}/releases/${newerId}`, {
+      session: testSession,
+    });
+    await screen.findByRole("heading", { name: "Error (1)" });
+    expect(screen.getByRole("heading", { name: "Warning (1)" })).toBeDefined();
+    expect(screen.getByRole("heading", { name: "Muted (1)" })).toBeDefined();
+    expect(screen.getByText("Reason: Fine.")).toBeDefined();
   });
 
   it("says why a release that it cannot read is not shown", async () => {
@@ -800,6 +988,113 @@ describe("comparing releases", () => {
         ),
       ).toBe(true),
     );
+  });
+
+  it("shows no diff of the pair before while it reads the next", async () => {
+    let answer: () => Diff | Promise<Diff> = () => diffOf({ truncated: true });
+    let finish: (diff: Diff) => void = () => undefined;
+    releasesPage({ diff: () => answer() });
+    renderApp(
+      `/projects/${testProject.id}/releases/compare?from=${olderId}&to=${newerId}`,
+      { session: testSession },
+    );
+    await screen.findByText(/too large to list whole/);
+    answer = () =>
+      new Promise<Diff>((resolve) => {
+        finish = resolve;
+      });
+    const user = userEvent.setup();
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "To" }),
+      "draft",
+    );
+    expect(await screen.findByText("Comparing…")).toBeDefined();
+    expect(screen.queryByText(/too large to list whole/)).toBeNull();
+    await act(async () => finish(diffOf()));
+    expect(await screen.findByText("These two are the same.")).toBeDefined();
+  });
+
+  it("reads a comparison with the draft again as an operation applies", async () => {
+    const realtime = fakeRealtime();
+    const calls = releasesPage();
+    renderApp(
+      `/projects/${testProject.id}/releases/compare?from=${newerId}&to=draft`,
+      { session: testSession, realtime },
+    );
+    await screen.findByText("These two are the same.");
+    const before = callsOf(calls, "diffSnapshots").length;
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "node.update", payload: { id: "nd_a", title: "Greet" } }],
+        [{ id: "nd_a", rev: 2 }],
+      ),
+    );
+    await waitFor(() =>
+      expect(callsOf(calls, "diffSnapshots").length).toBe(before + 1),
+    );
+  });
+
+  it("names a side that no ready release is as what it is", async () => {
+    const gone = newId("snapshot");
+    releasesPage();
+    renderApp(
+      `/projects/${testProject.id}/releases/compare?from=${gone}&to=${newerId}`,
+      { session: testSession },
+    );
+    const from = (await screen.findByRole("combobox", {
+      name: "From",
+    })) as HTMLSelectElement;
+    expect(from.value).toBe(gone);
+    expect(from.selectedOptions[0].textContent).toBe(
+      "A release not listed here",
+    );
+  });
+
+  it("says so where a text's formatting alone changed", async () => {
+    releasesPage({
+      diff: () =>
+        diffOf({
+          summary: {
+            ...diffOf().summary,
+            modified: 1,
+            kinds: {
+              ...diffOf().summary.kinds,
+              node: { ...noCounts, modified: 1 },
+            },
+          },
+          boards: [
+            {
+              board: { id: harbourId, name: "Harbour", slug: "harbour" },
+              omitted: 0,
+              changes: [
+                {
+                  id: "nd_a",
+                  kind: "node",
+                  change: "modified",
+                  type: "element",
+                  title: "Greet",
+                  fields: [
+                    {
+                      field: "text",
+                      before: "Hello",
+                      after: "Hello",
+                      words: [{ op: "equal", text: "Hello" }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+    });
+    renderApp(
+      `/projects/${testProject.id}/releases/compare?from=${olderId}&to=${newerId}`,
+      { session: testSession },
+    );
+    expect(
+      await screen.findByText("Only its formatting or links changed."),
+    ).toBeDefined();
   });
 
   it("says so where there is nothing to compare", async () => {

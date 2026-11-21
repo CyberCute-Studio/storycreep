@@ -19,11 +19,7 @@ import {
   type Snapshot,
 } from "@storycreep/shared/api";
 import type { Manifest } from "@storycreep/shared/published";
-import {
-  keepPreviousData,
-  type QueryClient,
-  queryOptions,
-} from "@tanstack/react-query";
+import { type QueryClient, queryOptions } from "@tanstack/react-query";
 import { allAtOnce, api, everyPage, pagedQuery } from "../api";
 import { csrfHeaders } from "../auth/session";
 import { type ReleaseContent, readRelease } from "./content";
@@ -50,6 +46,11 @@ function snapshotsKey(projectId: string) {
 /** The key of what a publication changes: the lists, and the proposed version. */
 function listsKey(projectId: string) {
   return [...snapshotsKey(projectId), "lists"] as const;
+}
+
+/** The key of every diff into the draft, which the project's document has read again as operations apply (Follower). */
+export function draftDiffKey(projectId: string) {
+  return [...snapshotsKey(projectId), "draft-diff"] as const;
 }
 
 /** The project's snapshots, of every status, newest first, a page at a time. */
@@ -189,7 +190,10 @@ export function releaseContentQuery(projectId: string, snapshotId: string) {
       const bytes = new Uint8Array(await answer.body.arrayBuffer());
       return readRelease(await readZip(bytes));
     },
-    staleTime: Number.POSITIVE_INFINITY,
+    // Static, rather than an infinite staleTime, so that neither a focus of
+    // the window after a failed read, nor a change of the project's settings
+    // that reads the project again, spends another export on it.
+    staleTime: "static",
     gcTime: contentKept,
     // Each attempt that reaches the server counts as an export, so only one
     // that no answer came to is tried again, and never a zip that this
@@ -204,8 +208,8 @@ export const draft = "draft";
 
 /**
  * The entity diff of the release from into to, a release's ID or draft
- * (PRD FR-SNAP-04). A diff of two releases never changes; one into the
- * draft is of the draft as of seq, if the caller follows it, whose last
+ * (PRD FR-SNAP-04). A diff of two releases never changes; the project's
+ * document has one into the draft read again as operations apply, whose
  * answer stays while the next is read.
  */
 export function diffQuery(
@@ -213,10 +217,13 @@ export function diffQuery(
   from: string,
   to: string,
   session: SignedInBody | null,
-  seq?: number,
 ) {
+  const queryKey: readonly unknown[] =
+    to === draft
+      ? [...draftDiffKey(projectId), from]
+      : [...snapshotsKey(projectId), "diff", from, to];
   return queryOptions({
-    queryKey: [...snapshotsKey(projectId), "diff", from, to, seq] as const,
+    queryKey,
     queryFn: async ({ signal }): Promise<Diff> =>
       (
         await api.call(
@@ -229,10 +236,49 @@ export function diffQuery(
           { signal },
         )
       ).body,
-    staleTime: to === draft ? 0 : Number.POSITIVE_INFINITY,
-    placeholderData: to === draft ? keepPreviousData : undefined,
+    staleTime: to === draft ? 0 : "static",
     meta: { showsRefusals: true },
   });
+}
+
+/**
+ * Returns the two sides that the compare page shows, of those that its
+ * address names and the project's ready releases, newest first: a side that
+ * it leaves out is the release next to the other, so that a release alone
+ * compares with the one before it, or into the draft if it is the newest,
+ * and the draft from the newest. With neither, the newest two, or the only
+ * release and the draft.
+ */
+export function comparedPair(
+  ready: readonly Pick<Snapshot, "id">[],
+  from: string | undefined,
+  to: string | undefined,
+): { from: string | undefined; to: string } {
+  if (from !== undefined) {
+    if (to !== undefined) {
+      return { from, to };
+    }
+    const at = ready.findIndex((s) => s.id === from);
+    return { from, to: at > 0 ? ready[at - 1].id : draft };
+  }
+  if (to === undefined) {
+    return {
+      from: ready[1]?.id ?? ready[0]?.id,
+      to: ready.length > 1 ? ready[0].id : draft,
+    };
+  }
+  if (to === draft) {
+    return { from: ready[0]?.id, to };
+  }
+  const at = ready.findIndex((s) => s.id === to);
+  if (at < 0) {
+    return { from: ready[0]?.id, to };
+  }
+  // The oldest has none before it, and compares into the draft.
+  const before = ready[at + 1];
+  return before === undefined
+    ? { from: to, to: draft }
+    : { from: before.id, to };
 }
 
 /** Publishes the draft as a release, answered with its snapshot, building. */

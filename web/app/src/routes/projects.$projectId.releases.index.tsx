@@ -1,15 +1,21 @@
 import type { Snapshot } from "@storycreep/shared/api";
 import {
+  useQueryClient,
   useSuspenseInfiniteQuery,
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { publishes } from "../content/deletion";
 import { projectQuery } from "../project/queries";
 import { PublishButton } from "../releases/PublishDialog";
-import { buildPoll, draft, releasesQuery } from "../releases/queries";
+import {
+  buildPoll,
+  draft,
+  readReleasesAgain,
+  releasesQuery,
+} from "../releases/queries";
 import {
   DownloadButton,
   ReleaseFacts,
@@ -50,6 +56,22 @@ function Releases() {
         : false,
   });
   const releases = list.data.pages.flatMap((page) => page.items);
+  // A build that ends changes what the other lists say, as the newest ready
+  // release, which the publish dialog's suggestion compares with.
+  const client = useQueryClient();
+  const buildingKey = releases
+    .filter((s) => s.status === "building")
+    .map((s) => s.id)
+    .join(" ");
+  const wasBuilding = useRef(buildingKey);
+  useEffect(() => {
+    const before = wasBuilding.current;
+    wasBuilding.current = buildingKey;
+    const now = buildingKey.split(" ");
+    if (before !== "" && before.split(" ").some((id) => !now.includes(id))) {
+      void readReleasesAgain(client, projectId);
+    }
+  }, [buildingKey, client, projectId]);
   const [published, setPublished] = useState<Snapshot>();
   const watched =
     published === undefined
@@ -84,6 +106,7 @@ function Releases() {
               projectId={projectId}
               release={release}
               previous={releases.slice(i + 1).find((s) => s.status === "ready")}
+              olderUnread={list.hasNextPage}
             />
           ))}
         </ul>
@@ -93,15 +116,18 @@ function Releases() {
   );
 }
 
-/** A release of the list, whose diff compares it with previous, the ready one before it, or else with the draft. */
+/** A release of the list, whose diff compares it with previous, the ready one before it, with the one that the compare page finds before it while older pages are unread, or else with the draft. */
 function ReleaseRow({
   projectId,
   release,
   previous,
+  olderUnread,
 }: {
   projectId: string;
   release: Snapshot;
   previous: Snapshot | undefined;
+  /** Whether the list has older releases that it has not read. */
+  olderUnread: boolean;
 }) {
   const { t } = useTranslation();
   const params = { projectId };
@@ -127,19 +153,25 @@ function ReleaseRow({
               to="/projects/$projectId/releases/compare"
               params={params}
               search={
-                previous === undefined
-                  ? { from: release.id, to: draft }
-                  : { from: previous.id, to: release.id }
+                previous !== undefined
+                  ? { from: previous.id, to: release.id }
+                  : olderUnread
+                    ? { to: release.id }
+                    : { from: release.id, to: draft }
               }
               aria-label={
-                previous === undefined
-                  ? t("releases.compare_draft_of", {
-                      version: release.version,
-                    })
-                  : t("releases.compare_of", {
+                previous !== undefined
+                  ? t("releases.compare_of", {
                       version: release.version,
                       previous: previous.version,
                     })
+                  : olderUnread
+                    ? t("releases.compare_earlier_of", {
+                        version: release.version,
+                      })
+                    : t("releases.compare_draft_of", {
+                        version: release.version,
+                      })
               }
               className={buttonClass()}
             >

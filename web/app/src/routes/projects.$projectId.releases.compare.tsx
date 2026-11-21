@@ -5,7 +5,12 @@ import { sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { projectQuery } from "../project/queries";
 import { DiffView } from "../releases/DiffView";
-import { diffQuery, draft, readyReleasesQuery } from "../releases/queries";
+import {
+  comparedPair,
+  diffQuery,
+  draft,
+  readyReleasesQuery,
+} from "../releases/queries";
 import { found, searchId } from "../shell/found";
 import { SelectField } from "../ui/Field";
 import { Alert, Page, textLink } from "../ui/Page";
@@ -36,8 +41,8 @@ export const Route = createFileRoute("/projects/$projectId/releases/compare")({
 
 // The web diff of two of a project's releases, or of one and the draft (PRD
 // FR-SNAP-04, J4, plan note N88), which the address names, so that a link
-// reaches it, and which it picks otherwise: the newest release from the one
-// before it, or, of a project with one, from it into the draft.
+// reaches it, and which it picks otherwise (comparedPair): a side that the
+// address leaves out is the release next to the other.
 function Compare() {
   const { t } = useTranslation();
   const { projectId } = Route.useParams();
@@ -46,8 +51,7 @@ function Compare() {
   const project = useSuspenseQuery(projectQuery(projectId)).data;
   const session = useSuspenseQuery(sessionQuery).data;
   const ready = useSuspenseQuery(readyReleasesQuery(projectId)).data;
-  const from = search.from ?? ready[1]?.id ?? ready[0]?.id;
-  const to = search.to ?? (ready.length > 1 ? ready[0].id : draft);
+  const { from, to } = comparedPair(ready, search.from, search.to);
   const diff = useQuery({
     ...diffQuery(projectId, from ?? "", to, session),
     enabled: from !== undefined,
@@ -62,6 +66,12 @@ function Compare() {
       {release.version}
     </option>
   ));
+  // A side that the address names and no ready release is, as one since
+  // deleted, is shown as what it is, rather than as the select's first.
+  const unlisted = (id: string) =>
+    id === draft || ready.some((release) => release.id === id) ? null : (
+      <option value={id}>{t("releases.compare.unlisted")}</option>
+    );
   return (
     <Page
       title={t("releases.compare.title")}
@@ -89,6 +99,7 @@ function Compare() {
               value={from}
               onChange={(event) => choose("from", event.target.value)}
             >
+              {unlisted(from)}
               {options}
             </SelectField>
             <SelectField
@@ -96,6 +107,7 @@ function Compare() {
               value={to}
               onChange={(event) => choose("to", event.target.value)}
             >
+              {unlisted(to)}
               {options}
               <option value={draft}>{t("releases.compare.draft")}</option>
             </SelectField>

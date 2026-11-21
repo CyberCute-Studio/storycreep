@@ -2,7 +2,14 @@ import type { Diff, EntityChange } from "@storycreep/shared/api";
 import { describe, expect, it } from "vitest";
 import { releaseFiles, zipOf } from "../test/release";
 import { readRelease } from "./content";
-import { majorChanges, majorOf, nextMajor, versionPattern } from "./queries";
+import {
+  comparedPair,
+  draft,
+  majorChanges,
+  majorOf,
+  nextMajor,
+  versionPattern,
+} from "./queries";
 import { readZip } from "./zip";
 
 // What the pages of a project's releases read of a release's zip, and what
@@ -138,6 +145,44 @@ const change = (field: string): EntityChange => ({
   kind: "variable",
   change: "modified",
   fields: [{ field, before: "int", after: "string" }],
+});
+
+describe("comparedPair", () => {
+  // Newest first.
+  const ready = [{ id: "c" }, { id: "b" }, { id: "a" }];
+
+  it("picks the newest two, or the only release and the draft", () => {
+    expect(comparedPair(ready, undefined, undefined)).toEqual({
+      from: "b",
+      to: "c",
+    });
+    expect(comparedPair([{ id: "a" }], undefined, undefined)).toEqual({
+      from: "a",
+      to: draft,
+    });
+    expect(comparedPair([], undefined, undefined).from).toBeUndefined();
+  });
+
+  it("keeps both sides that the address names", () => {
+    expect(comparedPair(ready, "a", "c")).toEqual({ from: "a", to: "c" });
+  });
+
+  it("compares a from alone into the release after it, or the newest into the draft", () => {
+    expect(comparedPair(ready, "a", undefined).to).toBe("b");
+    expect(comparedPair(ready, "c", undefined).to).toBe(draft);
+  });
+
+  it("compares a to alone from the release before it, and the draft from the newest", () => {
+    expect(comparedPair(ready, undefined, "c").from).toBe("b");
+    expect(comparedPair(ready, undefined, draft).from).toBe("c");
+  });
+
+  it("compares the oldest, named as to alone, into the draft", () => {
+    expect(comparedPair(ready, undefined, "a")).toEqual({
+      from: "a",
+      to: draft,
+    });
+  });
 });
 
 describe("majorChanges", () => {
