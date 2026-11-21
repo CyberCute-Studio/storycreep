@@ -1350,6 +1350,7 @@
   "releases.publish.counts": "{errors, plural, one {# error} other {# errors}}, {warnings, plural, one {# warning} other {# warnings}}",
   "releases.publish.major_suggested": "This draft removes content or retypes a variable. Consider the major version {major}.",
   "releases.publish.major_unsure": "Too many variables changed to tell whether one was retyped. Consider whether this needs a major version.",
+  "releases.publish.may_have_published": "{reason} The release may have been published all the same, so check the list before you publish again.",
   "releases.publish.no_diff": "The draft could not be compared with the last release, so no version is suggested.",
   "releases.publish.note": "Changelog note",
   "releases.publish.note_hint": "Required, up to {max, number} characters.",

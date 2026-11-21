@@ -154,7 +154,7 @@ export function ReleaseView({
                       replace
                       resetScroll={false}
                       aria-current={b.id === board.id ? "page" : undefined}
-                      className={`inline-flex min-h-11 items-center rounded-md border border-border px-3 hover:bg-surface-hover ${
+                      className={`inline-flex min-h-11 items-center rounded-md border border-border px-3 wrap-anywhere hover:bg-surface-hover ${
                         b.id === board.id ? currentClass : ""
                       }`}
                     >
@@ -331,7 +331,7 @@ function NodeEntry({
         <ul className="space-y-2">
           {node.outputs.map((output) => (
             <li key={output.id} className="space-y-1">
-              <p className="font-medium">
+              <p className="font-medium break-words">
                 {output.kind === "else" ? (
                   t("releases.view.else")
                 ) : (
@@ -339,7 +339,10 @@ function NodeEntry({
                     {output.kind === "if"
                       ? t("releases.view.if")
                       : t("releases.view.elseif")}{" "}
-                    <code className="font-mono">{output.condition.source}</code>
+                    {/* On its own lines, since a line break ends a comment. */}
+                    <code className="font-mono whitespace-pre-wrap">
+                      {output.condition.source}
+                    </code>
                   </>
                 )}
               </p>

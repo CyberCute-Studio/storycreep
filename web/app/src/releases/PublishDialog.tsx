@@ -416,7 +416,16 @@ function PublishForm({
           overtaken ||
           answered === publish.error
             ? undefined
-            : { ...refusal, fields: {} }
+            : {
+                ...refusal,
+                // The list behind the dialog shows a release that was made.
+                message: mayHavePublished(publish.error)
+                  ? t("releases.publish.may_have_published", {
+                      reason: refusal.message,
+                    })
+                  : refusal.message,
+                fields: {},
+              }
         }
       />
       <Status message={saving ? t("releases.publish.saving") : undefined} />

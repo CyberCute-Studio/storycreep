@@ -310,6 +310,55 @@ test.describe("a project's releases", () => {
     expect(commands).toEqual([]);
   });
 
+  // A line break ends a condition's comment, so a condition shown on one
+  // line would read what follows its comment as part of the comment.
+  // Verifies: FR-SNAP-02/AC2
+  test("keeps a branch condition's lines, and long names within a narrow page, in the view", async ({
+    page,
+  }) => {
+    const story = await makeStory(page, "Reader");
+    const fork = newId("node");
+    const output = newId("branch_output");
+    const longName = "Lighthouse".repeat(10);
+    await apply(page.request, story.session, story.projectId, [
+      { type: "board.create", payload: { id: newId("board"), name: longName } },
+      {
+        type: "node.create",
+        payload: {
+          id: fork,
+          board_id: story.boardId,
+          type: "branch",
+          title: "Fork",
+          position: { x: 0, y: 320 },
+        },
+      },
+      { type: "branch_output.create", payload: { id: output, node_id: fork } },
+      {
+        type: "branch_output.update",
+        payload: {
+          id: output,
+          condition: `gold > 0 // ${"because".repeat(30)}\n  && gold < 9`,
+        },
+      },
+    ]);
+    const release = await publishByApi(page, story, "1.0.0");
+    await page.setViewportSize({ width: 375, height: 800 });
+    await page.goto(`/app/projects/${story.projectId}/releases/${release}`);
+    const condition = page.locator("code", { hasText: "&& gold < 9" });
+    await expect(condition).toBeVisible();
+    expect(
+      await condition.evaluate((code) => getComputedStyle(code).whiteSpace),
+    ).toBe("pre-wrap");
+    for (const shown of [
+      condition,
+      page.getByRole("link", { name: longName }),
+    ]) {
+      const box = await shown.boundingBox();
+      expect(box).not.toBeNull();
+      expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(375);
+    }
+  });
+
   // Verifies: FR-DEP-04/AC1
   test("does not publish a draft with an error", async ({ page }) => {
     const story = await makeStory(page, "Blocked", "gold >");

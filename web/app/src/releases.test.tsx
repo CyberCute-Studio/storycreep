@@ -839,6 +839,10 @@ describe("publishing a release", () => {
         reads,
       ),
     );
+    // It may have been published, which the author is told before trying again.
+    expect(
+      await within(dialog).findByText(/may have been published all the same/),
+    ).toBeDefined();
   });
 
   it("holds what it sent until the server answers, and marks the note refused", async () => {
