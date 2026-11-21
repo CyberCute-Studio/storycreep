@@ -28,7 +28,7 @@ import { useTranslation } from "react-i18next";
 import { sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { useDocumentState, useProjectDocument } from "../document/react";
-import { Button } from "../ui/Button";
+import { Button, LastingButton } from "../ui/Button";
 import { closesUnlessPending, DialogFrame, FormButtons } from "../ui/Dialog";
 import {
   CheckboxField,
@@ -175,6 +175,9 @@ function PublishForm({
   const [note, setNote] = useState("");
   const [ackedKey, setAckedKey] = useState<string>();
   const [problems, setProblems] = useState<Problems>();
+  // The refusal whose alert an edit has answered, which the fields' own
+  // errors outlast for as long as they hold what was refused.
+  const [answered, setAnswered] = useState<Error | null>(null);
   const form = useRef<HTMLFormElement>(null);
   const versionField = useRef<HTMLInputElement>(null);
   useFocusRefusal(form, publish.error);
@@ -204,24 +207,28 @@ function PublishForm({
         ? "note"
         : undefined,
   );
-  // That the version is not newer is about the version's field, only while
-  // it holds the version refused, which the author may have changed while
-  // the request was under way.
+  // A refusal of the version holds while its field holds the version refused,
+  // whatever else the author edits meanwhile.
   const refusedCode = codeOf(publish.error);
   const notNewer = refusedCode === "version_not_newer";
-  const refusedVersion = notNewer
-    ? publish.variables?.version === version
-      ? (refusal?.fields.version ?? refusal?.message)
-      : undefined
-    : refusal?.fields.version;
-  // That the report stood in the way is over once a newer report has come,
-  // which lists what the server found, or shows that it has gone.
+  const refusedVersion =
+    publish.variables?.version === version
+      ? (refusal?.fields.version ?? (notNewer ? refusal?.message : undefined))
+      : undefined;
+  // That the report stood in the way is over once a newer report has come
+  // that is as of the draft that the server refused, which lists what it
+  // found, or shows that it has gone.
+  const refusedSeq =
+    publish.error instanceof ApiError
+      ? publish.error.error?.details?.seq
+      : undefined;
   const overtaken =
     (refusedCode === "publish_blocked" ||
       refusedCode === "warnings_unacknowledged") &&
     report.data !== undefined &&
     publish.variables !== undefined &&
-    report.data.seq > publish.variables.acknowledged_seq;
+    report.data.seq > publish.variables.acknowledged_seq &&
+    (typeof refusedSeq !== "number" || report.data.seq >= refusedSeq);
   // What the form found of the version holds while the field holds no
   // version, which a proposal that arrives after the attempt may fill.
   const versionProblem = versionPattern.test(version)
@@ -271,14 +278,9 @@ function PublishForm({
       acknowledged_warnings: warnings.map(acknowledgementOf),
     });
   };
-  const clearRefusal = () => {
-    if (!publish.isPending) {
-      publish.reset();
-    }
-  };
   const edited = () => {
     setProblems(undefined);
-    clearRefusal();
+    setAnswered(publish.error);
   };
   const latest = proposal.data?.latest_version;
   return (
@@ -326,11 +328,16 @@ function PublishForm({
                       count: warnings.length,
                     })}
                     checked={acknowledged}
+                    // Not disabled, which would take the focus from it.
+                    aria-disabled={publish.isPending || undefined}
                     onChange={(event) => {
+                      if (publish.isPending) {
+                        return;
+                      }
                       setAckedKey(
                         event.target.checked ? warningsKey : undefined,
                       );
-                      clearRefusal();
+                      setAnswered(publish.error);
                     }}
                     hint={
                       ackOutdated
@@ -359,6 +366,8 @@ function PublishForm({
         }
         error={versionError}
         value={version}
+        // What was sent stays what the form shows until the server answers.
+        readOnly={publish.isPending}
         autoComplete="off"
         spellCheck={false}
         onChange={(event) => {
@@ -371,6 +380,7 @@ function PublishForm({
           projectId={projectId}
           latest={latest}
           version={version}
+          pending={publish.isPending}
           onUse={(major) => {
             setTypedVersion(major);
             edited();
@@ -384,6 +394,7 @@ function PublishForm({
         hint={t("releases.publish.note_hint", { max: maxNote })}
         error={noteError}
         value={note}
+        readOnly={publish.isPending}
         required
         onChange={(event) => {
           setNote(event.target.value);
@@ -392,7 +403,10 @@ function PublishForm({
       />
       <RefusalAlert
         refusal={
-          refusal === undefined || notNewer || overtaken
+          refusal === undefined ||
+          notNewer ||
+          overtaken ||
+          answered === publish.error
             ? undefined
             : { ...refusal, fields: {} }
         }
@@ -446,18 +460,23 @@ const FindingLines = memo(function FindingLines({
  * §7.3): a suggestion alone, since a version has no automatic meaning, which
  * goes once the version typed is of a greater major than latest's, and
  * which says so where it could not read the diff, rather than say nothing
- * of a draft that may well need it.
+ * of a draft that may well need it. While a newer release is building it
+ * suggests nothing, as the diff would count what that release changed as
+ * the draft's.
  */
 function MajorSuggestion({
   projectId,
   latest,
   version,
+  pending,
   onUse,
 }: {
   projectId: string;
   /** The newest version of the project's releases, building or ready. */
   latest: string;
   version: string;
+  /** Whether a publication is under way, which holds the version sent. */
+  pending: boolean;
   onUse: (major: string) => void;
 }) {
   const { t } = useTranslation();
@@ -465,6 +484,10 @@ function MajorSuggestion({
   const doc = useProjectDocument(projectId);
   const release = useQuery(latestReleaseQuery(projectId));
   const from = release.data?.id;
+  const building =
+    release.data !== undefined &&
+    release.data !== null &&
+    release.data.version !== latest;
   const diff = useQuery({
     ...diffQuery(doc, from ?? "", draft, session),
     // Once the newest release has been read, since the one kept from before
@@ -474,6 +497,7 @@ function MajorSuggestion({
     enabled: (query) =>
       query.state.status !== "error" &&
       from !== undefined &&
+      !building &&
       release.isSuccess &&
       !release.isFetching,
   });
@@ -481,6 +505,7 @@ function MajorSuggestion({
   const typedMajor = majorOf(version);
   const latestMajor = majorOf(latest);
   const moot =
+    building ||
     major === undefined ||
     (typedMajor !== undefined &&
       latestMajor !== undefined &&
@@ -516,9 +541,9 @@ function MajorSuggestion({
         }
       />
       {offered !== undefined && (
-        <Button onClick={() => onUse(offered)}>
+        <LastingButton unavailable={pending} onClick={() => onUse(offered)}>
           {t("releases.publish.use_version", { version: offered })}
-        </Button>
+        </LastingButton>
       )}
     </div>
   );

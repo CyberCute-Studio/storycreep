@@ -6,18 +6,13 @@
 // control that changes anything and no part that sends a command, so that
 // nothing here can emit one.
 
-import type {
-  Connection,
-  Node,
-  Segment,
-  Variable,
-} from "@storycreep/shared/published";
+import type { Connection, Node, Segment } from "@storycreep/shared/published";
 import { Link } from "@tanstack/react-router";
 import type { TFunction } from "i18next";
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { nodeTitleText } from "../content/textNames";
-import { typeName } from "../content/ValueField";
+import { typeName, valueText } from "../content/ValueField";
 import { marked } from "../script/RichText";
 import { Button, currentClass } from "../ui/Button";
 import { textLink } from "../ui/Page";
@@ -411,11 +406,6 @@ function Choices({
   );
 }
 
-/** Returns a variable's default, or a component's value, as text. */
-function valueText(value: Variable["default"]): string {
-  return typeof value === "string" ? value : JSON.stringify(value);
-}
-
 function VariablesList({ content }: { content: ReleaseContent }) {
   const { t } = useTranslation();
   const { items, rest, more } = useShown(content.variables);
@@ -439,7 +429,7 @@ function VariablesList({ content }: { content: ReleaseContent }) {
               <code className="font-mono">{variable.key}</code>
               <span className="text-fg-muted">
                 {" · "}
-                {variable.type}
+                {typeName(t, variable.type)}
                 {" · "}
                 {variable.scope === "board"
                   ? t("releases.view.scope_board", {
@@ -450,7 +440,7 @@ function VariablesList({ content }: { content: ReleaseContent }) {
             </p>
             <p className="break-words text-fg-muted">
               {t("releases.view.default", {
-                value: valueText(variable.default),
+                value: valueText(t, variable.default),
               })}
             </p>
             {variable.scope === "board" && (
@@ -507,7 +497,7 @@ function ComponentTypesList({ content }: { content: ReleaseContent }) {
                     <p className="break-words whitespace-pre-wrap text-fg-muted">
                       {t("component_type.attribute_detail", {
                         type: typeName(t, attribute.type),
-                        default: valueText(attribute.default),
+                        default: valueText(t, attribute.default),
                         runtime: attribute.runtime ? "yes" : "no",
                       })}
                     </p>
@@ -569,7 +559,7 @@ function ComponentsList({ content }: { content: ReleaseContent }) {
                         {attribute.name}
                       </dt>
                       <dd className="break-words whitespace-pre-wrap">
-                        {valueText(component.attributes[attribute.id])}
+                        {valueText(t, component.attributes[attribute.id])}
                       </dd>
                     </div>
                   ))}

@@ -806,7 +806,7 @@ describe("publishing a release", () => {
     );
   });
 
-  it("does not mark a note changed since the one that the server refused", async () => {
+  it("holds what it sent until the server answers, and marks the note refused", async () => {
     let refuse: () => void = () => undefined;
     const answer = new Promise<never>((_, reject) => {
       refuse = () =>
@@ -822,17 +822,23 @@ describe("publishing a release", () => {
           }),
         );
     });
-    releasesPage({ publish: () => answer as never });
+    releasesPage({
+      publish: () => answer as never,
+      diff: () => diffOf({ summary: { ...diffOf().summary, removed: 1 } }),
+    });
     await openReleases();
     const user = userEvent.setup();
     const dialog = await openDialog(user);
-    const version = within(dialog).getByRole("textbox", { name: /Version/ });
-    await waitFor(() =>
-      expect((version as HTMLInputElement).value).toBe("1.4.1"),
-    );
+    const version = within(dialog).getByRole("textbox", {
+      name: /Version/,
+    }) as HTMLInputElement;
+    await waitFor(() => expect(version.value).toBe("1.4.1"));
+    const use = await within(dialog).findByRole("button", {
+      name: "Use 2.0.0",
+    });
     const note = within(dialog).getByRole("textbox", {
       name: /Changelog note/,
-    });
+    }) as HTMLTextAreaElement;
     await user.type(note, "A note");
     const submit = within(dialog).getByRole("button", {
       name: "Publish",
@@ -840,10 +846,66 @@ describe("publishing a release", () => {
     await user.click(submit);
     await waitFor(() => expect(submit.disabled).toBe(true));
     await user.type(note, " mended");
+    await user.type(version, "9");
+    await user.click(use);
+    expect(note.value).toBe("A note");
+    expect(version.value).toBe("1.4.1");
     await act(async () => refuse());
     await waitFor(() => expect(submit.disabled).toBe(false));
-    expect(note.getAttribute("aria-invalid")).not.toBe("true");
-    expect(within(dialog).queryByText(/control character/)).toBeNull();
+    expect(note.getAttribute("aria-invalid")).toBe("true");
+    expect(within(dialog).getByText(/control character/)).toBeDefined();
+  });
+
+  it("keeps a refusal of the version through an edit of the note", async () => {
+    releasesPage({
+      publish: () => {
+        throw refused(409, notNewerBody);
+      },
+    });
+    await openReleases();
+    const user = userEvent.setup();
+    const dialog = await openDialog(user);
+    const version = within(dialog).getByRole("textbox", {
+      name: /Version/,
+    }) as HTMLInputElement;
+    await waitFor(() => expect(version.value).toBe("1.4.1"));
+    const note = within(dialog).getByRole("textbox", {
+      name: /Changelog note/,
+    });
+    await user.type(note, "A note");
+    await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+    await waitFor(() =>
+      expect(version.getAttribute("aria-invalid")).toBe("true"),
+    );
+    await user.type(note, " more");
+    expect(version.getAttribute("aria-invalid")).toBe("true");
+    expect(within(dialog).getByText(/is not greater/i)).toBeDefined();
+  });
+
+  it("suggests nothing while a newer release is building", async () => {
+    const calls = releasesPage({
+      list: () => [
+        snapshot({
+          id: newId("snapshot"),
+          status: "building",
+          version: "2.0.0",
+          counts: undefined,
+        }),
+        newer,
+        older,
+      ],
+      next: () => ({ version: "2.0.1", latest_version: "2.0.0" }),
+      diff: () => diffOf({ summary: { ...diffOf().summary, removed: 1 } }),
+    });
+    await openReleases();
+    const dialog = await openDialog(userEvent.setup());
+    const version = within(dialog).getByRole("textbox", {
+      name: /Version/,
+    }) as HTMLInputElement;
+    await waitFor(() => expect(version.value).toBe("2.0.1"));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(callsOf(calls, "diffSnapshots")).toHaveLength(0);
+    expect(within(dialog).queryByRole("button", { name: /^Use / })).toBeNull();
   });
 
   it("says anew that a build started when the same version is published again", async () => {
@@ -1107,6 +1169,50 @@ describe("publishing a release", () => {
     await waitFor(() => expect(alerts()).toBe(""));
   });
 
+  it("keeps a refusal of the report until a report as of what it refused has come", async () => {
+    let current = report([]);
+    releasesPage({
+      validation: () => current,
+      publish: () => {
+        throw refused(409, {
+          code: "warnings_unacknowledged",
+          message: "The draft has new warnings.",
+          details: { seq: 9, findings: [] },
+        });
+      },
+    });
+    const { queryClient } = await openReleases();
+    const user = userEvent.setup();
+    const dialog = await openDialog(user);
+    const version = within(dialog).getByRole("textbox", {
+      name: /Version/,
+    }) as HTMLInputElement;
+    await waitFor(() => expect(version.value).toBe("1.4.1"));
+    await user.type(
+      within(dialog).getByRole("textbox", { name: /Changelog note/ }),
+      "A note",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+    const alerts = () =>
+      within(dialog)
+        .getAllByRole("alert")
+        .map((alert) => alert.textContent)
+        .join("");
+    await waitFor(() => expect(alerts()).not.toBe(""));
+    const readAgain = () =>
+      act(() =>
+        queryClient.invalidateQueries({
+          queryKey: validationKey(testProject.id),
+        }),
+      );
+    current = report([], 8);
+    await readAgain();
+    expect(alerts()).not.toBe("");
+    current = report([], 9);
+    await readAgain();
+    await waitFor(() => expect(alerts()).toBe(""));
+  });
+
   it("drops its complaint of an empty version once the proposal fills the field", async () => {
     let answer: (proposal: unknown) => void = () => {};
     const proposal = new Promise((resolve) => {
@@ -1136,7 +1242,10 @@ describe("publishing a release", () => {
 
   it("compares with the newest ready release rather than the one that it kept", async () => {
     let list = [older];
-    const calls = releasesPage({ list: () => list });
+    const calls = releasesPage({
+      list: () => list,
+      next: () => ({ version: "1.4.1", latest_version: list[0].version }),
+    });
     const { queryClient } = await openReleases();
     const user = userEvent.setup();
     const first = await openDialog(user);
