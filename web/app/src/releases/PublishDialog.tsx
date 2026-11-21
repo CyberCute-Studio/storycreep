@@ -186,14 +186,29 @@ function PublishForm({
   );
   // That the version is not newer is about the version's field, only while
   // it holds the version refused, which a proposal read again may replace.
-  const notNewer = codeOf(publish.error) === "version_not_newer";
+  const refusedCode = codeOf(publish.error);
+  const notNewer = refusedCode === "version_not_newer";
   const refusedVersion = notNewer
     ? publish.variables?.version === version
       ? (refusal?.fields.version ?? refusal?.message)
       : undefined
     : refusal?.fields.version;
-  const versionError = problems?.version ?? refusedVersion;
+  // That the report stood in the way is over once a newer report has come,
+  // which lists what the server found, or shows that it has gone.
+  const overtaken =
+    (refusedCode === "publish_blocked" ||
+      refusedCode === "warnings_unacknowledged") &&
+    report.data !== undefined &&
+    publish.variables !== undefined &&
+    report.data.seq > publish.variables.acknowledged_seq;
+  // What the form found of the version holds while the field holds no
+  // version, which a proposal that arrives after the attempt may fill.
+  const versionProblem = versionPattern.test(version)
+    ? undefined
+    : problems?.version;
+  const versionError = versionProblem ?? refusedVersion;
   const noteError = problems?.note ?? refusal?.fields.note;
+  const reportFailure = refusalOf(report.error, t)?.message;
 
   const ready = report.data !== undefined && errors.length === 0;
   const onSubmit = (event: FormEvent) => {
@@ -243,9 +258,11 @@ function PublishForm({
         {report.isPending && <p>{t("releases.publish.checking")}</p>}
         <Alert
           message={
-            report.data === undefined
-              ? refusalOf(report.error, t)?.message
-              : undefined
+            reportFailure === undefined || report.data === undefined
+              ? reportFailure
+              : t("releases.publish.report_outdated", {
+                  reason: reportFailure,
+                })
           }
         />
         {report.data !== undefined && (
@@ -342,7 +359,7 @@ function PublishForm({
       />
       <RefusalAlert
         refusal={
-          refusal === undefined || notNewer
+          refusal === undefined || notNewer || overtaken
             ? undefined
             : { ...refusal, fields: {} }
         }
@@ -417,7 +434,9 @@ function MajorSuggestion({
   const from = release.data?.id;
   const diff = useQuery({
     ...diffQuery(doc, from ?? "", draft, session),
-    enabled: from !== undefined,
+    // Once the newest release has been read, since the one kept from before
+    // may be older, and each diff counts in the rate limit of writes.
+    enabled: from !== undefined && release.isSuccess && !release.isFetching,
   });
   const major = nextMajor(latest);
   const typedMajor = majorOf(version);

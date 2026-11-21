@@ -327,7 +327,7 @@ function Fields({ fields }: { fields: readonly FieldChange[] }) {
                 <Words runs={field.words} />
                 {field.words.every((run) => run.op === "equal") && (
                   <span className="block text-fg-muted">
-                    {t("releases.diff.formatting_only")}
+                    {t("releases.diff.same_words")}
                   </span>
                 )}
               </>

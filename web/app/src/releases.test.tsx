@@ -17,6 +17,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { readProjectAgain } from "./project/queries";
+import { readReleasesAgain } from "./releases/queries";
 import { renderApp, testSession } from "./test/app";
 import { fakeApi, refused, startPage, testProject } from "./test/fake";
 import { fakeRealtime } from "./test/realtime";
@@ -815,6 +816,128 @@ describe("publishing a release", () => {
     );
     expect(within(dialog).queryByText(/is not greater/i)).toBeNull();
   });
+
+  it("says that the report may be out of date where reading it again failed", async () => {
+    const blocking = warning({ code: "jumper_broken", severity: "error" });
+    let fails = false;
+    releasesPage({
+      validation: () => {
+        if (fails) {
+          throw refused(429, { code: "rate_limited" });
+        }
+        return report([blocking]);
+      },
+    });
+    const { queryClient } = await openReleases();
+    const dialog = await openDialog(userEvent.setup());
+    expect(within(dialog).queryByText(/may be out of date/)).toBeNull();
+    fails = true;
+    await act(() =>
+      queryClient.invalidateQueries({
+        queryKey: validationKey(testProject.id),
+      }),
+    );
+    expect(await within(dialog).findByText(/may be out of date/)).toBeDefined();
+    expect(within(dialog).getByText(blocking.message)).toBeDefined();
+    fails = false;
+    await act(() =>
+      queryClient.invalidateQueries({
+        queryKey: validationKey(testProject.id),
+      }),
+    );
+    await waitFor(() =>
+      expect(within(dialog).queryByText(/may be out of date/)).toBeNull(),
+    );
+  });
+
+  it("drops a refusal of the report once a newer report has come", async () => {
+    let current = report([]);
+    releasesPage({
+      validation: () => current,
+      publish: () => {
+        throw refused(409, {
+          code: "publish_blocked",
+          message: "The draft has errors.",
+        });
+      },
+    });
+    const { queryClient } = await openReleases();
+    const user = userEvent.setup();
+    const dialog = await openDialog(user);
+    const version = within(dialog).getByRole("textbox", {
+      name: /Version/,
+    }) as HTMLInputElement;
+    await waitFor(() => expect(version.value).toBe("1.4.1"));
+    await user.type(
+      within(dialog).getByRole("textbox", { name: /Changelog note/ }),
+      "A note",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+    const alerts = () =>
+      within(dialog)
+        .getAllByRole("alert")
+        .map((alert) => alert.textContent)
+        .join("");
+    await waitFor(() => expect(alerts()).not.toBe(""));
+    current = report([], 8);
+    await act(() =>
+      queryClient.invalidateQueries({
+        queryKey: validationKey(testProject.id),
+      }),
+    );
+    await waitFor(() => expect(alerts()).toBe(""));
+  });
+
+  it("drops its complaint of an empty version once the proposal fills the field", async () => {
+    let answer: (proposal: unknown) => void = () => {};
+    const proposal = new Promise((resolve) => {
+      answer = resolve;
+    });
+    releasesPage({ next: () => proposal });
+    await openReleases();
+    const user = userEvent.setup();
+    const dialog = await openDialog(user);
+    const version = within(dialog).getByRole("textbox", {
+      name: /Version/,
+    }) as HTMLInputElement;
+    await user.type(
+      within(dialog).getByRole("textbox", { name: /Changelog note/ }),
+      "A note",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+    await waitFor(() =>
+      expect(version.getAttribute("aria-invalid")).toBe("true"),
+    );
+    await act(async () => {
+      answer({ version: "1.4.1", latest_version: "1.4.0" });
+    });
+    await waitFor(() => expect(version.value).toBe("1.4.1"));
+    expect(version.getAttribute("aria-invalid")).not.toBe("true");
+  });
+
+  it("compares with the newest ready release rather than the one that it kept", async () => {
+    let list = [older];
+    const calls = releasesPage({ list: () => list });
+    const { queryClient } = await openReleases();
+    const user = userEvent.setup();
+    const first = await openDialog(user);
+    await waitFor(() =>
+      expect(callsOf(calls, "diffSnapshots")).toHaveLength(1),
+    );
+    await user.click(within(first).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    list = [newer, older];
+    await act(() => readReleasesAgain(queryClient, testProject.id));
+    await openDialog(user);
+    await waitFor(() =>
+      expect(callsOf(calls, "diffSnapshots").length).toBeGreaterThan(1),
+    );
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    const sent = callsOf(calls, "diffSnapshots").map(
+      ([, input]) => (input as { body: { from: string } }).body.from,
+    );
+    expect(sent).toEqual([olderId, newerId]);
+  });
 });
 
 describe("a release's read-only view", () => {
@@ -1271,7 +1394,7 @@ describe("comparing releases", () => {
     );
   });
 
-  it("says so where a text's formatting alone changed", async () => {
+  it("says so where a text's words are the same, without saying what else changed", async () => {
     releasesPage({
       diff: () =>
         diffOf({
@@ -1313,7 +1436,9 @@ describe("comparing releases", () => {
       { session: testSession },
     );
     expect(
-      await screen.findByText("Only its formatting or links changed."),
+      await screen.findByText(
+        "Its words are the same. Its formatting, links, or what it refers to changed.",
+      ),
     ).toBeDefined();
   });
 

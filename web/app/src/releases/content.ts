@@ -27,7 +27,7 @@ export interface ReleaseBoard {
   entryNodeId?: string;
   /** The nodes that the entry node reaches, itself first, breadth-first. */
   reached: Node[];
-  /** The others, in the order of their IDs, which is of their creation. */
+  /** The others, by ID, since a release's files hold no time of creation: an ID begins with the time on the clock of whoever made it, so this can differ from the script view's order where clocks differ. */
   unreached: Node[];
   /** The connections that leave each node, by its ID, in the order that the flow offers them. */
   leaving: ReadonlyMap<string, readonly Connection[]>;
