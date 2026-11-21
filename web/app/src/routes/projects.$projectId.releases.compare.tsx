@@ -63,7 +63,11 @@ function Compare() {
   // spends another diff.
   useEffect(() => {
     if (from !== undefined && (search.from !== from || search.to !== to)) {
-      void navigate({ search: { from, to }, replace: true });
+      void navigate({
+        search: { from, to },
+        replace: true,
+        resetScroll: false,
+      });
     }
   }, [from, to, search.from, search.to, navigate]);
   const diff = useQuery({
@@ -76,6 +80,7 @@ function Compare() {
     void navigate({
       search: { from, to, [side]: value },
       replace: true,
+      resetScroll: false,
     });
   const options = ready.map((release) => (
     <option key={release.id} value={release.id}>

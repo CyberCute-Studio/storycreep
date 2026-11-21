@@ -3,9 +3,10 @@
 // release's zip holds: its boards, each in the order of the script view
 // (FR-TEXT-04 AC2), breadth-first from the entry node along the connections
 // in the order of each node's ports and choices, and then the nodes that it
-// does not reach, its variables, and its components. It is of the files
-// alone, and of nothing of the project's document, so that what it shows is
-// the release as it was published, whatever the draft has become.
+// does not reach, its variables, its component types and components, and
+// its project's entry and signals. It is of the files alone, and of nothing
+// of the project's document, so that what it shows is the release as it was
+// published, whatever the draft has become.
 
 import type {
   Board,
@@ -14,8 +15,10 @@ import type {
   ComponentType,
   ComponentTypes,
   Connection,
+  Entry,
   Manifest,
   Node,
+  Settings,
   Variable,
   Variables,
 } from "@storycreep/shared/published";
@@ -35,6 +38,10 @@ export interface ReleaseBoard {
 
 /** What a release holds. */
 export interface ReleaseContent {
+  /** Where the flow starts. Without it, the project has none. */
+  entry?: Entry;
+  /** The names of the signals that the project's scripts emit. */
+  signals: string[];
   boards: ReleaseBoard[];
   variables: Variable[];
   componentTypes: ComponentType[];
@@ -129,7 +136,10 @@ export function readRelease(
       nodes.set(node.id, { node, board });
     }
   }
+  const settings = read<Settings>("project/settings.json");
   return {
+    ...(settings.entry === undefined ? {} : { entry: settings.entry }),
+    signals: settings.signals,
     boards,
     variables: read<Variables>("project/variables.json").variables,
     componentTypes: read<ComponentTypes>("project/component_types.json")

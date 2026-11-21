@@ -1,4 +1,5 @@
 import {
+  ApiError,
   type Diff,
   type Finding,
   NetworkError,
@@ -556,6 +557,55 @@ describe("publishing a release", () => {
     expect(
       await screen.findByRole("heading", { level: 2, name: /1\.4\.1/ }),
     ).toBeDefined();
+  });
+
+  it("does not propose the version just published as the dialog opens again", async () => {
+    const published = snapshot({
+      id: newId("snapshot"),
+      version: "1.4.1",
+      status: "building",
+      counts: undefined,
+    });
+    let list = [newer, older];
+    let reads = 0;
+    let answerNext: (proposal: unknown) => void = () => {};
+    releasesPage({
+      list: () => list,
+      validation: () => report([]),
+      next: () => {
+        reads += 1;
+        return reads === 1
+          ? { version: "1.4.1", latest_version: "1.4.0" }
+          : new Promise((resolve) => {
+              answerNext = resolve;
+            });
+      },
+      publish: () => {
+        list = [published, newer, older];
+        return published;
+      },
+    });
+    await openReleases();
+    const user = userEvent.setup();
+    const dialog = await openDialog(user);
+    const version = () =>
+      within(screen.getByRole("dialog")).getByRole("textbox", {
+        name: /Version/,
+      }) as HTMLInputElement;
+    await waitFor(() => expect(version().value).toBe("1.4.1"));
+    await user.type(
+      within(dialog).getByRole("textbox", { name: /Changelog note/ }),
+      "Harbour intro",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    await openDialog(user);
+    expect(version().value).toBe("");
+    await act(async () =>
+      answerNext({ version: "1.4.2", latest_version: "1.4.1" }),
+    );
+    await waitFor(() => expect(version().value).toBe("1.4.2"));
   });
 
   it("clears the acknowledgement once a warning joins the report", async () => {
@@ -1123,7 +1173,11 @@ describe("a release's read-only view", () => {
     expect(screen.getByText("Not reached from the entry node")).toBeDefined();
     expect(screen.getByText("gold")).toBeDefined();
     expect(screen.getByText("Elara")).toBeDefined();
-    expect(screen.getByText("Mood")).toBeDefined();
+    expect(
+      within(screen.getByRole("region", { name: "Components" })).getByText(
+        "Mood",
+      ),
+    ).toBeDefined();
     expect(screen.getByText("Wary of strangers")).toBeDefined();
 
     // Nothing on the page edits: no field, and neither the undo nor the
@@ -1181,6 +1235,150 @@ describe("a release's read-only view", () => {
     expect(
       screen.getByRole("link", { name: "Tower" }).getAttribute("aria-current"),
     ).toBe("page");
+  });
+
+  // Verifies: FR-SNAP-02/AC2
+  it("shows each field that the release's files hold", async () => {
+    releasesPage();
+    renderApp(`/projects/${testProject.id}/releases/${newerId}`, {
+      session: testSession,
+    });
+    await screen.findByText("Welcome to the harbour.");
+
+    // The project's entry and signals.
+    const project = screen.getByRole("region", { name: "Project" });
+    expect(
+      within(project).getByText("Starts at Greet on Harbour"),
+    ).toBeDefined();
+    expect(
+      within(project).getByText("Signals: bell_rung, lighthouse_lit"),
+    ).toBeDefined();
+
+    // An element's kind and tags, beside its entry and ending.
+    const headings = screen
+      .getAllByRole("heading", { level: 4 })
+      .map((heading) => heading.textContent);
+    expect(headings).toContain("Greet · dialogue · entry");
+    expect(headings).toContain("Reply · narration · ending");
+    expect(screen.getByText("Tags: intro, Harbour watch")).toBeDefined();
+
+    // Whether a board's variable resets, which a global one has no say in.
+    const variables = screen.getByRole("region", { name: "Variables" });
+    expect(
+      within(variables).getAllByText(
+        "Goes back to its default each time the story enters its board",
+      ),
+    ).toHaveLength(1);
+
+    // A component type's key, and each attribute's key, type, default,
+    // whether it is runtime, and an enum's options.
+    const types = screen.getByRole("region", { name: "Component types" });
+    expect(within(types).getByText("Person")).toBeDefined();
+    expect(within(types).getByText("person")).toBeDefined();
+    expect(within(types).getByText("mood")).toBeDefined();
+    expect(
+      within(types).getByText(
+        /^text \(string\) · default\s+· not part of the game's state$/,
+      ),
+    ).toBeDefined();
+    expect(within(types).getByText("stance")).toBeDefined();
+    expect(
+      within(types).getByText(
+        "one of a list (enum) · default neutral · part of the game's state",
+      ),
+    ).toBeDefined();
+    expect(
+      within(types).getByText("Options: neutral, ally, rival"),
+    ).toBeDefined();
+    const components = screen.getByRole("region", { name: "Components" });
+    expect(within(components).getByText("ally")).toBeDefined();
+  });
+
+  it("says that a board's variable keeps its value, and that a release has no entry or signals", async () => {
+    const files = filesWith(
+      "project/variables.json",
+      (file: { variables: { resetOnEnter?: boolean }[] }) => {
+        for (const variable of file.variables) {
+          delete variable.resetOnEnter;
+        }
+      },
+    );
+    files.set(
+      "project/settings.json",
+      new TextEncoder().encode(
+        JSON.stringify({ schemaVersion: 1, signals: [] }),
+      ) as Uint8Array<ArrayBuffer>,
+    );
+    releasesPage({ zip: await zipOf(files) });
+    renderApp(`/projects/${testProject.id}/releases/${newerId}`, {
+      session: testSession,
+    });
+    await screen.findByText("Welcome to the harbour.");
+    expect(screen.getByText("This release has no entry node.")).toBeDefined();
+    expect(screen.getByText("This release has no signals.")).toBeDefined();
+    expect(
+      screen.getByText("Keeps its value when the story enters its board"),
+    ).toBeDefined();
+  });
+
+  it("comes back to a jumper's board with the browser's Back", async () => {
+    releasesPage();
+    const { router } = renderApp(
+      `/projects/${testProject.id}/releases/${newerId}`,
+      { session: testSession },
+    );
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("link", { name: "Jumps to Summit on Tower" }),
+    );
+    await screen.findByText("The wind howls.");
+    act(() => router.history.back());
+    await screen.findByText("Welcome to the harbour.");
+    expect(
+      screen
+        .getByRole("link", { name: "Harbour" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
+  });
+
+  it("does not take a proxy's 404 for a release without a report", async () => {
+    releasesPage({
+      stored: () => {
+        throw new ApiError(new Response("<html>", { status: 404 }), undefined);
+      },
+    });
+    renderApp(`/projects/${testProject.id}/releases/${newerId}`, {
+      session: testSession,
+    });
+    await screen.findByText("Welcome to the harbour.");
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("alert").some((alert) => alert.textContent !== ""),
+      ).toBe(true),
+    );
+  });
+
+  it("shows no report of a release that the server says has none", async () => {
+    releasesPage({
+      stored: () => {
+        throw refused(404, { code: "not_found" });
+      },
+    });
+    const { queryClient } = renderApp(
+      `/projects/${testProject.id}/releases/${newerId}`,
+      { session: testSession },
+    );
+    await screen.findByText("Welcome to the harbour.");
+    const { queryKey } = releaseReportQuery(testProject.id, newerId);
+    await waitFor(() =>
+      expect(queryClient.getQueryState(queryKey)?.status).toBe("success"),
+    );
+    expect(
+      screen.getAllByRole("alert").every((alert) => alert.textContent === ""),
+    ).toBe(true);
+    expect(
+      screen.queryByRole("heading", { name: "Validation report" }),
+    ).toBeNull();
   });
 
   it("names a jumper's target on its own board, with no link", async () => {

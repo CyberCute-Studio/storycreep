@@ -19,7 +19,7 @@ import {
 } from "@storycreep/shared/api";
 import type { Manifest } from "@storycreep/shared/published";
 import { type QueryClient, queryOptions } from "@tanstack/react-query";
-import { allAtOnce, api, everyPage, pagedQuery } from "../api";
+import { allAtOnce, api, everyPage, notFoundBy, pagedQuery } from "../api";
 import { csrfHeaders } from "../auth/session";
 import { sentWait, whenSent } from "../document/sent";
 import type { ProjectDocument } from "../document/store";
@@ -131,14 +131,26 @@ export function readReleasesAgain(client: QueryClient, projectId: string) {
 }
 
 /**
+ * Reports whether error is the server's own refusal, with its error
+ * envelope: not a request that no answer came to, a fault of the server's,
+ * or a page of a proxy's, whatever its status, which says nothing of what
+ * the request asked for.
+ */
+export function refusedByServer(error: unknown): error is ApiError {
+  return (
+    error instanceof ApiError && error.error !== undefined && error.status < 500
+  );
+}
+
+/**
  * Returns how long a poll of a build waits after its last read, which error
  * failed, if it did: a refusal of the rate limit is waited out, and another
  * refusal, which reading again would only repeat, as of a snapshot that is
- * gone, ends the poll. A read that no answer came to, or that the server
- * failed, is tried again at the usual pace.
+ * gone, ends the poll. A read that no answer came to, that the server
+ * failed, or that a proxy answered, is tried again at the usual pace.
  */
 function nextPoll(error: unknown): number | false {
-  if (!(error instanceof ApiError) || error.status >= 500) {
+  if (!refusedByServer(error)) {
     return buildPoll;
   }
   if (error.status !== 429) {
@@ -190,7 +202,7 @@ export function releaseReportQuery(projectId: string, snapshotId: string) {
           )
         ).body;
       } catch (error) {
-        if (error instanceof ApiError && error.status === 404) {
+        if (notFoundBy(error)) {
           return null;
         }
         throw error;

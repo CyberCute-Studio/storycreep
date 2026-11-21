@@ -256,7 +256,7 @@ function BoardSection({ board }: { board: BoardChanges }) {
       {shown.length > 0 && <Changes changes={shown} />}
       {cosmetic.length > 0 && (
         <details>
-          <summary className="flex min-h-11 cursor-pointer items-center">
+          <summary className="min-h-11 cursor-pointer py-3">
             {t("releases.diff.cosmetic_changes", { count: cosmetic.length })}
           </summary>
           <Changes changes={cosmetic} />

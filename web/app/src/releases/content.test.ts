@@ -1,4 +1,4 @@
-import type { Diff, EntityChange } from "@storycreep/shared/api";
+import { ApiError, type Diff, type EntityChange } from "@storycreep/shared/api";
 import { describe, expect, it } from "vitest";
 import { refused } from "../test/fake";
 import { releaseFiles, zipOf } from "../test/release";
@@ -33,6 +33,15 @@ describe("the poll of a build", () => {
       buildPoll,
     );
     expect(next("ready", null)).toBe(false);
+  });
+
+  it("reads on past a page of a proxy's, which is no refusal", () => {
+    expect(
+      next(
+        "building",
+        new ApiError(new Response("<html>", { status: 404 }), undefined),
+      ),
+    ).toBe(buildPoll);
   });
 
   it("ends at a refusal, and waits out the rate limit", () => {
@@ -100,6 +109,12 @@ describe("readRelease", () => {
       "cn_ask",
       "cn_leave",
     ]);
+  });
+
+  it("reads the project's entry and signals from its settings", () => {
+    const { entry, signals } = readRelease(releaseFiles());
+    expect(entry?.nodeId).toBe("nd_a");
+    expect(signals).toEqual(["bell_rung", "lighthouse_lit"]);
   });
 
   it("finds a jumper's target on another board", () => {

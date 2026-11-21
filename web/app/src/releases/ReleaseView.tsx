@@ -1,9 +1,10 @@
 // A release's content, read-only (PRD FR-SNAP-02 AC2, plan note N88): its
 // boards, each as a document of its nodes, in the order of the script view,
-// with their texts, choices, conditions, and scripts, its variables, and its
-// components, as the release's files hold them. It reads those files alone,
-// and has no control that changes anything and no part that sends a
-// command, so that nothing here can emit one.
+// with their texts, choices, conditions, and scripts, its variables, its
+// component types and components, and its project's entry and signals, as
+// the release's files hold them. It reads those files alone, and has no
+// control that changes anything and no part that sends a command, so that
+// nothing here can emit one.
 
 import type {
   Connection,
@@ -16,6 +17,7 @@ import type { TFunction } from "i18next";
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { nodeTitleText } from "../content/textNames";
+import { typeName } from "../content/ValueField";
 import { marked } from "../script/RichText";
 import { Button, currentClass } from "../ui/Button";
 import { textLink } from "../ui/Page";
@@ -137,6 +139,7 @@ export function ReleaseView({
     content.boards.find((b) => b.id === boardId) ?? content.boards[0];
   return (
     <div className="space-y-6">
+      <ProjectFacts content={content} />
       <section aria-labelledby="release-boards" className="space-y-3">
         <h2 id="release-boards" className="text-xl font-semibold">
           {t("releases.view.boards")}
@@ -154,6 +157,7 @@ export function ReleaseView({
                       to="."
                       search={{ board: b.id }}
                       replace
+                      resetScroll={false}
                       aria-current={b.id === board.id ? "page" : undefined}
                       className={`inline-flex min-h-11 items-center rounded-md border border-border px-3 hover:bg-surface-hover ${
                         b.id === board.id ? currentClass : ""
@@ -170,8 +174,40 @@ export function ReleaseView({
         )}
       </section>
       <VariablesList content={content} />
+      <ComponentTypesList content={content} />
       <ComponentsList content={content} />
     </div>
+  );
+}
+
+/** Where the release's flow starts, and the signals that its scripts emit. */
+function ProjectFacts({ content }: { content: ReleaseContent }) {
+  const { t } = useTranslation();
+  const entry =
+    content.entry === undefined
+      ? undefined
+      : content.nodes.get(content.entry.nodeId);
+  return (
+    <section aria-labelledby="release-project" className="space-y-2">
+      <h2 id="release-project" className="text-xl font-semibold">
+        {t("releases.view.project")}
+      </h2>
+      <p className="break-words">
+        {entry === undefined
+          ? t("releases.view.no_entry")
+          : t("releases.view.starts_at", {
+              node: nodeName(t, entry.node),
+              board: entry.board.name,
+            })}
+      </p>
+      <p className="break-words">
+        {content.signals.length === 0
+          ? t("releases.view.no_signals")
+          : t("releases.view.signals", {
+              signals: content.signals.join(", "),
+            })}
+      </p>
+    </section>
   );
 }
 
@@ -241,6 +277,14 @@ function NodeEntry({
     >
       <h4 className="font-medium break-words">
         {nodeName(t, node)}
+        {node.type === "element" && (
+          <span className="text-fg-muted">
+            {" · "}
+            {node.kind === "dialogue"
+              ? t("releases.view.dialogue")
+              : t("releases.view.narration")}
+          </span>
+        )}
         {node.id === board.entryNodeId && (
           <span className="text-fg-muted"> · {t("releases.view.entry")}</span>
         )}
@@ -251,6 +295,11 @@ function NodeEntry({
       {speaker !== undefined && (
         <p className="text-fg-muted">
           {t("releases.view.speaker", { name: speaker })}
+        </p>
+      )}
+      {node.type === "element" && (node.tags?.length ?? 0) > 0 && (
+        <p className="break-words text-fg-muted">
+          {t("releases.view.tags", { tags: node.tags?.join(", ") })}
         </p>
       )}
       {node.type === "element" && node.text !== undefined && (
@@ -267,7 +316,6 @@ function NodeEntry({
               from="/projects/$projectId/releases/$snapshotId"
               to="."
               search={{ board: target.board.id }}
-              replace
               className={textLink}
             >
               {jumpsTo}
@@ -405,8 +453,74 @@ function VariablesList({ content }: { content: ReleaseContent }) {
                 value: valueText(variable.default),
               })}
             </p>
+            {variable.scope === "board" && (
+              <p className="break-words text-fg-muted">
+                {t("releases.view.reset_on_enter", {
+                  reset: variable.resetOnEnter ? "yes" : "no",
+                })}
+              </p>
+            )}
             {variable.description !== undefined && (
               <p className="break-words">{variable.description}</p>
+            )}
+          </li>
+        ))}
+      </ul>
+      <ShowMore rest={rest} more={more} />
+    </section>
+  );
+}
+
+/** The release's component types, each with its attribute definitions. */
+function ComponentTypesList({ content }: { content: ReleaseContent }) {
+  const { t } = useTranslation();
+  const { items, rest, more } = useShown(content.componentTypes);
+  return (
+    <section aria-labelledby="release-component-types" className="space-y-2">
+      <h2 id="release-component-types" className="text-xl font-semibold">
+        {t("component_types.title")}
+      </h2>
+      {content.componentTypes.length === 0 && (
+        <p>{t("releases.view.no_component_types")}</p>
+      )}
+      <ul>
+        {items.map((type) => (
+          <li key={type.id} className="space-y-1 border-t border-border py-2">
+            <p className="break-words">
+              {type.name}
+              <span className="text-fg-muted">
+                {" · "}
+                <code className="font-mono">{type.key}</code>
+              </span>
+            </p>
+            {type.attributes.length > 0 && (
+              <ul className="space-y-1 border-s border-border ps-3">
+                {type.attributes.map((attribute) => (
+                  <li key={attribute.id}>
+                    <p className="break-words">
+                      {attribute.name}
+                      <span className="text-fg-muted">
+                        {" · "}
+                        <code className="font-mono">{attribute.key}</code>
+                      </span>
+                    </p>
+                    <p className="break-words whitespace-pre-wrap text-fg-muted">
+                      {t("component_type.attribute_detail", {
+                        type: typeName(t, attribute.type),
+                        default: valueText(attribute.default),
+                        runtime: attribute.runtime ? "yes" : "no",
+                      })}
+                    </p>
+                    {attribute.type === "enum" && (
+                      <p className="break-words text-fg-muted">
+                        {t("releases.view.options", {
+                          options: attribute.options.join(", "),
+                        })}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
             )}
           </li>
         ))}

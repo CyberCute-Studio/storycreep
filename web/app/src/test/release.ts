@@ -101,6 +101,7 @@ export function releaseFiles(): Map<string, Uint8Array<ArrayBuffer>> {
         kind: "dialogue",
         title: "Greet",
         speaker: "cmp_elara",
+        tags: ["intro", "Harbour watch"],
         isEnding: false,
         position: { x: 0, y: 0 },
         text: text("Welcome to the harbour."),
@@ -220,6 +221,7 @@ export function releaseFiles(): Map<string, Uint8Array<ArrayBuffer>> {
         scope: "board",
         boardId: towerId,
         default: false,
+        resetOnEnter: true,
         description: "Whether the summit was seen.",
       },
     ],
@@ -240,6 +242,15 @@ export function releaseFiles(): Map<string, Uint8Array<ArrayBuffer>> {
             default: "",
             runtime: false,
           },
+          {
+            id: "atr_stance",
+            key: "stance",
+            name: "Stance",
+            type: "enum",
+            default: "neutral",
+            options: ["neutral", "ally", "rival"],
+            runtime: true,
+          },
         ],
       },
     ],
@@ -252,9 +263,14 @@ export function releaseFiles(): Map<string, Uint8Array<ArrayBuffer>> {
         key: "elara",
         name: "Elara",
         componentTypeId: "ct_person",
-        attributes: { atr_mood: "Wary of strangers" },
+        attributes: { atr_mood: "Wary of strangers", atr_stance: "ally" },
       },
     ],
+  };
+  const settings = {
+    schemaVersion: 1,
+    entry: { boardId: harbourId, nodeId: "nd_a" },
+    signals: ["bell_rung", "lighthouse_lit"],
   };
   const encoder = new TextEncoder();
   const file = (value: unknown) =>
@@ -263,6 +279,7 @@ export function releaseFiles(): Map<string, Uint8Array<ArrayBuffer>> {
     ["storycreep.json", file(manifest)],
     ["boards/harbour.json", file(harbour)],
     ["boards/tower.json", file(tower)],
+    ["project/settings.json", file(settings)],
     ["project/variables.json", file(variables)],
     ["project/component_types.json", file(types)],
     ["project/components.json", file(components)],

@@ -54,6 +54,7 @@ import {
   nextVersionQuery,
   publishRelease,
   readReleasesAgain,
+  refusedByServer,
   versionPattern,
 } from "./queries";
 
@@ -67,10 +68,10 @@ function codeOf(error: unknown): string | undefined {
 
 /**
  * Reports whether a publication that failed with error may have been made
- * all the same: no answer came to it, or the server failed as it answered.
+ * all the same: anything but the server's own refusal of it.
  */
 function mayHavePublished(error: unknown): boolean {
-  return !(error instanceof ApiError) || error.status >= 500;
+  return !refusedByServer(error);
 }
 
 /**
@@ -98,6 +99,11 @@ export function PublishButton({
     onSuccess: (snapshot) => {
       setOpen(false);
       onPublished(snapshot);
+      // The proposal was of the version just published, which a dialog
+      // opened again would otherwise show until it has read the next.
+      client.removeQueries({
+        queryKey: nextVersionQuery(project.id).queryKey,
+      });
       // Not awaited, so that the request has ended for a dialog opened
       // again while the list is being read.
       void readReleasesAgain(client, project.id);
