@@ -1,19 +1,20 @@
 import type { Snapshot } from "@storycreep/shared/api";
 import {
+  useQueries,
   useQueryClient,
   useSuspenseInfiniteQuery,
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { publishes } from "../content/deletion";
 import { projectQuery } from "../project/queries";
 import { PublishButton } from "../releases/PublishDialog";
 import {
-  buildPoll,
   draft,
   readReleasesAgain,
+  releaseQuery,
   releasesQuery,
 } from "../releases/queries";
 import {
@@ -40,51 +41,48 @@ export const Route = createFileRoute("/projects/$projectId/releases/")({
 // its note, and its counts, a link to its read-only view, its zip, and its
 // diff from the release before; and, for a role that may publish a project
 // that is not archived (publish_min_role), the dialog that publishes the
-// draft. The page reads the list again while a snapshot is building, and
-// says what became of the one that it published.
+// draft. The page reads each snapshot that is building again by itself, so
+// that a poll costs the same however many of the list's pages are loaded,
+// and the whole list once as a build ends. It says once that the build of
+// what it published has started, and the list's rows show the rest.
 function Releases() {
   const { t } = useTranslation();
   const { projectId } = Route.useParams();
   const project = useSuspenseQuery(projectQuery(projectId)).data;
-  const list = useSuspenseInfiniteQuery({
-    ...releasesQuery(projectId),
-    refetchInterval: (query) =>
-      query.state.data?.pages.some((page) =>
-        page.items.some((s) => s.status === "building"),
-      )
-        ? buildPoll
-        : false,
+  const list = useSuspenseInfiniteQuery(releasesQuery(projectId));
+  const listed = list.data.pages.flatMap((page) => page.items);
+  // Each starts from what the list says, so that a first read that fails
+  // leaves it building, which goes on being read.
+  const builds = useQueries({
+    queries: listed
+      .filter((s) => s.status === "building")
+      .map((s) => ({
+        ...releaseQuery(projectId, s.id),
+        initialData: s,
+      })),
   });
-  const releases = list.data.pages.flatMap((page) => page.items);
-  // A build that ends changes what the other lists say, as the newest ready
+  const ended = builds.flatMap((build) =>
+    build.data !== undefined && build.data.status !== "building"
+      ? [build.data]
+      : [],
+  );
+  const releases = listed.map(
+    (s) => ended.find((build) => build.id === s.id) ?? s,
+  );
+  // A build that ends changes what the lists say, as the newest ready
   // release, which the publish dialog's suggestion compares with.
   const client = useQueryClient();
-  const buildingKey = releases
-    .filter((s) => s.status === "building")
-    .map((s) => s.id)
-    .join(" ");
-  const wasBuilding = useRef(buildingKey);
+  const endedKey = ended.map((s) => s.id).join(" ");
   useEffect(() => {
-    const before = wasBuilding.current;
-    wasBuilding.current = buildingKey;
-    const now = buildingKey.split(" ");
-    if (before !== "" && before.split(" ").some((id) => !now.includes(id))) {
+    if (endedKey !== "") {
       void readReleasesAgain(client, projectId);
     }
-  }, [buildingKey, client, projectId]);
+  }, [endedKey, client, projectId]);
   const [published, setPublished] = useState<Snapshot>();
-  const watched =
+  const said =
     published === undefined
       ? undefined
-      : (releases.find((s) => s.id === published.id) ?? published);
-  const said =
-    watched === undefined
-      ? undefined
-      : watched.status === "building"
-        ? t("releases.said.building", { version: watched.version })
-        : watched.status === "ready"
-          ? t("releases.said.ready", { version: watched.version })
-          : t("releases.said.failed", { version: watched.version });
+      : t("releases.said.building", { version: published.version });
   return (
     <Page
       title={t("releases.title")}
@@ -116,7 +114,7 @@ function Releases() {
   );
 }
 
-/** A release of the list, whose diff compares it with previous, the ready one before it, with the one that the compare page finds before it while older pages are unread, or else with the draft. */
+/** A release of the list, whose diff compares it with previous, the ready one before it, with what the compare page finds before it while older pages are unread, which may be the draft, or else with the draft. */
 function ReleaseRow({
   projectId,
   release,

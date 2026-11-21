@@ -11,7 +11,6 @@ import {
   ApiError,
   type Diff,
   type Finding,
-  NetworkError,
   type Proposal,
   type PublishInputBody,
   type Report,
@@ -46,11 +45,6 @@ function snapshotsKey(projectId: string) {
 /** The key of what a publication changes: the lists, and the proposed version. */
 function listsKey(projectId: string) {
   return [...snapshotsKey(projectId), "lists"] as const;
-}
-
-/** The key of every diff into the draft, which the project's document has read again as operations apply (Follower). */
-export function draftDiffKey(projectId: string) {
-  return [...snapshotsKey(projectId), "draft-diff"] as const;
 }
 
 /** The project's snapshots, of every status, newest first, a page at a time. */
@@ -195,10 +189,10 @@ export function releaseContentQuery(projectId: string, snapshotId: string) {
     // that reads the project again, spends another export on it.
     staleTime: "static",
     gcTime: contentKept,
-    // Each attempt that reaches the server counts as an export, so only one
-    // that no answer came to is tried again, and never a zip that this
-    // browser could not read, which would read the same again.
-    retry: (failures, error) => error instanceof NetworkError && failures < 3,
+    // Each attempt that reaches the server counts as an export, as one whose
+    // answer was cut off midway has, which the client cannot tell from one
+    // that never arrived, so no attempt is made again of the page's accord.
+    retry: false,
     meta: { showsRefusals: true },
   });
 }
@@ -208,9 +202,11 @@ export const draft = "draft";
 
 /**
  * The entity diff of the release from into to, a release's ID or draft
- * (PRD FR-SNAP-04). A diff of two releases never changes; the project's
- * document has one into the draft read again as operations apply, whose
- * answer stays while the next is read.
+ * (PRD FR-SNAP-04). A diff of two releases never changes. One into the draft
+ * is read once as what shows it opens, and again only when asked (refetch),
+ * since the route counts in the rate limit of writes that the page's edits
+ * need (FR-API-04), and is dropped once nothing shows it, so that the next
+ * to show it reads the draft as it is then.
  */
 export function diffQuery(
   projectId: string,
@@ -218,12 +214,8 @@ export function diffQuery(
   to: string,
   session: SignedInBody | null,
 ) {
-  const queryKey: readonly unknown[] =
-    to === draft
-      ? [...draftDiffKey(projectId), from]
-      : [...snapshotsKey(projectId), "diff", from, to];
   return queryOptions({
-    queryKey,
+    queryKey: [...snapshotsKey(projectId), "diff", from, to] as const,
     queryFn: async ({ signal }): Promise<Diff> =>
       (
         await api.call(
@@ -236,7 +228,8 @@ export function diffQuery(
           { signal },
         )
       ).body,
-    staleTime: to === draft ? 0 : "static",
+    staleTime: "static",
+    ...(to === draft ? { gcTime: 0 } : {}),
     meta: { showsRefusals: true },
   });
 }

@@ -1,4 +1,10 @@
-import type { Diff, Finding, Report, Snapshot } from "@storycreep/shared/api";
+import {
+  type Diff,
+  type Finding,
+  NetworkError,
+  type Report,
+  type Snapshot,
+} from "@storycreep/shared/api";
 import { newId } from "@storycreep/shared/ids";
 import { focusManager } from "@tanstack/react-query";
 import {
@@ -301,11 +307,36 @@ describe("the list of a project's releases", () => {
     ).toBeDefined();
   });
 
+  it("follows a build by its snapshot, without reading the list's pages again", async () => {
+    const calls = releasesPage({
+      list: () => [
+        snapshot({ id: newerId, version: "1.4.0", status: "building" }),
+        older,
+      ],
+    });
+    await openReleases();
+    const listReads = () =>
+      callsOf(calls, "listSnapshots").filter(
+        ([, input]) =>
+          (input as { query?: { status?: string } }).query?.status ===
+          undefined,
+      ).length;
+    const before = listReads();
+    await waitFor(
+      () =>
+        expect(callsOf(calls, "getSnapshot").length).toBeGreaterThanOrEqual(2),
+      { timeout: 4000 },
+    );
+    expect(listReads()).toBe(before);
+  });
+
   it("links the last release that it has read to the one before it, while older ones are unread", async () => {
     releasesPage({ list: () => [newer], nextCursor: "next" });
     await openReleases();
     const compare = screen
-      .getByRole("link", { name: "Compare 1.4.0 with the release before it" })
+      .getByRole("link", {
+        name: "Compare 1.4.0 with the release before it, or with the draft if it has none",
+      })
       .getAttribute("href");
     expect(compare).toContain(`to=${newerId}`);
     expect(compare).not.toContain("from=");
@@ -688,6 +719,38 @@ describe("publishing a release", () => {
     expect(document.activeElement).toBe(version);
     expect(screen.getByRole("dialog")).toBeDefined();
   });
+
+  it("drops a refusal of the version once a newer proposal replaces it", async () => {
+    let proposed = "1.4.1";
+    releasesPage({
+      next: () => ({ version: proposed, latest_version: "1.4.0" }),
+      publish: () => {
+        proposed = "1.4.2";
+        throw refused(409, {
+          code: "version_not_newer",
+          message:
+            "This version is not newer than the project's latest release.",
+        });
+      },
+    });
+    await openReleases();
+    const user = userEvent.setup();
+    const dialog = await openDialog(user);
+    const version = within(dialog).getByRole("textbox", {
+      name: /Version/,
+    }) as HTMLInputElement;
+    await waitFor(() => expect(version.value).toBe("1.4.1"));
+    await user.type(
+      within(dialog).getByRole("textbox", { name: /Changelog note/ }),
+      "A note",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+    await waitFor(() => expect(version.value).toBe("1.4.2"));
+    await waitFor(() =>
+      expect(version.getAttribute("aria-invalid")).not.toBe("true"),
+    );
+    expect(within(dialog).queryByText(/is not newer/)).toBeNull();
+  });
 });
 
 describe("a release's read-only view", () => {
@@ -781,6 +844,22 @@ describe("a release's read-only view", () => {
     } finally {
       focusManager.setFocused(undefined);
     }
+    expect(callsOf(calls, "exportSnapshot")).toHaveLength(1);
+  });
+
+  it("spends one export on a read whose answer was cut off", async () => {
+    const calls = releasesPage();
+    answerExport(calls, () =>
+      Promise.reject(new NetworkError(new TypeError("body stream ended"))),
+    );
+    renderApp(`/projects/${testProject.id}/releases/${newerId}`, {
+      session: testSession,
+    });
+    await screen.findByRole("heading", { level: 1, name: "Release 1.4.0" });
+    await waitFor(() =>
+      expect(callsOf(calls, "exportSnapshot")).toHaveLength(1),
+    );
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
     expect(callsOf(calls, "exportSnapshot")).toHaveLength(1);
   });
 
@@ -1014,7 +1093,7 @@ describe("comparing releases", () => {
     expect(await screen.findByText("These two are the same.")).toBeDefined();
   });
 
-  it("reads a comparison with the draft again as an operation applies", async () => {
+  it("reads a comparison with the draft once, and again when asked", async () => {
     const realtime = fakeRealtime();
     const calls = releasesPage();
     renderApp(
@@ -1022,7 +1101,7 @@ describe("comparing releases", () => {
       { session: testSession, realtime },
     );
     await screen.findByText("These two are the same.");
-    const before = callsOf(calls, "diffSnapshots").length;
+    expect(callsOf(calls, "diffSnapshots")).toHaveLength(1);
     act(() =>
       realtime.send(
         testProject.id,
@@ -1030,9 +1109,24 @@ describe("comparing releases", () => {
         [{ id: "nd_a", rev: 2 }],
       ),
     );
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(callsOf(calls, "diffSnapshots")).toHaveLength(1);
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Compare again" }));
     await waitFor(() =>
-      expect(callsOf(calls, "diffSnapshots").length).toBe(before + 1),
+      expect(callsOf(calls, "diffSnapshots")).toHaveLength(2),
     );
+  });
+
+  it("offers no new comparison of two releases, which never change", async () => {
+    releasesPage();
+    renderApp(
+      `/projects/${testProject.id}/releases/compare?from=${olderId}&to=${newerId}`,
+      { session: testSession },
+    );
+    await screen.findByText("These two are the same.");
+    expect(screen.queryByRole("button", { name: "Compare again" })).toBeNull();
   });
 
   it("names a side that no ready release is as what it is", async () => {

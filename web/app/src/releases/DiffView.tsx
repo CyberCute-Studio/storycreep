@@ -68,7 +68,7 @@ function changeText(t: TFunction, change: string): string {
   }
 }
 
-/** Returns what names a change's entity, as what its kind shows of it. */
+/** Returns what names a change's entity, as what its kind shows of it, or its ID, which tells apart those that have no name. */
 function changeName(t: TFunction, c: EntityChange): string {
   switch (c.kind) {
     case "variable":
@@ -80,9 +80,9 @@ function changeName(t: TFunction, c: EntityChange): string {
     case "node":
       return c.title ?? c.preview ?? t("boards.untitled_node");
     case "connection":
-      return c.label ?? t("releases.diff.unnamed");
+      return c.label ?? c.id;
     default:
-      return t("releases.diff.unnamed");
+      return c.id;
   }
 }
 

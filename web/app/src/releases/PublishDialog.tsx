@@ -91,7 +91,9 @@ export function PublishButton({
     onSuccess: (snapshot) => {
       setOpen(false);
       onPublished(snapshot);
-      return readReleasesAgain(client, project.id);
+      // Not awaited, so that the request has ended for a dialog opened
+      // again while the list is being read.
+      void readReleasesAgain(client, project.id);
     },
     onError: (error) => {
       // What the dialog showed was out of date: it shows what the server
@@ -125,6 +127,8 @@ export function PublishButton({
 interface PublishRequest {
   isPending: boolean;
   error: Error | null;
+  /** What the latest attempt sent. */
+  variables: PublishInputBody | undefined;
   mutate: (body: PublishInputBody) => void;
   reset: () => void;
 }
@@ -179,12 +183,15 @@ function PublishForm({
         ? "note"
         : undefined,
   );
-  // That the version is not newer is about the version's field.
+  // That the version is not newer is about the version's field, while it
+  // holds the version refused, which a proposal read again may replace.
   const notNewer = codeOf(publish.error) === "version_not_newer";
   const versionError =
     problems?.version ??
     refusal?.fields.version ??
-    (notNewer ? refusal?.message : undefined);
+    (notNewer && publish.variables?.version === version
+      ? refusal?.message
+      : undefined);
   const noteError = problems?.note ?? refusal?.fields.note;
 
   const ready = report.data !== undefined && errors.length === 0;
@@ -219,11 +226,14 @@ function PublishForm({
       acknowledged_warnings: warnings.map(acknowledgementOf),
     });
   };
-  const edited = () => {
-    setProblems(undefined);
+  const clearRefusal = () => {
     if (!publish.isPending) {
       publish.reset();
     }
+  };
+  const edited = () => {
+    setProblems(undefined);
+    clearRefusal();
   };
   const latest = proposal.data?.latest_version;
   return (
@@ -269,11 +279,12 @@ function PublishForm({
                       count: warnings.length,
                     })}
                     checked={acknowledged}
-                    onChange={(event) =>
+                    onChange={(event) => {
                       setAckedKey(
                         event.target.checked ? warningsKey : undefined,
-                      )
-                    }
+                      );
+                      clearRefusal();
+                    }}
                     hint={
                       ackOutdated
                         ? t("releases.publish.acknowledge_outdated")

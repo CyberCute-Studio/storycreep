@@ -12,8 +12,9 @@ import {
   readyReleasesQuery,
 } from "../releases/queries";
 import { found, searchId } from "../shell/found";
+import { Button } from "../ui/Button";
 import { SelectField } from "../ui/Field";
-import { Alert, Page, textLink } from "../ui/Page";
+import { Alert, Page, Status, textLink } from "../ui/Page";
 
 /** The search of the page: the release that it compares from, and the release, or the draft, that it compares into. */
 interface CompareSearch {
@@ -42,7 +43,8 @@ export const Route = createFileRoute("/projects/$projectId/releases/compare")({
 // The web diff of two of a project's releases, or of one and the draft (PRD
 // FR-SNAP-04, J4, plan note N88), which the address names, so that a link
 // reaches it, and which it picks otherwise (comparedPair): a side that the
-// address leaves out is the release next to the other.
+// address leaves out is the release next to the other. A diff into the draft
+// is of the draft as the page read it, which its button reads again.
 function Compare() {
   const { t } = useTranslation();
   const { projectId } = Route.useParams();
@@ -112,7 +114,24 @@ function Compare() {
               <option value={draft}>{t("releases.compare.draft")}</option>
             </SelectField>
           </div>
+          {to === draft && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                onClick={() => void diff.refetch({ cancelRefetch: false })}
+              >
+                {t("releases.compare.again")}
+              </Button>
+              <p className="text-fg-muted">
+                {t("releases.compare.draft_as_read")}
+              </p>
+            </div>
+          )}
           {diff.isPending && <p>{t("releases.compare.loading")}</p>}
+          <Status
+            message={
+              diff.isRefetching ? t("releases.compare.loading") : undefined
+            }
+          />
           <Alert
             message={
               diff.isError ? refusalOf(diff.error, t).message : undefined

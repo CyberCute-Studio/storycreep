@@ -231,9 +231,12 @@ test.describe("a project's releases", () => {
 
     // It builds, and shows who published it, the note, and its counts.
     await expect(
-      page.getByText(message("releases.said.ready", { version: "1.4.0" })),
-    ).toBeVisible({ timeout: 30_000 });
+      page.getByText(message("releases.said.building", { version: "1.4.0" })),
+    ).toBeVisible();
     const row = rowOf(page, "1.4.0");
+    await expect(
+      row.getByText(en["releases.status.ready"], { exact: true }),
+    ).toBeVisible({ timeout: 30_000 });
     await expect(row.getByText("Harbour intro + keeper gate")).toBeVisible();
     await expect(row.getByText(/^Published by Publisher on /)).toBeVisible();
     await expect(row.getByText(/^1 board · 3 nodes · /)).toBeVisible();

@@ -12,6 +12,7 @@ import type {
   Variable,
 } from "@storycreep/shared/published";
 import { Link } from "@tanstack/react-router";
+import type { TFunction } from "i18next";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { nodeTitleText } from "../content/textNames";
@@ -23,7 +24,13 @@ import type { ReleaseBoard, ReleaseContent } from "./content";
 /** How many items a list shows at first, and how many more each Show more shows. */
 const shownAtOnce = 100;
 
-/** A text's segments as the page shows them: its paragraphs and list items, as plain blocks, each of its inline segments with its marks. */
+/** Returns what names a node: its title, or else its text's preview, which tells apart those without a title. */
+function nodeName(t: TFunction, node: Node | undefined): string {
+  const preview = node?.type === "element" ? node.text?.preview : undefined;
+  return nodeTitleText(t, node?.title || preview || "");
+}
+
+/** A text's segments as the page shows them: its paragraphs, an empty one as a blank line, and list items, as plain blocks, each of its inline segments with its marks. */
 function SegmentsText({ segments }: { segments: readonly Segment[] }) {
   // Each paragraph or list item begins a block of the inline segments after
   // it, and what comes before the first is a block of its own.
@@ -79,11 +86,15 @@ function SegmentsText({ segments }: { segments: readonly Segment[] }) {
   return (
     <>
       {blocks
-        .filter((block) => block.body.length > 0 || block.lead !== undefined)
+        .filter((block, i) => i > 0 || block.body.length > 0)
         .map((block) => (
           <p key={block.key} className="break-words whitespace-pre-wrap">
             {block.lead !== undefined && `${block.lead} `}
-            {block.body}
+            {block.body.length === 0 && block.lead === undefined ? (
+              <br />
+            ) : (
+              block.body
+            )}
           </p>
         ))}
     </>
@@ -152,7 +163,7 @@ export function ReleaseView({
                       search={{ board: b.id }}
                       replace
                       onClick={() => setJump(undefined)}
-                      aria-current={b.id === board.id ? "true" : undefined}
+                      aria-current={b.id === board.id ? "page" : undefined}
                       className={`inline-flex min-h-11 items-center rounded-md border border-border px-3 hover:bg-surface-hover ${
                         b.id === board.id ? currentClass : ""
                       }`}
@@ -258,11 +269,11 @@ function NodeEntry({
     <article
       ref={entry}
       tabIndex={-1}
-      aria-label={nodeTitleText(t, node.title ?? "")}
+      aria-label={nodeName(t, node)}
       className="space-y-2 rounded-md border border-border p-3"
     >
       <h4 className="font-medium break-words">
-        {nodeTitleText(t, node.title ?? "")}
+        {nodeName(t, node)}
         {node.id === board.entryNodeId && (
           <span className="text-fg-muted"> · {t("releases.view.entry")}</span>
         )}
@@ -292,7 +303,7 @@ function NodeEntry({
               className={textLink}
             >
               {t("releases.view.jumps_to", {
-                node: nodeTitleText(t, target.node.title ?? ""),
+                node: nodeName(t, target.node),
                 board: target.board.name,
               })}
             </Link>
@@ -359,12 +370,11 @@ function Choices({
   if (choices.length === 0) {
     return null;
   }
-  const titleOf = (id: string) => {
-    const node = [...board.reached, ...board.unreached].find(
-      (n) => n.id === id,
+  const titleOf = (id: string) =>
+    nodeName(
+      t,
+      [...board.reached, ...board.unreached].find((n) => n.id === id),
     );
-    return nodeTitleText(t, node?.title ?? "");
-  };
   return (
     <ul className="space-y-1 border-s border-border ps-3">
       {choices.map((choice) => (
