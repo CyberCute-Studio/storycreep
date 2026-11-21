@@ -858,7 +858,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-SYNC-01 AC1–AC4 pass, AC2 against the synthetic schema version. FR-SNAP-02 AC1 compares with an addon pull and lands in item 99.
 
 ### 80. Entity diff service, diff corpus, and diff endpoint
-**Status:** todo · **Depends on:** 79
+**Status:** done ([#94](https://github.com/CyberCute-Studio/storycreep/pull/94)) · **Depends on:** 79
 **PRD:** FR-SNAP-04, FR-SYNC-02, §7.4, FR-DATA-04 (diff schema), NFR-PERF-13
 - An entity diff over published file sets: added, removed, modified, moved, and cosmetic. Field before and after values. Word-level text diffs. A flag for whether an expression's referenced entities changed: `Compare` of two snapshots' files at one version of the format, of each entity by its ID and every field that its file holds it with, an added or removed one named by what identifies it alone, the changes of what boards hold grouped by board, and the summary's counts of each kind (`server/internal/diff`, `Words`, N87).
 - The diff JSON Schema, `schema/diff/v1/diff.schema.json`, of the Go types (`Schema`). `/schema/diff-corpus` with pairs of file sets and their expected diffs: sets of version 1's fixture project changed, its cases, and its word cases, written in Go (`sets_test.go`, `cases_test.go`), whose README specifies the diff whole (N87).
