@@ -3,6 +3,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
+import { useProjectDocument } from "../document/react";
 import { projectQuery } from "../project/queries";
 import { DiffView } from "../releases/DiffView";
 import {
@@ -44,7 +45,8 @@ export const Route = createFileRoute("/projects/$projectId/releases/compare")({
 // FR-SNAP-04, J4, plan note N88), which the address names, so that a link
 // reaches it, and which it picks otherwise (comparedPair): a side that the
 // address leaves out is the release next to the other. A diff into the draft
-// is of the draft as the page read it, which its button reads again.
+// is of the draft as the page read it, which its button reads again, as it
+// does a comparison of two releases that failed.
 function Compare() {
   const { t } = useTranslation();
   const { projectId } = Route.useParams();
@@ -53,11 +55,14 @@ function Compare() {
   const project = useSuspenseQuery(projectQuery(projectId)).data;
   const session = useSuspenseQuery(sessionQuery).data;
   const ready = useSuspenseQuery(readyReleasesQuery(projectId)).data;
+  const doc = useProjectDocument(projectId);
   const { from, to } = comparedPair(ready, search.from, search.to);
   const diff = useQuery({
-    ...diffQuery(projectId, from ?? "", to, session),
+    ...diffQuery(doc, from ?? "", to, session),
     enabled: from !== undefined,
   });
+  // Still so while it is read again, so that the button keeps the focus.
+  const failed = diff.data === undefined && diff.errorUpdateCount > 0;
   const choose = (side: "from" | "to", value: string) =>
     void navigate({
       search: { from, to, [side]: value },
@@ -114,16 +119,18 @@ function Compare() {
               <option value={draft}>{t("releases.compare.draft")}</option>
             </SelectField>
           </div>
-          {to === draft && (
+          {(to === draft || failed) && (
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 onClick={() => void diff.refetch({ cancelRefetch: false })}
               >
                 {t("releases.compare.again")}
               </Button>
-              <p className="text-fg-muted">
-                {t("releases.compare.draft_as_read")}
-              </p>
+              {to === draft && (
+                <p className="text-fg-muted">
+                  {t("releases.compare.draft_as_read")}
+                </p>
+              )}
             </div>
           )}
           {diff.isPending && <p>{t("releases.compare.loading")}</p>}

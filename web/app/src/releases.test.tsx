@@ -15,7 +15,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { readProjectAgain } from "./project/queries";
 import { renderApp, testSession } from "./test/app";
 import { fakeApi, refused, startPage, testProject } from "./test/fake";
@@ -228,6 +228,34 @@ async function openDialog(user: ReturnType<typeof userEvent.setup>) {
   return dialog;
 }
 
+/** A refusal of a version as the server words it, at the version's field. */
+const notNewerBody = {
+  code: "version_not_newer",
+  message: "This version is not newer than the project's latest release.",
+  details: {
+    latest_version: "1.4.1",
+    proposed_version: "1.4.2",
+    errors: [
+      {
+        location: "body.version",
+        message: "is not greater than 1.4.1, the newest version",
+      },
+    ],
+  },
+};
+
+/** Returns the release's files with the JSON of the file at path changed by change. */
+function filesWith(path: string, change: (file: never) => void) {
+  const files = releaseFiles();
+  const file = JSON.parse(new TextDecoder().decode(files.get(path))) as never;
+  change(file);
+  files.set(
+    path,
+    new TextEncoder().encode(JSON.stringify(file)) as Uint8Array<ArrayBuffer>,
+  );
+  return files;
+}
+
 /** Returns the calls of operation that calls made. */
 function callsOf(calls: ReturnType<typeof fakeApi>, operation: string) {
   return calls.mock.calls.filter(([op]) => op === operation);
@@ -373,6 +401,11 @@ describe("the list of a project's releases", () => {
       }),
     }));
     const created = vi.fn((_: Blob) => "blob:release");
+    const { createObjectURL, revokeObjectURL } = URL;
+    onTestFinished(() => {
+      URL.createObjectURL = createObjectURL;
+      URL.revokeObjectURL = revokeObjectURL;
+    });
     URL.createObjectURL = created;
     URL.revokeObjectURL = vi.fn();
     const clicked: string[] = [];
@@ -631,7 +664,7 @@ describe("publishing a release", () => {
     const dialog = await openDialog(user);
     expect(
       await within(dialog).findByText(
-        "2 entities removed. Consider the major version 2.0.0.",
+        "This draft removes content or retypes a variable. Consider the major version 2.0.0.",
       ),
     ).toBeDefined();
     const version = within(dialog).getByRole("textbox", {
@@ -676,7 +709,7 @@ describe("publishing a release", () => {
     const dialog = await openDialog(userEvent.setup());
     expect(
       await within(dialog).findByText(
-        "1 variable retyped. Consider the major version 2.0.0.",
+        "This draft removes content or retypes a variable. Consider the major version 2.0.0.",
       ),
     ).toBeDefined();
   });
@@ -691,14 +724,49 @@ describe("publishing a release", () => {
     expect(within(dialog).queryByRole("button", { name: /^Use / })).toBeNull();
   });
 
+  it("reads the diff that it suggests from once the page's batches are answered", async () => {
+    const calls = releasesPage({
+      diff: () => diffOf({ summary: { ...diffOf().summary, removed: 1 } }),
+    });
+    const { documents } = await openReleases();
+    const doc = documents.get(testProject.id);
+    act(() => doc.store.setState({ sending: 1 }));
+    const dialog = await openDialog(userEvent.setup());
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(callsOf(calls, "diffSnapshots")).toHaveLength(0);
+    act(() => doc.store.setState({ sending: 0 }));
+    expect(
+      await within(dialog).findByText(/Consider the major version 2\.0\.0/),
+    ).toBeDefined();
+    expect(callsOf(calls, "diffSnapshots")).toHaveLength(1);
+  });
+
+  it("says nothing of a failed comparison once the version is of a greater major", async () => {
+    const calls = releasesPage({
+      diff: () => {
+        throw refused(500, { code: "internal" });
+      },
+    });
+    await openReleases();
+    const user = userEvent.setup();
+    const dialog = await openDialog(user);
+    const notice = /could not be compared/;
+    expect(await within(dialog).findByText(notice)).toBeDefined();
+    // The route counts in the rate limit of writes, so it is sent once.
+    expect(callsOf(calls, "diffSnapshots")).toHaveLength(1);
+    const version = within(dialog).getByRole("textbox", { name: /Version/ });
+    await waitFor(() =>
+      expect((version as HTMLInputElement).value).toBe("1.4.1"),
+    );
+    await user.clear(version);
+    await user.type(version, "2.0.0");
+    expect(within(dialog).queryByText(notice)).toBeNull();
+  });
+
   it("shows a version that is not newer at its field", async () => {
     releasesPage({
       publish: () => {
-        throw refused(409, {
-          code: "version_not_newer",
-          message:
-            "This version is not newer than the project's latest release.",
-        });
+        throw refused(409, notNewerBody);
       },
     });
     await openReleases();
@@ -726,11 +794,7 @@ describe("publishing a release", () => {
       next: () => ({ version: proposed, latest_version: "1.4.0" }),
       publish: () => {
         proposed = "1.4.2";
-        throw refused(409, {
-          code: "version_not_newer",
-          message:
-            "This version is not newer than the project's latest release.",
-        });
+        throw refused(409, notNewerBody);
       },
     });
     await openReleases();
@@ -749,7 +813,7 @@ describe("publishing a release", () => {
     await waitFor(() =>
       expect(version.getAttribute("aria-invalid")).not.toBe("true"),
     );
-    expect(within(dialog).queryByText(/is not newer/)).toBeNull();
+    expect(within(dialog).queryByText(/is not greater/i)).toBeNull();
   });
 });
 
@@ -810,7 +874,7 @@ describe("a release's read-only view", () => {
     });
   });
 
-  it("gives a jumper's target the focus on its board", async () => {
+  it("opens the board of a jumper's target", async () => {
     releasesPage();
     renderApp(`/projects/${testProject.id}/releases/${newerId}`, {
       session: testSession,
@@ -820,11 +884,49 @@ describe("a release's read-only view", () => {
       await screen.findByRole("link", { name: "Jumps to Summit on Tower" }),
     );
     await screen.findByText("The wind howls.");
-    await waitFor(() =>
-      expect(document.activeElement).toBe(
-        screen.getByRole("article", { name: "Summit" }),
-      ),
+    expect(
+      screen.getByRole("link", { name: "Tower" }).getAttribute("aria-current"),
+    ).toBe("page");
+  });
+
+  it("names a jumper's target on its own board, with no link", async () => {
+    const files = filesWith(
+      "boards/harbour.json",
+      (file: { nodes: { id: string; target?: unknown }[] }) => {
+        const jumper = file.nodes.find((n) => n.id === "nd_e");
+        if (jumper !== undefined) {
+          jumper.target = { boardId: harbourId, nodeId: "nd_b" };
+        }
+      },
     );
+    releasesPage({ zip: await zipOf(files) });
+    renderApp(`/projects/${testProject.id}/releases/${newerId}`, {
+      session: testSession,
+    });
+    expect(await screen.findByText("Jumps to Reply on Harbour")).toBeDefined();
+    expect(
+      screen.queryByRole("link", { name: "Jumps to Reply on Harbour" }),
+    ).toBeNull();
+  });
+
+  it("shows the blank line of a text that begins with an empty paragraph", async () => {
+    const files = filesWith(
+      "boards/tower.json",
+      (file: { nodes: { text?: { segments: unknown[] } }[] }) => {
+        file.nodes[0].text?.segments.unshift({ kind: "paragraph" });
+      },
+    );
+    releasesPage({ zip: await zipOf(files) });
+    renderApp(
+      `/projects/${testProject.id}/releases/${newerId}?board=${towerId}`,
+      { session: testSession },
+    );
+    const line = await screen.findByText("The wind howls.");
+    const paragraph = line.closest("p") as HTMLElement;
+    const before = paragraph.previousElementSibling;
+    expect(before?.tagName).toBe("P");
+    expect(before?.querySelector("br")).not.toBeNull();
+    expect(before?.textContent).toBe("");
   });
 
   it("spends no export on a read that failed as the window gets the focus again", async () => {
@@ -1126,6 +1228,30 @@ describe("comparing releases", () => {
       { session: testSession },
     );
     await screen.findByText("These two are the same.");
+    expect(screen.queryByRole("button", { name: "Compare again" })).toBeNull();
+  });
+
+  it("offers a failed comparison of two releases again", async () => {
+    let fails = true;
+    const calls = releasesPage({
+      diff: () => {
+        if (fails) {
+          throw refused(500, { code: "internal" });
+        }
+        return diffOf();
+      },
+    });
+    renderApp(
+      `/projects/${testProject.id}/releases/compare?from=${olderId}&to=${newerId}`,
+      { session: testSession },
+    );
+    const again = await screen.findByRole("button", { name: "Compare again" });
+    // The route counts in the rate limit of writes, so it is sent once.
+    expect(callsOf(calls, "diffSnapshots")).toHaveLength(1);
+    fails = false;
+    await userEvent.setup().click(again);
+    await screen.findByText("These two are the same.");
+    expect(callsOf(calls, "diffSnapshots")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Compare again" })).toBeNull();
   });
 

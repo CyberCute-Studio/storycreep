@@ -1345,7 +1345,7 @@
   "releases.publish.cancel": "Cancel",
   "releases.publish.checking": "Validating the draft…",
   "releases.publish.counts": "{errors, plural, one {# error} other {# errors}}, {warnings, plural, one {# warning} other {# warnings}}",
-  "releases.publish.major_suggested": "{removed, plural, =0 {} one {# entity removed. } other {# entities removed. }}{retyped, plural, =0 {} one {# variable retyped. } other {# variables retyped. }}Consider the major version {major}.",
+  "releases.publish.major_suggested": "This draft removes content or retypes a variable. Consider the major version {major}.",
   "releases.publish.major_unsure": "Too many variables changed to tell whether one was retyped. Consider whether this needs a major version.",
   "releases.publish.no_diff": "The draft could not be compared with the last release, so no version is suggested.",
   "releases.publish.note": "Changelog note",

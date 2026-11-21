@@ -71,7 +71,7 @@ export async function zipOf(
 
 const text = (value: string) => ({
   preview: value,
-  segments: [{ kind: "paragraph" }, { kind: "text", marks: [], value }],
+  segments: [{ kind: "text", marks: [], value }],
 });
 
 const condition = (source: string) => ({
@@ -157,10 +157,7 @@ export function releaseFiles(): Map<string, Uint8Array<ArrayBuffer>> {
         to: "nd_c",
         order: 1,
         label: {
-          segments: [
-            { kind: "paragraph" },
-            { kind: "text", marks: [], value: "Leave" },
-          ],
+          segments: [{ kind: "text", marks: [], value: "Leave" }],
         },
       },
       {
@@ -171,10 +168,7 @@ export function releaseFiles(): Map<string, Uint8Array<ArrayBuffer>> {
         order: 0,
         condition: condition("gold > 0"),
         label: {
-          segments: [
-            { kind: "paragraph" },
-            { kind: "text", marks: ["bold"], value: "Ask" },
-          ],
+          segments: [{ kind: "text", marks: ["bold"], value: "Ask" }],
         },
       },
       { id: "cn_if", from: "nd_c", fromPort: "bo_if", to: "nd_e", order: 0 },

@@ -1,19 +1,53 @@
 import type { Diff, EntityChange } from "@storycreep/shared/api";
 import { describe, expect, it } from "vitest";
+import { refused } from "../test/fake";
 import { releaseFiles, zipOf } from "../test/release";
 import { readRelease } from "./content";
 import {
+  buildPoll,
   comparedPair,
   draft,
   majorChanges,
   majorOf,
   nextMajor,
+  releaseQuery,
   versionPattern,
 } from "./queries";
 import { readZip } from "./zip";
 
 // What the pages of a project's releases read of a release's zip, and what
 // of a diff suggests a major version (PRD FR-SNAP-02, §7.3, plan note N88).
+
+describe("the poll of a build", () => {
+  const next = (status: string, error: unknown) =>
+    (
+      releaseQuery("prj", "snp").refetchInterval as unknown as (query: {
+        state: { data: { status: string }; error: unknown };
+      }) => number | false
+    )({ state: { data: { status }, error } });
+
+  it("reads a building snapshot again, also after a failure of its own", () => {
+    expect(next("building", null)).toBe(buildPoll);
+    expect(next("building", new Error("no answer"))).toBe(buildPoll);
+    expect(next("building", refused(500, { code: "internal" }))).toBe(
+      buildPoll,
+    );
+    expect(next("ready", null)).toBe(false);
+  });
+
+  it("ends at a refusal, and waits out the rate limit", () => {
+    expect(next("building", refused(404, { code: "not_found" }))).toBe(false);
+    expect(
+      next(
+        "building",
+        refused(429, { code: "rate_limited" }, { "Retry-After": "30" }),
+      ),
+    ).toBe(30_000);
+    expect(next("building", refused(429, { code: "rate_limited" }))).toBe(
+      30_000,
+    );
+  });
+});
 
 describe("readZip", () => {
   it("reads each member, deflated or stored, byte for byte", async () => {

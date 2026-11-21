@@ -13,7 +13,7 @@ import type {
 } from "@storycreep/shared/published";
 import { Link } from "@tanstack/react-router";
 import type { TFunction } from "i18next";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { nodeTitleText } from "../content/textNames";
 import { marked } from "../script/RichText";
@@ -33,7 +33,9 @@ function nodeName(t: TFunction, node: Node | undefined): string {
 /** A text's segments as the page shows them: its paragraphs, an empty one as a blank line, and list items, as plain blocks, each of its inline segments with its marks. */
 function SegmentsText({ segments }: { segments: readonly Segment[] }) {
   // Each paragraph or list item begins a block of the inline segments after
-  // it, and what comes before the first is a block of its own.
+  // it, and what comes before the first is a block of its own, which is an
+  // empty first paragraph where a paragraph segment is the first, since the
+  // format gives the first paragraph none, and nothing before a first item.
   const blocks: {
     key: number;
     lead?: string;
@@ -86,7 +88,10 @@ function SegmentsText({ segments }: { segments: readonly Segment[] }) {
   return (
     <>
       {blocks
-        .filter((block, i) => i > 0 || block.body.length > 0)
+        .filter(
+          (block, i) =>
+            i > 0 || block.body.length > 0 || segments[0]?.kind === "paragraph",
+        )
         .map((block) => (
           <p key={block.key} className="break-words whitespace-pre-wrap">
             {block.lead !== undefined && `${block.lead} `}
@@ -101,24 +106,14 @@ function SegmentsText({ segments }: { segments: readonly Segment[] }) {
   );
 }
 
-/** Returns the items of list that Show more has shown so far, and at least as far as the index reach, as a jumper's target. */
-function useShown<T>(list: readonly T[], reach = -1) {
+/** Returns the items of list that Show more has shown so far. */
+function useShown<T>(list: readonly T[]) {
   const [count, setCount] = useState(shownAtOnce);
-  const shown = Math.max(
-    count,
-    (Math.floor(reach / shownAtOnce) + 1) * shownAtOnce,
-  );
   return {
-    items: list.slice(0, shown),
-    rest: Math.max(0, list.length - shown),
-    more: () => setCount(shown + shownAtOnce),
+    items: list.slice(0, count),
+    rest: Math.max(0, list.length - count),
+    more: () => setCount(count + shownAtOnce),
   };
-}
-
-/** A press of a jumper's link: the node that it leads to, and which press it was, so that pressing it again moves the focus again. */
-interface Jump {
-  nodeId: string;
-  press: number;
 }
 
 /** The button that shows more of a list, while it has more. */
@@ -140,9 +135,6 @@ export function ReleaseView({
   const { t } = useTranslation();
   const board =
     content.boards.find((b) => b.id === boardId) ?? content.boards[0];
-  const [jump, setJump] = useState<Jump>();
-  const onJump = (nodeId: string) =>
-    setJump((last) => ({ nodeId, press: (last?.press ?? 0) + 1 }));
   return (
     <div className="space-y-6">
       <section aria-labelledby="release-boards" className="space-y-3">
@@ -162,7 +154,6 @@ export function ReleaseView({
                       to="."
                       search={{ board: b.id }}
                       replace
-                      onClick={() => setJump(undefined)}
                       aria-current={b.id === board.id ? "page" : undefined}
                       className={`inline-flex min-h-11 items-center rounded-md border border-border px-3 hover:bg-surface-hover ${
                         b.id === board.id ? currentClass : ""
@@ -174,13 +165,7 @@ export function ReleaseView({
                 ))}
               </ul>
             </nav>
-            <BoardContent
-              key={board.id}
-              board={board}
-              content={content}
-              jump={jump}
-              onJump={onJump}
-            />
+            <BoardContent key={board.id} board={board} content={content} />
           </>
         )}
       </section>
@@ -190,24 +175,17 @@ export function ReleaseView({
   );
 }
 
-/** A board's nodes, those that its entry reaches first, as far as a jump's target. */
+/** A board's nodes, those that its entry reaches first. */
 function BoardContent({
   board,
   content,
-  jump,
-  onJump,
 }: {
   board: ReleaseBoard;
   content: ReleaseContent;
-  jump: Jump | undefined;
-  onJump: (nodeId: string) => void;
 }) {
   const { t } = useTranslation();
   const all = [...board.reached, ...board.unreached];
-  const { items, rest, more } = useShown(
-    all,
-    jump === undefined ? -1 : all.findIndex((n) => n.id === jump.nodeId),
-  );
+  const { items, rest, more } = useShown(all);
   const firstUnreached = board.reached.length;
   return (
     <div className="space-y-3">
@@ -219,13 +197,7 @@ function BoardContent({
             {i === firstUnreached && (
               <p className="pb-2 font-medium">{t("releases.view.unreached")}</p>
             )}
-            <NodeEntry
-              node={node}
-              board={board}
-              content={content}
-              jump={jump}
-              onJump={onJump}
-            />
+            <NodeEntry node={node} board={board} content={content} />
           </li>
         ))}
       </ol>
@@ -234,28 +206,17 @@ function BoardContent({
   );
 }
 
-/** A node, as its type shows it, with its scripts and the choices that leave it, which takes the focus as a jumper's link to it is pressed. */
+/** A node, as its type shows it, with its scripts and the choices that leave it. A jumper names its target, with a link that opens the target's board where that is another. */
 function NodeEntry({
   node,
   board,
   content,
-  jump,
-  onJump,
 }: {
   node: Node;
   board: ReleaseBoard;
   content: ReleaseContent;
-  jump: Jump | undefined;
-  onJump: (nodeId: string) => void;
 }) {
   const { t } = useTranslation();
-  const entry = useRef<HTMLElement>(null);
-  const pressed = jump?.nodeId === node.id ? jump.press : undefined;
-  useEffect(() => {
-    if (pressed !== undefined) {
-      entry.current?.focus();
-    }
-  }, [pressed]);
   const speaker =
     node.type === "element" && node.speaker !== undefined
       ? content.components.find((c) => c.id === node.speaker)?.name
@@ -264,11 +225,16 @@ function NodeEntry({
     node.type === "jumper" && node.target !== undefined
       ? content.nodes.get(node.target.nodeId)
       : undefined;
+  const jumpsTo =
+    target === undefined
+      ? undefined
+      : t("releases.view.jumps_to", {
+          node: nodeName(t, target.node),
+          board: target.board.name,
+        });
   const leaving = board.leaving.get(node.id) ?? [];
   return (
     <article
-      ref={entry}
-      tabIndex={-1}
       aria-label={nodeName(t, node)}
       className="space-y-2 rounded-md border border-border p-3"
     >
@@ -293,19 +259,17 @@ function NodeEntry({
         <p>
           {target === undefined ? (
             t("releases.view.no_target")
+          ) : target.board.id === board.id ? (
+            jumpsTo
           ) : (
             <Link
               from="/projects/$projectId/releases/$snapshotId"
               to="."
               search={{ board: target.board.id }}
               replace
-              onClick={() => onJump(target.node.id)}
               className={textLink}
             >
-              {t("releases.view.jumps_to", {
-                node: nodeName(t, target.node),
-                board: target.board.name,
-              })}
+              {jumpsTo}
             </Link>
           )}
         </p>

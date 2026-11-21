@@ -21,11 +21,16 @@ import type { Manifest } from "@storycreep/shared/published";
 import { type QueryClient, queryOptions } from "@tanstack/react-query";
 import { allAtOnce, api, everyPage, pagedQuery } from "../api";
 import { csrfHeaders } from "../auth/session";
+import { sentWait, whenSent } from "../document/sent";
+import type { ProjectDocument } from "../document/store";
 import { type ReleaseContent, readRelease } from "./content";
 import { readZip } from "./zip";
 
 /** How often a page reads a snapshot that is building again, in milliseconds. */
 export const buildPoll = 2000;
+
+/** How long a poll waits after a refusal of the rate limit that names no time, in milliseconds. */
+const limitedPoll = 30_000;
 
 /** How long the page keeps a release's files once nothing shows them: an export counts against the hourly limit of exports, and a release's files never change. */
 const contentKept = 30 * 60 * 1000;
@@ -123,6 +128,29 @@ export function readReleasesAgain(client: QueryClient, projectId: string) {
   return client.invalidateQueries({ queryKey: listsKey(projectId) });
 }
 
+/**
+ * Returns how long a poll of a build waits after its last read, which error
+ * failed, if it did: a refusal of the rate limit is waited out, and another
+ * refusal, which reading again would only repeat, as of a snapshot that is
+ * gone, ends the poll. A read that no answer came to, or that the server
+ * failed, is tried again at the usual pace.
+ */
+function nextPoll(error: unknown): number | false {
+  if (!(error instanceof ApiError) || error.status >= 500) {
+    return buildPoll;
+  }
+  if (error.status !== 429) {
+    return false;
+  }
+  const seconds = Number.parseInt(
+    error.response.headers.get("Retry-After") ?? "",
+    10,
+  );
+  return Number.isFinite(seconds)
+    ? Math.max(buildPoll, seconds * 1000)
+    : limitedPoll;
+}
+
 /** A release's metadata, which the page reads again while it is building. */
 export function releaseQuery(projectId: string, snapshotId: string) {
   return queryOptions({
@@ -137,7 +165,9 @@ export function releaseQuery(projectId: string, snapshotId: string) {
       ).body,
     meta: { showsNotFound: true },
     refetchInterval: (query) =>
-      query.state.data?.status === "building" ? buildPoll : false,
+      query.state.data?.status === "building"
+        ? nextPoll(query.state.error)
+        : false,
   });
 }
 
@@ -203,21 +233,27 @@ export const draft = "draft";
 /**
  * The entity diff of the release from into to, a release's ID or draft
  * (PRD FR-SNAP-04). A diff of two releases never changes. One into the draft
- * is read once as what shows it opens, and again only when asked (refetch),
- * since the route counts in the rate limit of writes that the page's edits
- * need (FR-API-04), and is dropped once nothing shows it, so that the next
- * to show it reads the draft as it is then.
+ * is read once as what shows it opens, after the page's batches, or after
+ * sentWait, so that it holds what the page shows, and again only when asked
+ * (refetch), and is dropped once nothing shows it, so that the next to show
+ * it reads the draft as it is then. The route counts in the rate limit of
+ * writes that the page's edits need (FR-API-04), so no read of either is
+ * tried again of the page's accord.
  */
 export function diffQuery(
-  projectId: string,
+  doc: ProjectDocument,
   from: string,
   to: string,
   session: SignedInBody | null,
 ) {
+  const projectId = doc.projectId;
   return queryOptions({
     queryKey: [...snapshotsKey(projectId), "diff", from, to] as const,
-    queryFn: async ({ signal }): Promise<Diff> =>
-      (
+    queryFn: async ({ signal }): Promise<Diff> => {
+      if (to === draft) {
+        await whenSent(doc, signal, sentWait);
+      }
+      return (
         await api.call(
           "diffSnapshots",
           {
@@ -227,8 +263,10 @@ export function diffQuery(
           },
           { signal },
         )
-      ).body,
+      ).body;
+    },
     staleTime: "static",
+    retry: false,
     ...(to === draft ? { gcTime: 0 } : {}),
     meta: { showsRefusals: true },
   });

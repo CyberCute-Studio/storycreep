@@ -23,7 +23,7 @@ import {
 } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Dialog } from "radix-ui";
-import { type FormEvent, memo, useRef, useState } from "react";
+import { type FormEvent, memo, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
@@ -37,11 +37,7 @@ import {
   useFocusRefusal,
 } from "../ui/Field";
 import { Alert, RefusalAlert, Status, textLink } from "../ui/Page";
-import {
-  type FindingNames,
-  useFindingNames,
-  whereText,
-} from "../validation/Findings";
+import { useFindingNames, whereText } from "../validation/Findings";
 import {
   findingKey,
   validationKey,
@@ -165,13 +161,18 @@ function PublishForm({
   useFocusRefusal(form, problems);
 
   const version = typedVersion ?? proposal.data?.version ?? "";
-  const findings = report.data?.findings ?? [];
-  const errors = findings.filter((f) => f.severity === "error");
-  const warnings = findings.filter((f) => f.severity === "warning");
-  const names = useFindingNames(projectId, findings);
-  // The warnings that the box was ticked for, which it stands for only
-  // while they are the warnings that the report has.
-  const warningsKey = warnings.map(findingKey).join("\n");
+  // The warnings' key is what the box was ticked for, which it stands for
+  // only while they are the warnings that the report has. All of it is of
+  // the report alone, so that typing in the form does none of it again.
+  const { errors, warnings, warningsKey } = useMemo(() => {
+    const findings = report.data?.findings ?? [];
+    const warnings = findings.filter((f) => f.severity === "warning");
+    return {
+      errors: findings.filter((f) => f.severity === "error"),
+      warnings,
+      warningsKey: warnings.map(findingKey).join("\n"),
+    };
+  }, [report.data]);
   const acknowledged = warnings.length === 0 || ackedKey === warningsKey;
   const ackOutdated =
     warnings.length > 0 && ackedKey !== undefined && !acknowledged;
@@ -183,15 +184,15 @@ function PublishForm({
         ? "note"
         : undefined,
   );
-  // That the version is not newer is about the version's field, while it
-  // holds the version refused, which a proposal read again may replace.
+  // That the version is not newer is about the version's field, only while
+  // it holds the version refused, which a proposal read again may replace.
   const notNewer = codeOf(publish.error) === "version_not_newer";
-  const versionError =
-    problems?.version ??
-    refusal?.fields.version ??
-    (notNewer && publish.variables?.version === version
-      ? refusal?.message
-      : undefined);
+  const refusedVersion = notNewer
+    ? publish.variables?.version === version
+      ? (refusal?.fields.version ?? refusal?.message)
+      : undefined
+    : refusal?.fields.version;
+  const versionError = problems?.version ?? refusedVersion;
   const noteError = problems?.note ?? refusal?.fields.note;
 
   const ready = report.data !== undefined && errors.length === 0;
@@ -258,7 +259,7 @@ function PublishForm({
             {errors.length > 0 && (
               <>
                 <p className="text-danger">{t("releases.publish.blocked")}</p>
-                <FindingLines findings={errors} names={names} />
+                <FindingLines projectId={projectId} findings={errors} />
                 <p>
                   <Link
                     to="/projects/$projectId/validation"
@@ -272,7 +273,7 @@ function PublishForm({
             )}
             {warnings.length > 0 && (
               <>
-                <FindingLines findings={warnings} names={names} />
+                <FindingLines projectId={projectId} findings={warnings} />
                 {errors.length === 0 && (
                   <CheckboxField
                     label={t("releases.publish.acknowledge", {
@@ -359,42 +360,33 @@ function PublishForm({
 
 /**
  * Every finding of a severity, each with where it is: the box acknowledges
- * all of the warnings, so the dialog leaves none of them out.
+ * all of the warnings, so the dialog leaves none of them out. It renders
+ * again only as the findings or their names change, so that typing in the
+ * form costs nothing however many the report has.
  */
-function FindingLines({
+const FindingLines = memo(function FindingLines({
+  projectId,
   findings,
-  names,
 }: {
+  projectId: string;
   findings: readonly Finding[];
-  names: FindingNames;
 }) {
   const { t } = useTranslation();
+  const names = useFindingNames(projectId, findings);
   return (
     <ul>
       {findings.map((finding) => (
-        <FindingLine
+        <li
           key={findingKey(finding)}
-          message={finding.message}
-          where={whereText(t, finding, names)}
-        />
+          className="space-y-1 border-t border-border py-2"
+        >
+          <p className="break-words">{finding.message}</p>
+          <p className="break-words text-fg-muted">
+            {whereText(t, finding, names)}
+          </p>
+        </li>
       ))}
     </ul>
-  );
-}
-
-/** A finding, which typing in the form does not render again, however many the report has. */
-const FindingLine = memo(function FindingLine({
-  message,
-  where,
-}: {
-  message: string;
-  where: string;
-}) {
-  return (
-    <li className="space-y-1 border-t border-border py-2">
-      <p className="break-words">{message}</p>
-      <p className="break-words text-fg-muted">{where}</p>
-    </li>
   );
 });
 
@@ -420,18 +412,13 @@ function MajorSuggestion({
 }) {
   const { t } = useTranslation();
   const session = useSuspenseQuery(sessionQuery).data;
+  const doc = useProjectDocument(projectId);
   const release = useQuery(latestReleaseQuery(projectId));
   const from = release.data?.id;
   const diff = useQuery({
-    ...diffQuery(projectId, from ?? "", draft, session),
+    ...diffQuery(doc, from ?? "", draft, session),
     enabled: from !== undefined,
   });
-  if (release.isError || diff.isError) {
-    return <p className="text-fg-muted">{t("releases.publish.no_diff")}</p>;
-  }
-  if (diff.data === undefined) {
-    return null;
-  }
   const major = nextMajor(latest);
   const typedMajor = majorOf(version);
   const latestMajor = majorOf(latest);
@@ -443,6 +430,12 @@ function MajorSuggestion({
   ) {
     return null;
   }
+  if (release.isError || diff.isError) {
+    return <p className="text-fg-muted">{t("releases.publish.no_diff")}</p>;
+  }
+  if (diff.data === undefined) {
+    return null;
+  }
   const { removed, retyped, unsure } = majorChanges(diff.data);
   if (removed === 0 && retyped === 0) {
     return unsure ? (
@@ -451,13 +444,7 @@ function MajorSuggestion({
   }
   return (
     <div className="space-y-2">
-      <Status
-        message={t("releases.publish.major_suggested", {
-          removed,
-          retyped,
-          major,
-        })}
-      />
+      <Status message={t("releases.publish.major_suggested", { major })} />
       <Button onClick={() => onUse(major)}>
         {t("releases.publish.use_version", { version: major })}
       </Button>
