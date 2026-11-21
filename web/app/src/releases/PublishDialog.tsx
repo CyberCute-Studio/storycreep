@@ -1,0 +1,567 @@
+// The dialog that publishes a project's draft as a release (PRD FR-SNAP-01,
+// FR-DEP-04, §7.3, plan note N88): the validation report of the draft as it
+// is now, whose errors block publishing and whose warnings need the box that
+// acknowledges them, the proposed version, which the author may change, with
+// the major version that the diff against the last release suggests where
+// it removes content or retypes a variable, and the required note. The box
+// acknowledges the warnings that it was ticked for: the report follows the
+// draft while the dialog is open, so a warning that joins them clears it,
+// rather than be published as acknowledged unread.
+
+import {
+  ApiError,
+  type Finding,
+  type ProjectBody,
+  type PublishInputBody,
+  type Snapshot,
+} from "@storycreep/shared/api";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { Dialog } from "radix-ui";
+import { type FormEvent, memo, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { sessionQuery } from "../api";
+import { refusalOf } from "../auth/refusal";
+import { useDocumentState, useProjectDocument } from "../document/react";
+import { Button, LastingButton } from "../ui/Button";
+import { closesUnlessPending, DialogFrame, FormButtons } from "../ui/Dialog";
+import {
+  CheckboxField,
+  TextAreaField,
+  TextField,
+  useFocusRefusal,
+} from "../ui/Field";
+import { Alert, RefusalAlert, Status, textLink } from "../ui/Page";
+import { useFindingNames, whereText } from "../validation/Findings";
+import {
+  findingKey,
+  validationKey,
+  validationQuery,
+} from "../validation/queries";
+import {
+  acknowledgementOf,
+  diffQuery,
+  draft,
+  latestReleaseQuery,
+  majorChanges,
+  majorOf,
+  nextMajor,
+  nextVersionQuery,
+  publishRelease,
+  readReleasesAgain,
+  refusedByServer,
+  versionPattern,
+} from "./queries";
+
+/** The longest note, in characters (PRD FR-SNAP-01). */
+const maxNote = 2000;
+
+/** The code of a refusal of error, if the server answered with one. */
+function codeOf(error: unknown): string | undefined {
+  return error instanceof ApiError ? error.error?.code : undefined;
+}
+
+/**
+ * Reports whether a publication that failed with error may have been made
+ * all the same: anything but the server's own refusal of it.
+ */
+function mayHavePublished(error: unknown): boolean {
+  return !refusedByServer(error);
+}
+
+/**
+ * The button that opens the dialog, whose form starts anew each time it
+ * opens. onPublishing is told as an attempt is sent, and onPublished of the
+ * snapshot that it published, building, as the dialog closes.
+ */
+export function PublishButton({
+  project,
+  onPublishing,
+  onPublished,
+}: {
+  project: ProjectBody;
+  onPublishing: () => void;
+  onPublished: (snapshot: Snapshot) => void;
+}) {
+  const { t } = useTranslation();
+  const session = useSuspenseQuery(sessionQuery).data;
+  const client = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const publish = useMutation({
+    mutationFn: (body: PublishInputBody) =>
+      publishRelease(project.id, body, session),
+    onMutate: () => onPublishing(),
+    onSuccess: (snapshot) => {
+      setOpen(false);
+      onPublished(snapshot);
+      // The proposal was of the version just published, which a dialog
+      // opened again would otherwise show until it has read the next.
+      client.removeQueries({
+        queryKey: nextVersionQuery(project.id).queryKey,
+      });
+      // Not awaited, so that the request has ended for a dialog opened
+      // again while the list is being read.
+      void readReleasesAgain(client, project.id);
+    },
+    onError: (error) => {
+      // What the dialog showed was out of date: it shows what the server
+      // found instead, and the box is clear again if the warnings changed.
+      const code = codeOf(error);
+      if (code === "publish_blocked" || code === "warnings_unacknowledged") {
+        void client.invalidateQueries({
+          queryKey: validationKey(project.id),
+        });
+      } else if (code === "version_not_newer" || mayHavePublished(error)) {
+        // A release that the lost answer was of shows in the list, and
+        // moves the proposal on, rather than be published a second time.
+        void readReleasesAgain(client, project.id);
+      }
+    },
+  });
+  return (
+    <Dialog.Root
+      open={open}
+      onOpenChange={closesUnlessPending(setOpen, publish)}
+    >
+      <Dialog.Trigger asChild>
+        <Button variant="primary">{t("releases.publish.open")}</Button>
+      </Dialog.Trigger>
+      <DialogFrame title={t("releases.publish.title")}>
+        <PublishForm projectId={project.id} publish={publish} />
+      </DialogFrame>
+    </Dialog.Root>
+  );
+}
+
+/** The state of the dialog's request, which outlives its form. */
+interface PublishRequest {
+  isPending: boolean;
+  error: Error | null;
+  /** What the latest attempt sent. */
+  variables: PublishInputBody | undefined;
+  mutate: (body: PublishInputBody) => void;
+  reset: () => void;
+}
+
+/** What the form itself refuses of what was typed, by field. */
+interface Problems {
+  version?: string;
+  note?: string;
+  /** What the fields held then: a problem lasts while its own field does. */
+  held: { version: string; note: string };
+}
+
+function PublishForm({
+  projectId,
+  publish,
+}: {
+  projectId: string;
+  publish: PublishRequest;
+}) {
+  const { t } = useTranslation();
+  const doc = useProjectDocument(projectId);
+  const report = useQuery({
+    ...validationQuery(doc),
+    meta: { showsNotFound: true, showsRefusals: true },
+  });
+  const proposal = useQuery(nextVersionQuery(projectId));
+  // A publication reads the draft as the server has it, so it waits for the
+  // page's batches, whose edits the page already shows.
+  const saving = useDocumentState(doc, (state) => state.sending > 0);
+  const [typedVersion, setTypedVersion] = useState<string>();
+  const [note, setNote] = useState("");
+  const [ackedKey, setAckedKey] = useState<string>();
+  const [problems, setProblems] = useState<Problems>();
+  // The refusal whose alert an edit has answered, which the fields' own
+  // errors outlast for as long as they hold what was refused.
+  const [answered, setAnswered] = useState<Error | null>(null);
+  const form = useRef<HTMLFormElement>(null);
+  const versionField = useRef<HTMLInputElement>(null);
+  useFocusRefusal(form, publish.error);
+  useFocusRefusal(form, problems);
+
+  const version = typedVersion ?? proposal.data?.version ?? "";
+  // The warnings' key is what the box was ticked for, which it stands for
+  // only while they are the warnings that the report has. All of it is of
+  // the report alone, so that typing in the form does none of it again.
+  const { errors, warnings, warningsKey } = useMemo(() => {
+    const findings = report.data?.findings ?? [];
+    const warnings = findings.filter((f) => f.severity === "warning");
+    return {
+      errors: findings.filter((f) => f.severity === "error"),
+      warnings,
+      warningsKey: warnings.map(findingKey).join("\n"),
+    };
+  }, [report.data]);
+  const acknowledged = warnings.length === 0 || ackedKey === warningsKey;
+  const ackOutdated =
+    warnings.length > 0 && ackedKey !== undefined && !acknowledged;
+
+  const refusal = refusalOf(publish.error, t, (location) =>
+    location === "body.version"
+      ? "version"
+      : location === "body.note"
+        ? "note"
+        : undefined,
+  );
+  // A refusal of the version holds while its field holds the version refused,
+  // whatever else the author edits meanwhile.
+  const refusedCode = codeOf(publish.error);
+  const notNewer = refusedCode === "version_not_newer";
+  const refusedVersion =
+    publish.variables?.version === version
+      ? (refusal?.fields.version ?? (notNewer ? refusal?.message : undefined))
+      : undefined;
+  // That the report stood in the way is over once a newer report has come
+  // that is as of the draft that the server refused, which lists what it
+  // found, or shows that it has gone.
+  const refusedSeq =
+    publish.error instanceof ApiError
+      ? publish.error.error?.details?.seq
+      : undefined;
+  const overtaken =
+    (refusedCode === "publish_blocked" ||
+      refusedCode === "warnings_unacknowledged") &&
+    report.data !== undefined &&
+    publish.variables !== undefined &&
+    report.data.seq > publish.variables.acknowledged_seq &&
+    (typeof refusedSeq !== "number" || report.data.seq >= refusedSeq);
+  // What the form found of a field holds while the field holds what it was
+  // found in, whatever else the author edits: a proposal that arrives after
+  // the attempt may fill an empty version, which ends its problem too.
+  const versionProblem =
+    problems?.held.version === version ? problems.version : undefined;
+  const versionError = versionProblem ?? refusedVersion;
+  // A refusal of the note holds while the field holds the note that was sent.
+  const noteError =
+    (problems?.held.note === note ? problems.note : undefined) ??
+    (publish.variables?.note === note.trim()
+      ? refusal?.fields.note
+      : undefined);
+  const reportFailure = refusalOf(report.error, t)?.message;
+
+  const ready = report.data !== undefined && errors.length === 0;
+  const onSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    if (publish.isPending || report.data === undefined || !ready || saving) {
+      return;
+    }
+    if (!acknowledged) {
+      return;
+    }
+    const text = note.trim();
+    const found: Problems = { held: { version, note } };
+    if (!versionPattern.test(version)) {
+      found.version = t("releases.publish.version_invalid");
+    }
+    if (text === "") {
+      found.note = t("releases.publish.note_required");
+    } else if ([...text].length > maxNote) {
+      found.note = t("releases.publish.note_too_long", { max: maxNote });
+    }
+    if (found.version !== undefined || found.note !== undefined) {
+      publish.reset();
+      setProblems(found);
+      return;
+    }
+    setProblems(undefined);
+    // The field holds what was sent from now on, so that a proposal read
+    // again after a refusal cannot put another version in it without a word.
+    setTypedVersion(version);
+    publish.mutate({
+      version,
+      note: text,
+      acknowledged_seq: report.data.seq,
+      acknowledged_warnings: warnings.map(acknowledgementOf),
+    });
+  };
+  // An edit answers the form's alert. Each field's own error goes with a
+  // change of that field, and problems stays the same object, so that an
+  // edit of one field does not send the focus to the other's error.
+  const edited = () => setAnswered(publish.error);
+  const latest = proposal.data?.latest_version;
+  return (
+    <form ref={form} noValidate onSubmit={onSubmit} className="space-y-4">
+      <section aria-label={t("releases.publish.report")} className="space-y-2">
+        {report.isPending && <p>{t("releases.publish.checking")}</p>}
+        <Alert
+          message={
+            reportFailure === undefined || report.data === undefined
+              ? reportFailure
+              : t("releases.publish.report_outdated", {
+                  reason: reportFailure,
+                })
+          }
+        />
+        {report.data !== undefined && (
+          <>
+            <p className="font-medium">
+              {t("releases.publish.counts", {
+                errors: errors.length,
+                warnings: warnings.length,
+              })}
+            </p>
+            {errors.length > 0 && (
+              <>
+                <p className="text-danger">{t("releases.publish.blocked")}</p>
+                <FindingLines projectId={projectId} findings={errors} />
+                <p>
+                  <Link
+                    to="/projects/$projectId/validation"
+                    params={{ projectId }}
+                    className={textLink}
+                  >
+                    {t("releases.publish.open_validation")}
+                  </Link>
+                </p>
+              </>
+            )}
+            {warnings.length > 0 && (
+              <>
+                <FindingLines projectId={projectId} findings={warnings} />
+                {errors.length === 0 && (
+                  <CheckboxField
+                    label={t("releases.publish.acknowledge", {
+                      count: warnings.length,
+                    })}
+                    checked={acknowledged}
+                    // Not disabled, which would take the focus from it.
+                    aria-disabled={publish.isPending || undefined}
+                    onChange={(event) => {
+                      if (publish.isPending) {
+                        return;
+                      }
+                      setAckedKey(
+                        event.target.checked ? warningsKey : undefined,
+                      );
+                      setAnswered(publish.error);
+                    }}
+                    hint={
+                      ackOutdated
+                        ? t("releases.publish.acknowledge_outdated")
+                        : undefined
+                    }
+                  />
+                )}
+              </>
+            )}
+          </>
+        )}
+      </section>
+      <TextField
+        ref={versionField}
+        label={t("releases.publish.version")}
+        hint={
+          // A failed read again leaves the proposal that the field holds.
+          proposal.data === undefined
+            ? proposal.isError
+              ? t("releases.publish.version_unread")
+              : t("releases.publish.version_format")
+            : latest === undefined
+              ? t("releases.publish.version_first")
+              : t("releases.publish.version_hint", { latest })
+        }
+        error={versionError}
+        value={version}
+        // What was sent stays what the form shows until the server answers.
+        readOnly={publish.isPending}
+        autoComplete="off"
+        spellCheck={false}
+        onChange={(event) => {
+          setTypedVersion(event.target.value);
+          edited();
+        }}
+      />
+      {latest !== undefined && report.data !== undefined && (
+        <MajorSuggestion
+          projectId={projectId}
+          latest={latest}
+          version={version}
+          pending={publish.isPending}
+          onUse={(major) => {
+            setTypedVersion(major);
+            edited();
+            // The button goes with the suggestion that it took.
+            versionField.current?.focus();
+          }}
+        />
+      )}
+      {/* With no proposal there is no latest version to compare from. */}
+      {proposal.data === undefined &&
+        proposal.isError &&
+        report.data !== undefined && (
+          <p className="text-fg-muted">{t("releases.publish.no_diff")}</p>
+        )}
+      <TextAreaField
+        label={t("releases.publish.note")}
+        hint={t("releases.publish.note_hint", { max: maxNote })}
+        error={noteError}
+        value={note}
+        readOnly={publish.isPending}
+        required
+        onChange={(event) => {
+          setNote(event.target.value);
+          edited();
+        }}
+      />
+      <RefusalAlert
+        refusal={
+          refusal === undefined ||
+          notNewer ||
+          overtaken ||
+          answered === publish.error
+            ? undefined
+            : {
+                ...refusal,
+                // The list behind the dialog shows a release that was made.
+                message: mayHavePublished(publish.error)
+                  ? t("releases.publish.may_have_published", {
+                      reason: refusal.message,
+                    })
+                  : refusal.message,
+                fields: {},
+              }
+        }
+      />
+      <Status message={saving ? t("releases.publish.saving") : undefined} />
+      <FormButtons
+        cancel={t("releases.publish.cancel")}
+        submit={t("releases.publish.submit")}
+        pending={publish.isPending}
+        disabled={!ready || !acknowledged || saving}
+      />
+    </form>
+  );
+}
+
+/**
+ * Every finding of a severity, each with where it is: the box acknowledges
+ * all of the warnings, so the dialog leaves none of them out. It renders
+ * again only as the findings or their names change, so that typing in the
+ * form costs nothing however many the report has.
+ */
+const FindingLines = memo(function FindingLines({
+  projectId,
+  findings,
+}: {
+  projectId: string;
+  findings: readonly Finding[];
+}) {
+  const { t } = useTranslation();
+  const names = useFindingNames(projectId, findings);
+  return (
+    <ul>
+      {findings.map((finding) => (
+        <li
+          key={findingKey(finding)}
+          className="space-y-1 border-t border-border py-2"
+        >
+          <p className="break-words">{finding.message}</p>
+          <p className="break-words text-fg-muted">
+            {whereText(t, finding, names)}
+          </p>
+        </li>
+      ))}
+    </ul>
+  );
+});
+
+/**
+ * The major version that the diff of the last ready release into the draft
+ * suggests, where it removes content or gives a variable another type (PRD
+ * §7.3): a suggestion alone, since a version has no automatic meaning, which
+ * goes once the version typed is of a greater major than latest's, and
+ * which says so where it could not read the diff, rather than say nothing
+ * of a draft that may well need it. While a newer release is building it
+ * suggests nothing, as the diff would count what that release changed as
+ * the draft's.
+ */
+function MajorSuggestion({
+  projectId,
+  latest,
+  version,
+  pending,
+  onUse,
+}: {
+  projectId: string;
+  /** The newest version of the project's releases, building or ready. */
+  latest: string;
+  version: string;
+  /** Whether a publication is under way, which holds the version sent. */
+  pending: boolean;
+  onUse: (major: string) => void;
+}) {
+  const { t } = useTranslation();
+  const session = useSuspenseQuery(sessionQuery).data;
+  const doc = useProjectDocument(projectId);
+  const release = useQuery(latestReleaseQuery(projectId));
+  const from = release.data?.id;
+  const building =
+    release.data !== undefined &&
+    release.data !== null &&
+    release.data.version !== latest;
+  const diff = useQuery({
+    ...diffQuery(doc, from ?? "", draft, session),
+    // Once the newest release has been read, since the one kept from before
+    // may be older, and each diff counts in the rate limit of writes: so
+    // not after a failure either, which a query without data would send
+    // again each time that this turned true, as a read of the release does.
+    enabled: (query) =>
+      query.state.status !== "error" &&
+      from !== undefined &&
+      !building &&
+      release.isSuccess &&
+      !release.isFetching,
+  });
+  const major = nextMajor(latest);
+  const typedMajor = majorOf(version);
+  const latestMajor = majorOf(latest);
+  const moot =
+    building ||
+    major === undefined ||
+    (typedMajor !== undefined &&
+      latestMajor !== undefined &&
+      typedMajor > latestMajor);
+  const changes = diff.data === undefined ? undefined : majorChanges(diff.data);
+  const offered =
+    !moot &&
+    changes !== undefined &&
+    (changes.removed > 0 || changes.retyped > 0)
+      ? major
+      : undefined;
+  // A failed read again of the release leaves the diff that the dialog holds.
+  const notice =
+    moot || offered !== undefined
+      ? undefined
+      : changes === undefined
+        ? release.isError || diff.isError
+          ? t("releases.publish.no_diff")
+          : undefined
+        : changes.unsure
+          ? t("releases.publish.major_unsure")
+          : undefined;
+  // The live region is there before the diff comes, so that what it says
+  // of the diff is announced.
+  return (
+    <div className="space-y-2">
+      {notice !== undefined && <p className="text-fg-muted">{notice}</p>}
+      <Status
+        message={
+          offered === undefined
+            ? undefined
+            : t("releases.publish.major_suggested", { major: offered })
+        }
+      />
+      {offered !== undefined && (
+        <LastingButton unavailable={pending} onClick={() => onUse(offered)}>
+          {t("releases.publish.use_version", { version: offered })}
+        </LastingButton>
+      )}
+    </div>
+  );
+}

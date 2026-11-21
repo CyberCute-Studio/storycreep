@@ -113,6 +113,7 @@ export const commands = {
   "go.statistics": { group: "navigation", on: page, keys: [] },
   "go.validation": { group: "navigation", on: page, keys: [] },
   "go.dependencies": { group: "navigation", on: page, keys: [] },
+  "go.releases": { group: "navigation", on: page, keys: [] },
   "go.comments": { group: "navigation", on: page, keys: [] },
   "go.trash": { group: "navigation", on: page, keys: [] },
   "go.access": { group: "navigation", on: page, keys: [] },
@@ -364,6 +365,8 @@ export function commandName(t: TFunction, id: CommandId): string {
       return t("command.go.validation");
     case "go.dependencies":
       return t("command.go.dependencies");
+    case "go.releases":
+      return t("command.go.releases");
     case "go.comments":
       return t("command.go.comments");
     case "go.trash":

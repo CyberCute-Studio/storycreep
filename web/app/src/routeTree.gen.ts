@@ -42,6 +42,9 @@ import { Route as WorkspacesWorkspaceIdMembersRouteImport } from './routes/works
 import { Route as WorkspacesWorkspaceIdSettingsRouteImport } from './routes/workspaces.$workspaceId.settings'
 import { Route as WorkspacesWorkspaceIdTrashRouteImport } from './routes/workspaces.$workspaceId.trash'
 import { Route as ProjectsProjectIdBoardsBoardIdRouteImport } from './routes/projects.$projectId.boards.$boardId'
+import { Route as ProjectsProjectIdReleasesIndexRouteImport } from './routes/projects.$projectId.releases.index'
+import { Route as ProjectsProjectIdReleasesSnapshotIdRouteImport } from './routes/projects.$projectId.releases.$snapshotId'
+import { Route as ProjectsProjectIdReleasesCompareRouteImport } from './routes/projects.$projectId.releases.compare'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -221,6 +224,24 @@ const ProjectsProjectIdBoardsBoardIdRoute =
     path: '/boards/$boardId',
     getParentRoute: () => ProjectsProjectIdRoute,
   } as any)
+const ProjectsProjectIdReleasesIndexRoute =
+  ProjectsProjectIdReleasesIndexRouteImport.update({
+    id: '/releases/',
+    path: '/releases/',
+    getParentRoute: () => ProjectsProjectIdRoute,
+  } as any)
+const ProjectsProjectIdReleasesSnapshotIdRoute =
+  ProjectsProjectIdReleasesSnapshotIdRouteImport.update({
+    id: '/releases/$snapshotId',
+    path: '/releases/$snapshotId',
+    getParentRoute: () => ProjectsProjectIdRoute,
+  } as any)
+const ProjectsProjectIdReleasesCompareRoute =
+  ProjectsProjectIdReleasesCompareRouteImport.update({
+    id: '/releases/compare',
+    path: '/releases/compare',
+    getParentRoute: () => ProjectsProjectIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -256,6 +277,9 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/workspaces/$workspaceId/': typeof WorkspacesWorkspaceIdIndexRoute
   '/projects/$projectId/boards/$boardId': typeof ProjectsProjectIdBoardsBoardIdRoute
+  '/projects/$projectId/releases/$snapshotId': typeof ProjectsProjectIdReleasesSnapshotIdRoute
+  '/projects/$projectId/releases/compare': typeof ProjectsProjectIdReleasesCompareRoute
+  '/projects/$projectId/releases/': typeof ProjectsProjectIdReleasesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -288,6 +312,9 @@ export interface FileRoutesByTo {
   '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
   '/workspaces/$workspaceId': typeof WorkspacesWorkspaceIdIndexRoute
   '/projects/$projectId/boards/$boardId': typeof ProjectsProjectIdBoardsBoardIdRoute
+  '/projects/$projectId/releases/$snapshotId': typeof ProjectsProjectIdReleasesSnapshotIdRoute
+  '/projects/$projectId/releases/compare': typeof ProjectsProjectIdReleasesCompareRoute
+  '/projects/$projectId/releases': typeof ProjectsProjectIdReleasesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -324,6 +351,9 @@ export interface FileRoutesById {
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/workspaces/$workspaceId/': typeof WorkspacesWorkspaceIdIndexRoute
   '/projects/$projectId/boards/$boardId': typeof ProjectsProjectIdBoardsBoardIdRoute
+  '/projects/$projectId/releases/$snapshotId': typeof ProjectsProjectIdReleasesSnapshotIdRoute
+  '/projects/$projectId/releases/compare': typeof ProjectsProjectIdReleasesCompareRoute
+  '/projects/$projectId/releases/': typeof ProjectsProjectIdReleasesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -361,6 +391,9 @@ export interface FileRouteTypes {
     | '/projects/$projectId/'
     | '/workspaces/$workspaceId/'
     | '/projects/$projectId/boards/$boardId'
+    | '/projects/$projectId/releases/$snapshotId'
+    | '/projects/$projectId/releases/compare'
+    | '/projects/$projectId/releases/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -393,6 +426,9 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/workspaces/$workspaceId'
     | '/projects/$projectId/boards/$boardId'
+    | '/projects/$projectId/releases/$snapshotId'
+    | '/projects/$projectId/releases/compare'
+    | '/projects/$projectId/releases'
   id:
     | '__root__'
     | '/'
@@ -428,6 +464,9 @@ export interface FileRouteTypes {
     | '/projects/$projectId/'
     | '/workspaces/$workspaceId/'
     | '/projects/$projectId/boards/$boardId'
+    | '/projects/$projectId/releases/$snapshotId'
+    | '/projects/$projectId/releases/compare'
+    | '/projects/$projectId/releases/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -679,6 +718,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdBoardsBoardIdRouteImport
       parentRoute: typeof ProjectsProjectIdRoute
     }
+    '/projects/$projectId/releases/': {
+      id: '/projects/$projectId/releases/'
+      path: '/releases'
+      fullPath: '/projects/$projectId/releases/'
+      preLoaderRoute: typeof ProjectsProjectIdReleasesIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdRoute
+    }
+    '/projects/$projectId/releases/$snapshotId': {
+      id: '/projects/$projectId/releases/$snapshotId'
+      path: '/releases/$snapshotId'
+      fullPath: '/projects/$projectId/releases/$snapshotId'
+      preLoaderRoute: typeof ProjectsProjectIdReleasesSnapshotIdRouteImport
+      parentRoute: typeof ProjectsProjectIdRoute
+    }
+    '/projects/$projectId/releases/compare': {
+      id: '/projects/$projectId/releases/compare'
+      path: '/releases/compare'
+      fullPath: '/projects/$projectId/releases/compare'
+      preLoaderRoute: typeof ProjectsProjectIdReleasesCompareRouteImport
+      parentRoute: typeof ProjectsProjectIdRoute
+    }
   }
 }
 
@@ -711,6 +771,9 @@ interface ProjectsProjectIdRouteChildren {
   ProjectsProjectIdVariablesRoute: typeof ProjectsProjectIdVariablesRoute
   ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
   ProjectsProjectIdBoardsBoardIdRoute: typeof ProjectsProjectIdBoardsBoardIdRoute
+  ProjectsProjectIdReleasesSnapshotIdRoute: typeof ProjectsProjectIdReleasesSnapshotIdRoute
+  ProjectsProjectIdReleasesCompareRoute: typeof ProjectsProjectIdReleasesCompareRoute
+  ProjectsProjectIdReleasesIndexRoute: typeof ProjectsProjectIdReleasesIndexRoute
 }
 
 const ProjectsProjectIdRouteChildren: ProjectsProjectIdRouteChildren = {
@@ -727,6 +790,10 @@ const ProjectsProjectIdRouteChildren: ProjectsProjectIdRouteChildren = {
   ProjectsProjectIdVariablesRoute: ProjectsProjectIdVariablesRoute,
   ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
   ProjectsProjectIdBoardsBoardIdRoute: ProjectsProjectIdBoardsBoardIdRoute,
+  ProjectsProjectIdReleasesSnapshotIdRoute:
+    ProjectsProjectIdReleasesSnapshotIdRoute,
+  ProjectsProjectIdReleasesCompareRoute: ProjectsProjectIdReleasesCompareRoute,
+  ProjectsProjectIdReleasesIndexRoute: ProjectsProjectIdReleasesIndexRoute,
 }
 
 const ProjectsProjectIdRouteWithChildren =
