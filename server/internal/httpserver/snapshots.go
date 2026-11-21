@@ -20,6 +20,7 @@ import (
 )
 
 type publishInput struct {
+	SessionCSRFInput
 	ProjectID string `path:"project_id" doc:"The project's ID"`
 	Body      struct {
 		Version string `json:"version" pattern:"^(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$" doc:"The snapshot's version, MAJOR.MINOR.PATCH, each a number from 0 to 999,999,999 without a leading zero, which must be greater than every version of the project's snapshots that are building or ready. GET /api/v1/projects/{project_id}/snapshots/next-version proposes one."`

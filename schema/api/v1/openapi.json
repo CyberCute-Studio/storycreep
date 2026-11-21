@@ -21647,6 +21647,15 @@
         "operationId": "publishSnapshot",
         "parameters": [
           {
+            "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return: a request made with the session cookie without it is answered with 403 csrf_failed, and a request made with an API token needs none",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "schema": {
+              "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return: a request made with the session cookie without it is answered with 403 csrf_failed, and a request made with an API token needs none",
+              "type": "string"
+            }
+          },
+          {
             "description": "The project's ID",
             "in": "path",
             "name": "project_id",

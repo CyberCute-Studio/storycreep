@@ -122,28 +122,69 @@ func TestOpenAPIDocumentsEveryRoute(t *testing.T) {
 	}
 }
 
-// TestPostReadsDeclareCSRF checks that each route that reads but is a POST
-// (postReads) declares the X-CSRF-Token header, which a request of it made
-// with the session cookie needs, as every POST does, so that the document and
-// the TypeScript client hold it (SessionCSRFInput), and that its description
-// says so (tokenPostReadDoc).
-func TestPostReadsDeclareCSRF(t *testing.T) {
+// TestRoutesDeclareCSRF checks that each route that a session may call with a
+// method other than GET, HEAD, or OPTIONS declares the X-CSRF-Token header,
+// which the authenticator refuses such a request without, so that the
+// document and the TypeScript client hold it: as optional on a route that
+// takes an API token too, whose requests need none (SessionCSRFInput), and as
+// required on one that takes a session alone (CSRFInput). The routes come from
+// what each declares (api.TokenScope, api.SessionOnly), so that a new route
+// joins the test by being registered; one that needs no authenticated caller,
+// as signing in, is made without a session, so it has no CSRF token to send.
+// It checks too that the description of each says so, in the words of
+// csrfDoc for a route that takes a session alone, of tokenPostReadDoc for one
+// that reads (postReads), each of which is a route of the server, and of
+// tokenChangeDoc for any other.
+func TestRoutesDeclareCSRF(t *testing.T) {
 	s := newServer(loadConfig(t, nil), slog.New(slog.DiscardHandler))
-	for r := range postReads {
+	tokens, sessionOnly := s.main.TokenScopes(), s.main.SessionOnlyRoutes()
+	checked := 0
+	for r := range s.main.Routes() {
+		_, takesToken := tokens[r]
+		if safeMethod(r.Method) || (!takesToken && !sessionOnly[r]) {
+			continue
+		}
+		checked++
 		item := s.main.OpenAPI().Paths[r.Pattern]
 		if item == nil || api.Operations(item)[r.Method] == nil {
 			t.Errorf("the OpenAPI document does not describe %s", r)
 			continue
 		}
 		op := api.Operations(item)[r.Method]
-		if !slices.ContainsFunc(op.Parameters, func(p *huma.Param) bool {
+		i := slices.IndexFunc(op.Parameters, func(p *huma.Param) bool {
 			return p.In == "header" && p.Name == csrfHeader
-		}) {
+		})
+		switch {
+		case i < 0 && takesToken:
 			t.Errorf("%s does not declare the %s header; embed SessionCSRFInput in its input", r, csrfHeader)
+		case i < 0:
+			t.Errorf("%s does not declare the %s header; embed CSRFInput in its input", r, csrfHeader)
+		case op.Parameters[i].Required == takesToken:
+			t.Errorf("%s declares the %s header with required %v, but a route that takes a token needs it of a "+
+				"session's request alone, and a session-only route of every request", r, csrfHeader,
+				op.Parameters[i].Required)
 		}
-		if !strings.Contains(op.Description, sessionCSRFDoc("It is a POST")) {
-			t.Errorf("%s's description does not say that a session's request needs the CSRF token; end it with "+
-				"tokenPostReadDoc", r)
+		if !takesToken {
+			if !strings.Contains(op.Description, csrfDoc) {
+				t.Errorf("%s's description does not say that a request needs the CSRF token; end it with csrfDoc", r)
+			}
+			continue
+		}
+		why, helper := "It changes something", "tokenChangeDoc"
+		if postReads[r] {
+			why, helper = "It is a POST", "tokenPostReadDoc"
+		}
+		if !strings.Contains(op.Description, sessionCSRFDoc(why)) {
+			t.Errorf("%s's description does not say that a session's request needs the CSRF token; end it with %s",
+				r, helper)
+		}
+	}
+	if checked == 0 {
+		t.Error("no route takes a session with a method that needs the CSRF token")
+	}
+	for r := range postReads {
+		if _, ok := s.main.Routes()[r]; !ok {
+			t.Errorf("postReads lists %s, which the server does not have", r)
 		}
 	}
 }
