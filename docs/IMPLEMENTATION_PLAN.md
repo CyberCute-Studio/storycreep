@@ -867,7 +867,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-SNAP-04 AC1–AC4 (Go side) and FR-SYNC-02 AC1–AC2 pass, and a benchmark of item 45's suite reports NFR-PERF-13 on two snapshots of `large`.
 
 ### 81. Releases UI
-**Status:** todo · **Depends on:** 70, 80
+**Status:** done ([#96](https://github.com/CyberCute-Studio/storycreep/pull/96)) · **Depends on:** 70, 80
 **PRD:** FR-SNAP-01/02/04 (UI), FR-DEP-04 (UI), §7.3 versioning
 - Publish dialog: validation report, warning acknowledgement, required note, and a proposed version with a major-bump suggestion based on the diff: one checkbox for the exact set of warnings that it was ticked for, ticked only while the report lists that set, and the next major version where the diff of the newest ready release into the draft removes an entity or retypes a variable (`web/app/src/releases/PublishDialog.tsx`, `majorChanges`, N88).
 - Release list with build status, read again while a snapshot is building (`routes/projects.$projectId.releases.index.tsx`). Read-only snapshot viewing that cannot emit commands: a page of the release's boards, variables, and components, read from its zip (`ReleaseView.tsx`, `content.ts`, `zip.ts`). Zip download. Web diff view (`DiffView.tsx`, `…/releases/compare`, N88).
