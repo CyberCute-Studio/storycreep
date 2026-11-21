@@ -5762,6 +5762,10 @@ export interface Operations {
         /** The project's ID */
         project_id: string;
       };
+      headers?: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return: a request made with the session cookie without it is answered with 403 csrf_failed, and a request made with an API token needs none */
+        "X-CSRF-Token"?: string;
+      };
       body: PublishInputBody;
     };
     responses: {
