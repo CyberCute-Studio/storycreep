@@ -296,6 +296,13 @@ test.describe("a board's canvas", () => {
     // Nor on the minimap, where a click of the primary button centres the
     // canvas.
     const minimap = canvas.locator("canvas").last();
+    // The project's navigation takes a second row in a narrower window, or
+    // with a wider font, which can leave the minimap's lower edge below the
+    // window, where a click reaches nothing: the page scrolls just enough,
+    // so that the board's name above the canvas stays in the window too.
+    await minimap.evaluate((element) =>
+      element.scrollIntoView({ block: "nearest" }),
+    );
     const mbox = await minimap.boundingBox();
     if (mbox === null) {
       throw new Error("the minimap is not shown");
