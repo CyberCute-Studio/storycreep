@@ -116,7 +116,11 @@ func registerTextExport(m *api.Mux, snapshots *snapshot.Service) {
 		Summary:     "Export a snapshot's text",
 		Description: "Returns the narrative text of a ready snapshot, or of one of its boards, as a CSV or a JSON file " +
 			"(PRD FR-TEXT-05), as its files hold it. A snapshot that is building, or that failed, has no files, and " +
-			"is answered with 409 snapshot_not_ready, whose details.status says which." + textExportDoc +
+			"is answered with 409 snapshot_not_ready, whose details.status says which. A snapshot stored at a newer " +
+			"version of the published format than the server writes, as only a server that reads both versions " +
+			"holds, whose content the server's version cannot express, is answered with 409 schema_unrepresentable, " +
+			"whose details.schema is the server's version and details.constructs lists each value that it cannot " +
+			"express (PRD §6.4)." + textExportDoc +
 			" A board that the snapshot does not have is answered with 404 not_found." + projectNotFoundDoc +
 			tokenNotFoundDoc + snapshotNotFoundDoc + tokenAuthDoc(scope.ProjectRead),
 		Tags:      []string{"Snapshots"},

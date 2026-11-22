@@ -10,6 +10,8 @@ import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api";
 import { refusalOf } from "../auth/refusal";
+import { sentWait, whenSent } from "../document/sent";
+import type { ProjectDocument } from "../document/store";
 import { saveDownload } from "../releases/queries";
 import { Button } from "../ui/Button";
 import { SelectField } from "../ui/Field";
@@ -50,17 +52,24 @@ export async function downloadText({
 /**
  * The form that downloads the text export of the project projectId: of
  * release, or else of the draft, and of the whole project or one of boards.
- * A board that the list no longer holds, as one that another session deleted
- * while the form was open, is no longer chosen, so that the form never asks
- * for what it does not show. Its choices wait while a download is on its way,
- * so that a refusal is always of what they show.
+ * A draft's is read once doc's batches have been answered, or after sentWait,
+ * as the statistics beside it are, so that it holds the edits that the page
+ * shows. A board that the list no longer holds, as one that another session
+ * deleted while the form was open, is no longer chosen, even if it comes
+ * back, so that the form never asks for what it does not show. Its choices
+ * wait while a download is on its way. A refusal stays until the next
+ * download or a change of a choice, even if the board that it was of has left
+ * the list, as it says why no file came. Its page keys it by what it exports,
+ * so that a refusal is never shown of another release or project.
  */
 export function TextExport({
   projectId,
+  doc,
   release,
   boards,
 }: {
   projectId: string;
+  doc?: ProjectDocument;
   release?: Pick<Snapshot, "id" | "version">;
   boards: readonly { id: string; name: string }[];
 }) {
@@ -69,14 +78,21 @@ export function TextExport({
   const [chosen, setChosen] = useState("");
   const [format, setFormat] = useState<TextExportFormat>("csv");
   const board = boards.some((b) => b.id === chosen) ? chosen : "";
+  if (board !== chosen) {
+    setChosen("");
+  }
   const download = useMutation({
-    mutationFn: () =>
-      downloadText({
+    mutationFn: async () => {
+      if (doc !== undefined) {
+        await whenSent(doc, new AbortController().signal, sentWait);
+      }
+      await downloadText({
         projectId,
         release,
         format,
         ...(board === "" ? {} : { board }),
-      }),
+      });
+    },
   });
   // A refusal is of what was asked for, so it goes once the form asks for
   // something else, which it cannot while a download is on its way.

@@ -121,6 +121,7 @@ function Release() {
           only lists the release's boards to narrow it to. */}
       {release.status === "ready" && (
         <TextExport
+          key={release.id}
           projectId={projectId}
           release={release}
           boards={content.data?.boards ?? []}

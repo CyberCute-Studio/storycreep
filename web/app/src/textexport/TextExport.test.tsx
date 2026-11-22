@@ -5,7 +5,9 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createStore } from "zustand/vanilla";
 import { api } from "../api";
+import type { DocumentState, ProjectDocument } from "../document/store";
 import { refused } from "../test/fake";
 import { TextExport } from "./TextExport";
 
@@ -143,6 +145,70 @@ describe("the text export's form", () => {
       path: { project_id: "prj_a" },
       query: { format: "csv" },
     });
+  });
+
+  it("does not choose a board again when it comes back to the list", async () => {
+    vi.spyOn(api, "call").mockResolvedValue(file("harbour-draft-text.csv"));
+    const Wrapper = await wrapper();
+    const form = (list: typeof boards) => (
+      <Wrapper>
+        <TextExport projectId="prj_a" boards={list} />
+      </Wrapper>
+    );
+    const { rerender } = render(form(boards));
+    const scope = screen.getByRole("combobox", { name: "Export" });
+    await userEvent.selectOptions(scope, "bd_b");
+    rerender(form(boards.slice(0, 1)));
+    rerender(form(boards));
+    expect(scope).toHaveProperty("value", "");
+  });
+
+  it("keeps a refusal whose board has left the list, as it says why no file came", async () => {
+    vi.spyOn(api, "call").mockRejectedValue(
+      refused(404, { code: "not_found" }),
+    );
+    const Wrapper = await wrapper();
+    const form = (list: typeof boards) => (
+      <Wrapper>
+        <TextExport projectId="prj_a" boards={list} />
+      </Wrapper>
+    );
+    const { rerender } = render(form(boards));
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "Export" }),
+      "bd_b",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Download text" }),
+    );
+    const alert = screen.getByRole("alert");
+    await waitFor(() => expect(alert.textContent).not.toBe(""));
+    rerender(form(boards.slice(0, 1)));
+    expect(screen.getByRole("alert").textContent).not.toBe("");
+  });
+
+  it("reads the draft once the page's batches have been answered", async () => {
+    const call = vi
+      .spyOn(api, "call")
+      .mockResolvedValue(file("harbour-draft-text.csv"));
+    const store = createStore<Pick<DocumentState, "sending">>(() => ({
+      sending: 1,
+    }));
+    render(
+      <TextExport
+        projectId="prj_a"
+        doc={{ store } as unknown as ProjectDocument}
+        boards={boards}
+      />,
+      { wrapper: await wrapper() },
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Download text" }),
+    );
+    expect(call).not.toHaveBeenCalled();
+    store.setState({ sending: 0 });
+    await waitFor(() => expect(saved).toHaveLength(1));
+    expect(call).toHaveBeenCalledTimes(1);
   });
 
   it("says why the server refused it", async () => {

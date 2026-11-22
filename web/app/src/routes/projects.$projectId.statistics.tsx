@@ -149,7 +149,12 @@ function Statistics() {
           </div>
         )}
       </section>
-      <TextExport projectId={projectId} boards={boards} />
+      <TextExport
+        key={projectId}
+        projectId={projectId}
+        doc={doc}
+        boards={boards}
+      />
     </Page>
   );
 }
