@@ -273,6 +273,12 @@ func insert(ctx context.Context, q *queries.Queries, p queries.InsertAuthoringEx
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return row, fmt.Errorf("authoring: add the export: %w", err)
 		}
+		// One past its time, which its user can no longer read, holds the way
+		// no longer. Its expiry job still deletes it, and its file.
+		if err := q.FailExpiredAuthoringExports(ctx, queries.FailExpiredAuthoringExportsParams{
+			WorkspaceID: p.WorkspaceID, ProjectID: p.ProjectID, RequestedBy: p.RequestedBy}); err != nil {
+			return row, fmt.Errorf("authoring: end the user's export past its time: %w", err)
+		}
 		running, err := q.AuthoringExportInProgress(ctx, queries.AuthoringExportInProgressParams{
 			WorkspaceID: p.WorkspaceID, ProjectID: p.ProjectID, RequestedBy: p.RequestedBy})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -401,8 +407,8 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 			return jobs.Cancel(err)
 		}
 		svc := s.withDB(job.DB)
-		if onlyFails(job.Attempt) {
-			return svc.fail(ctx, workspaceID, id, errors.New("every attempt at the build failed"))
+		if onlyFails(job.Attempt, job.Snoozes) {
+			return svc.fail(ctx, workspaceID, id, errors.New("the build failed, and its attempts are over"))
 		}
 		err = svc.Build(ctx, workspaceID, id)
 		if endsTheExport(ctx, err) {
@@ -448,9 +454,12 @@ func (s *Service) withDB(db *database.DB) *Service {
 	return &c
 }
 
-// onlyFails says whether the attempt of a build's job is one of those after
-// the attempts that may build, which only fail the export.
-func onlyFails(attempt int) bool { return attempt > buildAttempts }
+// onlyFails says whether a run of a build's job only fails the export: one of
+// the attempts after those that may build, or one after a snooze, which only
+// fail takes, when the database did not take the failure. River gives a
+// snoozed job its attempt's number back, so that run would otherwise build
+// again, and could hold the serial queue for another buildTimeout.
+func onlyFails(attempt, snoozes int) bool { return attempt > buildAttempts || snoozes > 0 }
 
 // endsTheExport says whether err, of a build that ran under ctx, is a failure
 // that another attempt would repeat: a project in the trash, an asset whose
@@ -513,15 +522,17 @@ func (s *Service) dropFailed(ctx context.Context, id ids.UUID, key string) {
 // has ended, and stores it under the export's key, then makes the export
 // ready. It is safe to repeat: an attempt writes the whole archive again, and
 // the store keeps a failed one from being seen. An export deleted meanwhile
-// leaves no file behind.
+// leaves no file behind: an attempt that finds its row gone deletes the file
+// again, as the attempt before may have failed to.
 func (s *Service) Build(ctx context.Context, ws, id ids.UUID) (err error) {
 	var row queries.AuthoringExport
-	started := false
+	started, gone := false, false
 	err = s.db.InTx(ctx, database.Scope{WorkspaceID: ws}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
 		var err error
 		row, err = q.AuthoringExportOfJob(ctx, queries.AuthoringExportOfJobParams{WorkspaceID: uuid(ws), ID: uuid(id)})
 		if errors.Is(err, pgx.ErrNoRows) {
+			gone = true
 			return nil
 		}
 		if err != nil {
@@ -534,8 +545,20 @@ func (s *Service) Build(ctx context.Context, ws, id ids.UUID) (err error) {
 		started = n > 0
 		return nil
 	})
-	if err != nil || !started {
+	switch {
+	case err != nil:
 		return err
+	case gone:
+		store, err := s.storage.FinalStore(ctx)
+		if err != nil {
+			return fmt.Errorf("authoring: open the store: %w", err)
+		}
+		if err := store.Delete(ctx, storageKey(ws, id)); err != nil {
+			return fmt.Errorf("authoring: delete the archive of an export that is gone: %w", err)
+		}
+		return nil
+	case !started:
+		return nil
 	}
 	c, err := s.read(ctx, row)
 	if err != nil {
@@ -608,9 +631,11 @@ func (s *Service) dropUnreferenced(ctx context.Context, store blob.Store, ws, id
 	return nil
 }
 
-// Expire deletes the export id and its file, once its time has passed. The
-// orphan reconciliation deletes a file that this leaves behind, as when the
-// store fails after the row is gone.
+// Expire deletes the export id and its file, once its time has passed: the
+// file first, so that a store that fails leaves the row, whose key the job's
+// next attempt deletes, and which no read shows past its time. It first ends
+// an export that is still on its way, so that a build that stores its archive
+// after the deletion finds it ended, and deletes that archive too.
 func (s *Service) Expire(ctx context.Context, ws, id ids.UUID) error {
 	var key string
 	err := s.db.InTx(ctx, database.Scope{WorkspaceID: ws}, func(tx pgx.Tx) error {
@@ -623,11 +648,14 @@ func (s *Service) Expire(ctx context.Context, ws, id ids.UUID) error {
 			return err
 		}
 		key = row.StorageKey
-		_, err = q.DeleteAuthoringExport(ctx, queries.DeleteAuthoringExportParams{WorkspaceID: uuid(ws), ID: uuid(id)})
+		_, err = q.FailAuthoringExport(ctx, queries.FailAuthoringExportParams{WorkspaceID: uuid(ws), ID: uuid(id)})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
 		return err
 	})
 	if err != nil {
-		return fmt.Errorf("authoring: delete the export: %w", err)
+		return fmt.Errorf("authoring: end the export: %w", err)
 	}
 	if key == "" {
 		return nil
@@ -638,6 +666,14 @@ func (s *Service) Expire(ctx context.Context, ws, id ids.UUID) error {
 	}
 	if err := store.Delete(ctx, key); err != nil {
 		return fmt.Errorf("authoring: delete the archive: %w", err)
+	}
+	err = s.db.InTx(ctx, database.Scope{WorkspaceID: ws}, func(tx pgx.Tx) error {
+		_, err := queries.New(tx).DeleteAuthoringExport(ctx, queries.DeleteAuthoringExportParams{WorkspaceID: uuid(ws),
+			ID: uuid(id)})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("authoring: delete the export: %w", err)
 	}
 	return nil
 }

@@ -158,6 +158,35 @@ describe("the authoring export's dialog", () => {
     );
   });
 
+  it("says that an archive past its time is gone, rather than start a download that fails", async () => {
+    const ready = {
+      ...base,
+      status: "ready" as const,
+      size_bytes: 4096,
+      file_name: "harbour-draft-authoring.zip",
+      expires_at: "2020-01-01T00:00:00Z",
+    };
+    const call = serve(ready);
+    const answer = call.getMockImplementation();
+    let expired = false;
+    call.mockImplementation((async (op: string, ...rest: unknown[]) => {
+      if (op === "getAuthoringExport" && expired) {
+        throw refused(404, { code: "not_found", message: "no such export" });
+      }
+      return (answer as (...args: unknown[]) => unknown)(op, ...rest);
+    }) as never);
+    await open();
+    const link = await screen.findByRole("link", { name: "Download archive" });
+    expired = true;
+    await userEvent.click(link);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("link", { name: "Download archive" }),
+      ).toBeNull(),
+    );
+    expect(screen.getByRole("alert")).toBeTruthy();
+  });
+
   it("follows the export on its way when the server refuses another", async () => {
     const refusal = refused(409, {
       code: "export_in_progress",

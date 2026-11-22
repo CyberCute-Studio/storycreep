@@ -246,7 +246,12 @@ function ExportForm({ projectId }: { projectId: string }) {
       />
       <RefusalAlert refusal={refusal} />
       {shown !== undefined && (
-        <ExportResult projectId={projectId} item={shown} releases={ready} />
+        <ExportResult
+          projectId={projectId}
+          item={shown}
+          releases={ready}
+          onExpired={() => void current.refetch()}
+        />
       )}
       <FormButtons
         cancel={t("authoring_export.close")}
@@ -275,10 +280,13 @@ function ExportResult({
   projectId,
   item,
   releases,
+  onExpired,
 }: {
   projectId: string;
   item: AuthoringExportBody;
   releases: readonly Snapshot[];
+  /** Reads the export again, whose refusal the form then shows. */
+  onExpired: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const version = releases.find((r) => r.id === item.snapshot_id)?.version;
@@ -329,6 +337,14 @@ function ExportResult({
           href={`/api/v1/projects/${projectId}/authoring-exports/${item.id}/download`}
           download={item.file_name}
           className={buttonClass()}
+          onClick={(event) => {
+            // The browser would report the refusal of an archive past its
+            // time as a failed download, which says nothing of why.
+            if (Date.now() >= new Date(item.expires_at).getTime()) {
+              event.preventDefault();
+              onExpired();
+            }
+          }}
         >
           {t("authoring_export.download")}
         </a>

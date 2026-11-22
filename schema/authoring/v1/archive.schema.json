@@ -836,11 +836,11 @@
           "description": "What an archive of a release leaves out, as it is about what that release does not hold."
         },
         "personalData": {
-          "description": "Whether the archive holds personal data: the display names of the people who wrote its comments and published its releases, as a full archive does.",
+          "description": "Whether the archive holds personal data, as a full archive does: the display names of the people who wrote, resolved, or are mentioned in its comments, saved its play states, muted its findings, or published its releases.",
           "type": "boolean"
         },
         "profile": {
-          "description": "full holds the comments, the play states, and the annotations, and names who wrote them; content holds none of them.",
+          "description": "full holds the comments, the play states, and the annotations, and names the people involved; content holds none of them.",
           "enum": [
             "full",
             "content"

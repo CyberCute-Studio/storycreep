@@ -147,10 +147,18 @@ ORDER BY id DESC LIMIT @row_limit;
 
 -- name: AuthoringExportInProgress :one
 -- AuthoringExportInProgress returns the ID of the user's export of the project
--- that is on its way, which keeps another from being added whatever its time.
+-- that is on its way and that its user can still read.
 SELECT id FROM authoring_export
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND requested_by = @requested_by
-    AND status IN ('queued', 'building');
+    AND status IN ('queued', 'building') AND expires_at > now();
+
+-- name: FailExpiredAuthoringExports :exec
+-- FailExpiredAuthoringExports ends the user's export of the project that is on
+-- its way past its time, which would otherwise keep another from being added
+-- until its expiry job has run.
+UPDATE authoring_export SET status = 'failed', finished_at = now()
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND requested_by = @requested_by
+    AND status IN ('queued', 'building') AND expires_at <= now();
 
 -- name: AuthoringExportOfJob :one
 -- AuthoringExportOfJob returns the export of a job, whoever asked for it.

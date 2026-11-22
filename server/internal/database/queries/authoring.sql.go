@@ -369,7 +369,7 @@ func (q *Queries) AuthoringExport(ctx context.Context, arg AuthoringExportParams
 const authoringExportInProgress = `-- name: AuthoringExportInProgress :one
 SELECT id FROM authoring_export
 WHERE workspace_id = $1 AND project_id = $2 AND requested_by = $3
-    AND status IN ('queued', 'building')
+    AND status IN ('queued', 'building') AND expires_at > now()
 `
 
 type AuthoringExportInProgressParams struct {
@@ -379,7 +379,7 @@ type AuthoringExportInProgressParams struct {
 }
 
 // AuthoringExportInProgress returns the ID of the user's export of the project
-// that is on its way, which keeps another from being added whatever its time.
+// that is on its way and that its user can still read.
 func (q *Queries) AuthoringExportInProgress(ctx context.Context, arg AuthoringExportInProgressParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, authoringExportInProgress, arg.WorkspaceID, arg.ProjectID, arg.RequestedBy)
 	var id pgtype.UUID
@@ -933,6 +933,26 @@ func (q *Queries) FailAuthoringExport(ctx context.Context, arg FailAuthoringExpo
 	var storage_key string
 	err := row.Scan(&storage_key)
 	return storage_key, err
+}
+
+const failExpiredAuthoringExports = `-- name: FailExpiredAuthoringExports :exec
+UPDATE authoring_export SET status = 'failed', finished_at = now()
+WHERE workspace_id = $1 AND project_id = $2 AND requested_by = $3
+    AND status IN ('queued', 'building') AND expires_at <= now()
+`
+
+type FailExpiredAuthoringExportsParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	RequestedBy pgtype.UUID
+}
+
+// FailExpiredAuthoringExports ends the user's export of the project that is on
+// its way past its time, which would otherwise keep another from being added
+// until its expiry job has run.
+func (q *Queries) FailExpiredAuthoringExports(ctx context.Context, arg FailExpiredAuthoringExportsParams) error {
+	_, err := q.db.Exec(ctx, failExpiredAuthoringExports, arg.WorkspaceID, arg.ProjectID, arg.RequestedBy)
+	return err
 }
 
 const finishAuthoringExport = `-- name: FinishAuthoringExport :execrows

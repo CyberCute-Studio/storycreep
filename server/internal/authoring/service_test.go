@@ -92,14 +92,18 @@ func TestFailLeavesAnEndedExport(t *testing.T) {
 
 // TestOnlyFails checks that the attempts after the builds only fail the export
 // and that more than one does, as River discards a job whose last attempt the
-// process's death cut off, which would leave the export on its way.
+// process's death cut off, which would leave the export on its way, and that a
+// run after a snooze, which keeps its attempt's number, does not build again.
 func TestOnlyFails(t *testing.T) {
 	t.Parallel()
 	last := buildAttempts + failAttempts
 	for attempt, want := range map[int]bool{1: false, buildAttempts: false, buildAttempts + 1: true,
 		last - 1: true, last: true} {
-		if got := onlyFails(attempt); got != want {
-			t.Errorf("onlyFails(%d) is %v, want %v", attempt, got, want)
+		if got := onlyFails(attempt, 0); got != want {
+			t.Errorf("onlyFails(%d, 0) is %v, want %v", attempt, got, want)
+		}
+		if !onlyFails(attempt, 1) {
+			t.Errorf("onlyFails(%d, 1) is false, so a snoozed job would build again", attempt)
 		}
 	}
 	if last-1 <= buildAttempts {

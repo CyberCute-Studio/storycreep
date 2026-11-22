@@ -4,7 +4,7 @@ An authoring export is a zip of a project's authoring data (PRD FR-DATA-01): wha
 
 [`v1/archive.schema.json`](v1/archive.schema.json) is the JSON Schema of version 1. The server generates it from the Go types of `server/internal/authoring`, and `go test ./...` fails when it is out of date: run `go test ./internal/authoring -run TestSchemaFile -update` in `server/`. It describes an object of the archive's JSON files by their paths, so a consumer validates each file against the property of its path.
 
-**A full export contains personal data**: the comments, and the display names of the people who wrote them, saved play states, muted findings, and published releases. The archive's README says so too. A content-only export leaves all of it out.
+**A full export contains personal data**: the comments, and the display names of the people who wrote, resolved, or are mentioned in them, saved play states, muted findings, or published releases. The archive's README says so too. A content-only export leaves all of it out.
 
 ## Layout
 

@@ -106,7 +106,7 @@
   "authoring_export.latest_release": "Your latest export, of release {version}",
   "authoring_export.latest_release_unlisted": "Your latest export, of a release",
   "authoring_export.open": "Export project",
-  "authoring_export.personal_data": "A full export contains personal data: the comments, and the display names of the people who wrote them, saved play states, muted findings, and published releases. Share it only with people who may see that data.",
+  "authoring_export.personal_data": "A full export contains personal data: the comments, and the display names of the people who wrote, resolved, or are mentioned in them, saved play states, muted findings, or published releases. Share it only with people who may see that data.",
   "authoring_export.profile": "What to include",
   "authoring_export.profile_content": "Content only",
   "authoring_export.profile_content_hint": "Leaves out comments, play states, annotations, and the names of the people who worked on the project.",

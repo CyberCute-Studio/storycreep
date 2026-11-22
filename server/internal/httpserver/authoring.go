@@ -21,7 +21,8 @@ import (
 // authoringPersonalDataDoc is the notice of FR-DATA-01 AC6 in the API's
 // documentation.
 const authoringPersonalDataDoc = " **A full export contains personal data**: the comments, and the display names of " +
-	"the people who wrote them, saved play states, muted findings, and published releases. The profile content " +
+	"the people who wrote, resolved, or are mentioned in them, saved play states, muted findings, or published " +
+	"releases. The profile content " +
 	"leaves all of it out."
 
 // authoringExportDoc says who reads an export, in each route's description.
@@ -34,7 +35,7 @@ type AuthoringExportBody struct {
 	ProjectID          string     `json:"project_id" doc:"The project's ID."`
 	SnapshotID         string     `json:"snapshot_id,omitempty" doc:"The release that the archive holds as its content. Without it, the draft."`
 	Status             string     `json:"status" enum:"queued,building,ready,failed" doc:"Where the export is: queued, building, ready, with a file to download, or failed."`
-	Profile            string     `json:"profile" enum:"full,content" doc:"full holds comments, play states, and annotations, and names who wrote them; content holds none of them."`
+	Profile            string     `json:"profile" enum:"full,content" doc:"full holds comments, play states, and annotations, and names the people involved; content holds none of them."`
 	IncludeAssets      bool       `json:"include_assets" doc:"Whether the archive holds the project's assets, node cover images among them."`
 	IncludeReleases    bool       `json:"include_releases" doc:"Whether the archive holds the release history, with each release's files."`
 	ContainsPersonal   bool       `json:"contains_personal_data" doc:"Whether the archive holds personal data, as a full export does."`
@@ -60,7 +61,7 @@ type createAuthoringExportInput struct {
 	ProjectID string `path:"project_id" doc:"The project's ID"`
 	Body      struct {
 		Source          string `json:"source,omitempty" doc:"What the archive's content is of: draft, or the ID of a ready snapshot. Without it, the draft."`
-		Profile         string `json:"profile,omitempty" enum:"full,content" doc:"full, the default, includes comments, play states, and annotations, and names who wrote them, so it contains personal data; content leaves them out."`
+		Profile         string `json:"profile,omitempty" enum:"full,content" doc:"full, the default, includes comments, play states, and annotations, and names the people involved, so it contains personal data; content leaves them out."`
 		IncludeAssets   *bool  `json:"include_assets,omitempty" doc:"Whether to include the project's assets, node cover images among them. Without it, true."`
 		IncludeReleases *bool  `json:"include_releases,omitempty" doc:"Whether to include the release history, every ready snapshot with its files. Without it, true."`
 	}

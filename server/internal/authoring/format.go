@@ -41,8 +41,7 @@ type Profile string
 
 const (
 	// ProfileFull holds the comments, the play states, and the annotations,
-	// and the names of who wrote and published them, so it holds personal
-	// data (AC6).
+	// and the names of the people involved, so it holds personal data (AC6).
 	ProfileFull Profile = "full"
 	// ProfileContent holds none of them, and names nobody.
 	ProfileContent Profile = "content"
@@ -125,8 +124,8 @@ type Manifest struct {
 	ExportedAt             time.Time               `json:"exportedAt" doc:"When the archive's content was read."`
 	Project                ManifestProject         `json:"project" doc:"The project."`
 	Source                 Source                  `json:"source" doc:"What the archive's content is of."`
-	Profile                Profile                 `json:"profile" enum:"full,content" doc:"full holds the comments, the play states, and the annotations, and names who wrote them; content holds none of them."`
-	PersonalData           bool                    `json:"personalData" doc:"Whether the archive holds personal data: the display names of the people who wrote its comments and published its releases, as a full archive does."`
+	Profile                Profile                 `json:"profile" enum:"full,content" doc:"full holds the comments, the play states, and the annotations, and names the people involved; content holds none of them."`
+	PersonalData           bool                    `json:"personalData" doc:"Whether the archive holds personal data, as a full archive does: the display names of the people who wrote, resolved, or are mentioned in its comments, saved its play states, muted its findings, or published its releases."`
 	IncludesAssets         bool                    `json:"includesAssets" doc:"Whether the archive holds the project's assets, under assets/."`
 	IncludesReleases       bool                    `json:"includesReleases" doc:"Whether the archive holds the project's release history, under releases/."`
 	Sections               []ManifestSection       `json:"sections" nullable:"false" doc:"Each section that the archive holds. A section that it does not list is not in it."`

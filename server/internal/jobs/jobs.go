@@ -34,6 +34,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -94,7 +95,10 @@ type Job[T Args] struct {
 	Attempt int
 	// MaxAttempts is how many attempts the job has before it is discarded.
 	MaxAttempts int
-	Args        T
+	// Snoozes counts the times that the job's work has snoozed it (Snooze),
+	// which Attempt does not show, as a snooze gives the attempt back.
+	Snoozes int
+	Args    T
 	// DB is the workers' pool, which the work reads and writes the database
 	// on: a workspace's rows in a transaction of that workspace (InTx). The
 	// pool has a connection for each job that runs, so the work uses one
@@ -178,7 +182,20 @@ type worker[T Args] struct {
 // middleware puts in ctx.
 func (w *worker[T]) Work(ctx context.Context, j *river.Job[T]) error {
 	db, _ := ctx.Value(workersDB{}).(*database.DB)
-	return w.work(ctx, &Job[T]{ID: j.ID, Attempt: j.Attempt, MaxAttempts: j.MaxAttempts, Args: j.Args, DB: db})
+	return w.work(ctx, &Job[T]{ID: j.ID, Attempt: j.Attempt, MaxAttempts: j.MaxAttempts,
+		Snoozes: snoozesOf(j.Metadata), Args: j.Args, DB: db})
+}
+
+// snoozesOf returns how many times River has snoozed a job, which it counts in
+// the job's metadata.
+func snoozesOf(metadata []byte) int {
+	var m struct {
+		Snoozes int `json:"snoozes"`
+	}
+	if json.Unmarshal(metadata, &m) != nil {
+		return 0
+	}
+	return m.Snoozes
 }
 
 // Timeout returns how long a job of the kind has to run, for River, zero

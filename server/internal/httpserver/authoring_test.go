@@ -9,6 +9,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -917,6 +919,95 @@ func TestAuthoringExportExpires(t *testing.T) {
 		nil, owner.header(false)), http.StatusNotFound, api.CodeNotFound)
 	if err := f.s.authoring.Expire(t.Context(), ws, id); err != nil {
 		t.Errorf("expiring an export that is gone: %v", err)
+	}
+}
+
+// TestAuthoringExportExpireKeepsItsRowUntilItsFileIsGone checks that a store
+// that refuses to delete an expired archive leaves the row, so that the job's
+// next attempt deletes the file, rather than find nothing to do.
+func TestAuthoringExportExpireKeepsItsRowUntilItsFileIsGone(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s, d, owner, ws := inviteServer(t, "open", map[string]string{"STORYCREEP_ASSET_STORAGE": dir})
+	p := createProject(t, s.main, owner, ws, "Harbour").ID
+	e := buildExport(t, s, owner, ws, p, askExport(t, s.main, owner, p, map[string]any{}))
+	wsID, id := decode(t, ids.Workspace, ws), decode(t, ids.Job, e.ID)
+	var key string
+	if err := d.Admin(t).QueryRow(t.Context(), `SELECT storage_key FROM authoring_export WHERE id = $1`,
+		id).Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	// A directory that is not empty, in the file's place, is what the local
+	// store cannot delete.
+	file := filepath.Join(dir, filepath.FromSlash(key))
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(file, "held"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.authoring.Expire(t.Context(), wsID, id); err == nil {
+		t.Fatal("Expire reported no error from a store that kept the file")
+	}
+	var rows int
+	if err := d.Admin(t).QueryRow(t.Context(), `SELECT count(*) FROM authoring_export WHERE id = $1`,
+		id).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Fatalf("%d rows of the export are left, want the 1 that the next attempt reads the key of", rows)
+	}
+	if err := os.RemoveAll(file); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.authoring.Expire(t.Context(), wsID, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Admin(t).QueryRow(t.Context(), `SELECT count(*) FROM authoring_export WHERE id = $1`,
+		id).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Errorf("%d rows of the export are left once its file is gone", rows)
+	}
+	// A build's attempt that finds the row gone deletes what an attempt before
+	// it stored and could not delete.
+	if err := os.WriteFile(file, []byte("left behind"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.authoring.Build(t.Context(), wsID, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(file); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the archive of an export that is gone is still stored: %v", err)
+	}
+}
+
+// TestAuthoringExportPastItsTimeHoldsNoWay checks that an export still on its
+// way past its time, which its user can no longer read, does not refuse them
+// another with a 409 that names it.
+func TestAuthoringExportPastItsTimeHoldsNoWay(t *testing.T) {
+	t.Parallel()
+	f := newRolesFixture(t)
+	h := f.s.main
+	owner := f.as["owner"]
+	p := f.project(t, "")
+	stale := askExport(t, h, owner, p, map[string]any{})
+	if _, err := f.d.Admin(t).Exec(t.Context(), `UPDATE authoring_export SET expires_at = now() - interval '1 second'
+		WHERE id = $1`, decode(t, ids.Job, stale.ID)); err != nil {
+		t.Fatal(err)
+	}
+	fresh := askExport(t, h, owner, p, map[string]any{})
+	if fresh.ID == stale.ID || fresh.Status != authoring.StatusQueued {
+		t.Errorf("the new export is %+v", fresh)
+	}
+	var status string
+	if err := f.d.Admin(t).QueryRow(t.Context(), `SELECT status FROM authoring_export WHERE id = $1`,
+		decode(t, ids.Job, stale.ID)).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != authoring.StatusFailed {
+		t.Errorf("the export past its time is %s, want failed", status)
 	}
 }
 

@@ -272,9 +272,10 @@ func readme(m Manifest) string {
 	line("")
 	if m.PersonalData {
 		line("**This is a full export, and it contains personal data.** `people.json` holds the display names of")
-		line("the people who wrote its comments, saved its play states, muted its findings, and published its")
-		line("releases, and the comments are what they wrote. Handle and store this file accordingly, and share")
-		line("it only with people who may see that data. A content-only export leaves all of it out.")
+		line("the people who wrote, resolved, or are mentioned in its comments, saved its play states, muted its")
+		line("findings, or published its releases, and the comments are what they wrote. Handle and store this")
+		line("file accordingly, and share it only with people who may see that data. A content-only export")
+		line("leaves all of it out.")
 	} else {
 		line("This is a content-only export. It holds no comments, play states, or annotations, and it does not")
 		line("name the people who worked on the project. The story's own text may still mention real people.")
