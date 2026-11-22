@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -52,15 +53,18 @@ const buildTimeout = 50 * time.Minute
 // as the build's has ended if the build ran out of its time.
 const failTimeout = 30 * time.Second
 
-// failRetry and expireRetry are how long a job waits before it tries again to
-// end its export, when the attempt that should have done so could not. The job
-// is snoozed rather than left to run out of attempts, as a build whose export
-// stays on its way keeps its user from asking for another, and an export that
-// is never deleted outlives its retention.
-const (
-	failRetry   = time.Minute
-	expireRetry = time.Hour
-)
+// failRetry is how long a build's job waits before it tries again to fail its
+// export, when the attempt that should have done so could not. The job is
+// snoozed rather than left to run out of attempts, as a build whose export
+// stays on its way keeps its user from asking for another.
+const failRetry = time.Minute
+
+// expireAttempts is how many attempts an expiry job has: the most that River's
+// column holds, which is years of them at the queue's longest wait of an hour.
+// River discards a job on its last attempt, even one that the process's death
+// cut off, and nothing else would then delete the file of an export that a row
+// still names, so a store that stays down must not bring the job near it.
+const expireAttempts = math.MaxInt16
 
 // insertAttempts is how many times Create tries to add an export when each
 // attempt finds one on its way that has ended by the time it is read.
@@ -248,7 +252,8 @@ func (s *Service) Create(ctx context.Context, actor commands.Actor, projectID id
 			MaxAttempts: buildAttempts + failAttempts}); err != nil {
 			return fmt.Errorf("authoring: enqueue the build: %w", err)
 		}
-		if _, err := s.queue.Enqueue(ctx, tx, expireJob(args), &jobs.EnqueueOptions{At: expires}); err != nil {
+		if _, err := s.queue.Enqueue(ctx, tx, expireJob(args), &jobs.EnqueueOptions{At: expires,
+			MaxAttempts: expireAttempts}); err != nil {
 			return fmt.Errorf("authoring: enqueue the expiry: %w", err)
 		}
 		out = s.exportOf(row)
@@ -425,10 +430,9 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 		}
 		svc := s.withDB(job.DB)
 		err = svc.Expire(ctx, workspaceID, id)
-		if err != nil && job.Attempt >= job.MaxAttempts {
-			svc.log.ErrorContext(ctx, "the authoring export could not be deleted, and its job will try again",
-				"export_id", ids.Encode(ids.Job, id), "error", err)
-			return jobs.Snooze(expireRetry)
+		if err != nil {
+			svc.log.WarnContext(ctx, "the authoring export could not be deleted, and its job will try again",
+				"export_id", ids.Encode(ids.Job, id), "attempt", job.Attempt, "error", err)
 		}
 		return err
 	})

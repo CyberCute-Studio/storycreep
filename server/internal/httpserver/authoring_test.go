@@ -90,6 +90,11 @@ func archiveOf(t *testing.T, h http.Handler, si signedIn, project string, e Auth
 	}
 	files := make(map[string][]byte, len(zr.File))
 	for _, f := range zr.File {
+		// A stored member with a data descriptor is what a reader that goes
+		// through a zip from its start refuses.
+		if f.Method != zip.Deflate {
+			t.Errorf("%s has the zip method %d, want deflate", f.Name, f.Method)
+		}
 		rc, err := f.Open()
 		if err != nil {
 			t.Fatal(err)
@@ -872,6 +877,13 @@ func TestAuthoringExportExpires(t *testing.T) {
 		t.Fatalf("the export is %+v", e)
 	}
 	ws, id := decode(t, ids.Workspace, f.ws), decode(t, ids.Job, e.ID)
+	// The expiry job has at least a year of hourly attempts, so that a store
+	// that stays down never brings it to the last, which River discards if the
+	// process dies during it, and no other job would delete the file.
+	if n := countRows(t, f.d, `SELECT count(*) FROM river_job WHERE kind = 'authoring_export_expire'
+		AND args->>'export_id' = $1 AND max_attempts >= 8760`, id.String()); n != 1 {
+		t.Errorf("%d expiry jobs of the export have a year of attempts, want 1", n)
+	}
 	// The orphan reconciliation reads the archive's key as a row's while the
 	// export exists, and as nobody's once it is gone.
 	var key string

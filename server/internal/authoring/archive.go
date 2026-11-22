@@ -2,6 +2,7 @@ package authoring
 
 import (
 	"archive/zip"
+	"compress/flate"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -224,6 +225,16 @@ func (s *Service) write(ctx context.Context, w io.Writer, store blob.Store, row 
 			}
 		}
 	}
+	// The assets come last, so that this compressor is theirs alone. Each
+	// member is closed before the next begins, so they can share it.
+	stored, err := flate.NewWriter(io.Discard, flate.NoCompression)
+	if err != nil {
+		return fmt.Errorf("authoring: start the assets' compressor: %w", err)
+	}
+	zw.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
+		stored.Reset(out)
+		return stored, nil
+	})
 	for _, a := range c.assets {
 		if err := copyAsset(ctx, zw, store, a); err != nil {
 			return err
@@ -235,8 +246,12 @@ func (s *Service) write(ctx context.Context, w io.Writer, store blob.Store, row 
 	return nil
 }
 
-// copyAsset copies an asset's file into the archive as it is, since an image
-// is compressed already.
+// copyAsset copies an asset's file into the archive without compressing it,
+// since an image is compressed already: as deflate's stored blocks, through
+// the compressor that write registers, and not zip's stored method. The writer
+// does not know a streamed member's size up front, so it follows the member
+// with a data descriptor, which a reader that goes through a zip from its
+// start, as Java's ZipInputStream does, refuses of a stored member.
 func copyAsset(ctx context.Context, zw *zip.Writer, store blob.Store, a assetFile) error {
 	src, _, err := store.Open(ctx, a.key)
 	if errors.Is(err, blob.ErrNotFound) {
@@ -246,7 +261,7 @@ func copyAsset(ctx context.Context, zw *zip.Writer, store blob.Store, a assetFil
 		return fmt.Errorf("authoring: read the asset's file %s: %w", a.path, err)
 	}
 	defer func() { _ = src.Close() }()
-	f, err := zw.CreateHeader(&zip.FileHeader{Name: a.path, Method: zip.Store, Modified: zipTime})
+	f, err := zw.CreateHeader(&zip.FileHeader{Name: a.path, Method: zip.Deflate, Modified: zipTime})
 	if err != nil {
 		return fmt.Errorf("authoring: add %s to the archive: %w", a.path, err)
 	}
