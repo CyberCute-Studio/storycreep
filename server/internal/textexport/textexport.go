@@ -495,10 +495,8 @@ var header = []string{"node_id", "board", "node_title", "speaker", "text_type", 
 // white space at either end, as RFC 4180 says. It writes the records itself,
 // as encoding/csv's Writer with UseCRLF writes each line feed in a field as
 // CRLF, which would not round-trip. Every text cell passes through guard
-// (AC4), so a spreadsheet that reads the file as comma-separated evaluates
-// none. One set to another list separator, as a semicolon, splits a text at
-// it, and the guard does not reach the part after it, which only importing
-// the file as comma-separated, or the JSON, avoids.
+// (AC4), so that a spreadsheet evaluates none, whether its list separator is
+// a comma or a semicolon.
 func (e *Export) CSV() []byte {
 	var b bytes.Buffer
 	b.WriteRune(0xFEFF)
@@ -535,16 +533,46 @@ func needsQuotes(f string) bool {
 	return strings.ContainsAny(f, "\",\r\n") || f != strings.TrimSpace(f)
 }
 
-// guard returns the text of a cell of the CSV, prefixed with a single quote
-// where its first character is one that a spreadsheet may take for the start
-// of a formula, =, +, -, @, a tab, or a carriage return, so that one that
-// reads the file as comma-separated shows the text and never evaluates it
-// (FR-TEXT-05 AC4). The JSON and the hash are of the original text.
+// guard returns the text of a cell of the CSV with a single quote written
+// wherever a spreadsheet could start a cell at a formula, so that it shows
+// the text and never evaluates it (FR-TEXT-05 AC4): at the cell's start, and
+// after each semicolon, carriage return, and line feed within it. A
+// spreadsheet whose list separator is a semicolon starts a cell at each of
+// those, as it does not read the file's quoting, whose quotes start in the
+// middle of what it takes for a cell. The JSON and the hash are of the
+// original text.
 func guard(s string) string {
-	if s != "" && strings.IndexByte("=+-@\t\r", s[0]) >= 0 {
-		return "'" + s
+	var b strings.Builder
+	from := 0
+	for at := 0; at < len(s); at++ {
+		if at > 0 && strings.IndexByte(";\r\n", s[at-1]) < 0 {
+			continue
+		}
+		if startsFormula(s[at:], at == 0) {
+			b.WriteString(s[from:at])
+			b.WriteByte('\'')
+			from = at
+		}
 	}
-	return s
+	if b.Len() == 0 {
+		return s
+	}
+	b.WriteString(s[from:])
+	return b.String()
+}
+
+// startsFormula reports whether a spreadsheet could read s, which is not
+// empty, as a formula where a cell starts at it: if it starts, past any double
+// quotes, which a reader takes for the cell's own, with =, +, -, @, or a tab,
+// or, of the start of a text cell (first), with a carriage return or a line
+// feed. Within a cell those two only end a line, and what follows them is
+// checked in turn, so that a blank line between paragraphs gains no quote.
+func startsFormula(s string, first bool) bool {
+	if first && (s[0] == '\r' || s[0] == '\n') {
+		return true
+	}
+	rest := strings.TrimLeft(s, `"`)
+	return rest != "" && strings.IndexByte("=+-@\t", rest[0]) >= 0
 }
 
 // JSON returns the export as JSON, the lossless format, whose texts are as

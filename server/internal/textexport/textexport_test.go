@@ -2,6 +2,7 @@ package textexport
 
 import (
 	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"math/rand/v2"
@@ -158,8 +159,108 @@ func TestFormulaGuard(t *testing.T) {
 	if !slices.Equal(back.Rows, e.Rows) {
 		t.Errorf("the JSON reads back as %+v, want the rows unaltered", back.Rows)
 	}
-	if !bytes.Contains(data, []byte(`=HYPERLINK(`)) || bytes.Contains(data, []byte(`<`)) {
+	if !bytes.Contains(data, []byte(`=HYPERLINK(`)) {
 		t.Errorf("the JSON holds %s, want the texts as they are", data)
+	}
+	html, err := (&Export{Rows: []Row{{Text: "<b>&"}}}).JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(html, []byte("<b>&")) {
+		t.Errorf("the JSON holds %s, want HTML's characters as they are", html)
+	}
+}
+
+// semicolonCells returns every cell that a spreadsheet whose list separator
+// is a semicolon could read of the CSV data. It reads none of the file's
+// quoting, which starts in the middle of what it takes for a cell, so a cell
+// starts at each semicolon and line ending, and it drops the double quotes
+// that a cell starts with, which a reader may take for the cell's own.
+func semicolonCells(data []byte) []string {
+	s := strings.TrimPrefix(string(data), string(rune(0xFEFF)))
+	cells := strings.FieldsFunc(s, func(r rune) bool { return r == ';' || r == '\r' || r == '\n' })
+	for i, c := range cells {
+		cells[i] = strings.TrimLeft(c, `"`)
+	}
+	return cells
+}
+
+// TestFormulaGuardOfEveryCellStart checks the guard where a spreadsheet whose
+// list separator is a semicolon starts a cell: at each semicolon and line
+// break within a text, past any double quotes, and at a leading line feed;
+// that what starts no formula there, as a blank line or a quoted line, is left
+// alone; and, of many texts of the characters that matter, that no cell that
+// either kind of spreadsheet reads starts a formula, and that the guard only
+// ever adds single quotes.
+//
+// Verifies: FR-TEXT-05/AC4
+func TestFormulaGuardOfEveryCellStart(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{
+		"a;=1+1":            "a;'=1+1",
+		`a;"=1+1"`:          `a;'"=1+1"`,
+		"a;\t=b":            "a;'\t=b",
+		"a\n- b":            "a\n'- b",
+		"a\r\n@b":           "a\r\n'@b",
+		"a\r+b":             "a\r'+b",
+		"\n=1+1":            "'\n'=1+1",
+		"\r\n=x":            "'\r\n'=x",
+		"\nplain":           "'\nplain",
+		`"=1+1"`:            `'"=1+1"`,
+		";=a;=b":            ";'=a;'=b",
+		"a\n\n=b":           "a\n\n'=b",
+		"a\n\nb":            "a\n\nb",
+		"first; next":       "first; next",
+		"1;2":               "1;2",
+		"a;":                "a;",
+		"a\n":               "a\n",
+		"He said:\n\"Go.\"": "He said:\n\"Go.\"",
+		`"quoted"`:          `"quoted"`,
+		"it's":              "it's",
+		"":                  "",
+	} {
+		if got := guard(in); got != want {
+			t.Errorf("guard(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	alphabet := []string{"=", "+", "-", "@", "\t", "\r", "\n", ";", `"`, ",", "'", " ", "a", "é"}
+	random := rand.New(rand.NewPCG(82, 82))
+	for range 5000 {
+		var b strings.Builder
+		for range random.IntN(12) + 1 {
+			b.WriteString(alphabet[random.IntN(len(alphabet))])
+		}
+		s := b.String()
+		e := &Export{}
+		e.add(Row{NodeID: "nd_x", Board: s, NodeTitle: s, Speaker: s, TextType: TypeBody, Text: s, Condition: s,
+			TextHash: richtext.Hash(s)})
+		data := e.CSV()
+		for _, c := range semicolonCells(data) {
+			if c != "" && strings.IndexByte("=+-@\t", c[0]) >= 0 {
+				t.Fatalf("of the text %q, a spreadsheet set to a semicolon reads the cell %q", s, c)
+			}
+		}
+		// A reader that does read quotes at a field's start, as a stricter one
+		// than semicolonCells might.
+		r := csv.NewReader(bytes.NewReader(bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})))
+		r.Comma, r.LazyQuotes, r.FieldsPerRecord = ';', true, -1
+		records, err := r.ReadAll()
+		if err != nil {
+			t.Fatalf("of the text %q, a reader of semicolons fails: %v", s, err)
+		}
+		for _, c := range slices.Concat(records...) {
+			if c != "" && strings.IndexByte("=+-@\t", c[0]) >= 0 {
+				t.Fatalf("of the text %q, a reader of semicolons reads the cell %q", s, c)
+			}
+		}
+		cell := parseCSV(t, data)[1][5]
+		if strings.IndexByte("=+-@\t\r\n", cell[0]) >= 0 {
+			t.Fatalf("of the text %q, a spreadsheet set to a comma reads the cell %q", s, cell)
+		}
+		if strings.ReplaceAll(cell, "'", "") != strings.ReplaceAll(s, "'", "") {
+			t.Fatalf("the guard of %q wrote %q, which differs by more than single quotes", s, cell)
+		}
 	}
 }
 

@@ -44,10 +44,11 @@ const textExportDoc = " The file has a row of each text, an element's text, of t
 	"order that the flow offers them. So an unchanged project exports the same bytes, and the word counts of a " +
 	"draft's rows add up to its writing statistics (GET /api/v1/projects/{project_id}/statistics) whenever those " +
 	"say complete, as until then they leave out a text that their job has yet to count, which the export holds. " +
-	"In the CSV, whose records end with CRLF, a text cell that starts with =, +, -, @, a tab, or a carriage return is prefixed " +
-	"with a single quote, so that a spreadsheet that reads the file as comma-separated shows it as text and never " +
-	"evaluates it. One set to another list separator, as a semicolon, splits a text at it, and the guard does not " +
-	"reach the part after it: import the file as comma-separated, or use the JSON. The JSON, an object of " +
+	"In the CSV, whose records end with CRLF, a single quote is written at the start of a text cell that starts " +
+	"with a carriage return or a line feed, and at the start of a text cell, and after each semicolon, carriage " +
+	"return, or line feed within one, wherever what follows, past any double quotes, starts with =, +, -, @, or a " +
+	"tab, so that a spreadsheet shows it as text and never evaluates it, whether its list separator is a comma or " +
+	"a semicolon, which starts a new cell at each of those. The JSON, an object of " +
 	"the project, the source, the board if the export is narrowed to one, the total of words, and the rows, is " +
 	"not altered, and the hash is always of the original text. Content-Disposition names the file, as an " +
 	"attachment. A board that is not an ID of a board is answered with 400 invalid_id."
