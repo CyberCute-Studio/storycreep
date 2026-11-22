@@ -31,13 +31,21 @@ const Retention = 7 * 24 * time.Hour
 
 // buildAttempts is how many attempts a build has, the last of which fails the
 // export rather than build, as a snapshot's does, so that no failure leaves
-// it on its way, which would keep its user from asking for another.
+// it on its way, which would keep its user from asking for another. A failure
+// that another attempt would repeat fails it at once (endsTheExport).
 const buildAttempts = 5
 
 // buildTimeout is how long each attempt has: a build copies a project's every
 // release and asset, up to the gigabytes that an import takes, and it is
-// within the hour after which River's rescuer would take a job for stuck.
+// within the hour after which River's rescuer would take a job for stuck. An
+// attempt that runs out of it fails the export, as the next would too, and
+// would keep the other exports of the instance, which run one at a time,
+// waiting for hours.
 const buildTimeout = 50 * time.Minute
+
+// failTimeout is how long failing an export may take, on a context of its own,
+// as the build's has ended if the build ran out of its time.
+const failTimeout = 30 * time.Second
 
 // failRetry and expireRetry are how long a job waits before it tries again to
 // end its export, when the attempt that should have done so could not. The job
@@ -391,7 +399,7 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 			return svc.fail(ctx, workspaceID, id, errors.New("every attempt at the build failed"))
 		}
 		err = svc.Build(ctx, workspaceID, id)
-		if errors.Is(err, errProjectGone) {
+		if endsTheExport(ctx, err) {
 			return svc.fail(ctx, workspaceID, id, err)
 		}
 		return err
@@ -434,9 +442,20 @@ func (s *Service) withDB(db *database.DB) *Service {
 	return &c
 }
 
+// endsTheExport says whether err, of a build that ran under ctx, is a failure
+// that another attempt would repeat: a project in the trash, an asset whose
+// file is gone, or the attempt's own timeout. The server's stopping cancels
+// ctx instead, and the build then runs again after the restart.
+func endsTheExport(ctx context.Context, err error) bool {
+	return errors.Is(err, errProjectGone) || errors.Is(err, errAssetMissing) ||
+		(err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded))
+}
+
 // fail fails the export, and ends its job. Where the database does not take
 // that, the job runs again rather than end with the export still on its way.
 func (s *Service) fail(ctx context.Context, ws, id ids.UUID, why error) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), failTimeout)
+	defer cancel()
 	err := s.db.InTx(ctx, database.Scope{WorkspaceID: ws}, func(tx pgx.Tx) error {
 		_, err := queries.New(tx).FailAuthoringExport(ctx, queries.FailAuthoringExportParams{WorkspaceID: uuid(ws),
 			ID: uuid(id)})

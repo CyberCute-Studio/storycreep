@@ -22,6 +22,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/published"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 	"github.com/CyberCute-Studio/storycreep/server/internal/snapshot"
 )
@@ -398,6 +399,158 @@ func TestAuthoringExportContentOnly(t *testing.T) {
 			t.Errorf("an archive without assets and releases holds %s", name)
 		}
 	}
+
+	// An archive of a release with nothing beside it holds no section, which
+	// its manifest lists as the empty array that the schema requires.
+	only := waitForExport(t, f, f.owner, askExport(t, f.s.main, f.owner, f.project, map[string]any{
+		"source": f.release.ID, "profile": "content", "include_assets": false, "include_releases": false}).ID)
+	if got := validateArchive(t, archiveOf(t, f.s.main, f.owner, f.project, only)).Sections; got == nil || len(got) != 0 {
+		t.Errorf("the sections of an archive of a release alone are %#v, want an empty list", got)
+	}
+}
+
+// TestAuthoringExportLeavesTheTrashUnreferenced checks that a draft's archive
+// holds no reference to what is in the trash, which it does not hold: a
+// jumper's target, a board's entry node, and an element's speaker. A reference
+// to what is not in the trash stays.
+//
+// Verifies: FR-DATA-01/AC5
+func TestAuthoringExportLeavesTheTrashUnreferenced(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	h := f.s.main
+	other, entry, target, jumper, spoken := ids.Encode(ids.Board, ids.New()), newNodeID(), newNodeID(), newNodeID(),
+		newNodeID()
+	typ, speaker := ids.Encode(ids.ComponentType, ids.New()), ids.Encode(ids.Component, ids.New())
+	pos := map[string]int{"x": 5, "y": 5}
+	cmd := func(typ string, p map[string]any) wireCommand { return wireCommand{Type: typ, Payload: p} }
+	element := func(id, board string) wireCommand {
+		return cmd("node.create", map[string]any{"id": id, "board_id": board, "type": "element", "kind": "narration",
+			"position": pos})
+	}
+	sendBatch(t, h, f.owner, f.project,
+		cmd("board.create", map[string]any{"id": other, "name": "Pier"}),
+		element(entry, other),
+		cmd("board.set_entry_node", map[string]any{"id": other, "node_id": entry}),
+		cmd("component_type.create", map[string]any{"id": typ, "name": "Ghost"}),
+		cmd("component.create", map[string]any{"id": speaker, "component_type_id": typ, "name": "Mira"}),
+		cmd("node.create", map[string]any{"id": spoken, "board_id": f.board, "type": "element", "kind": "dialogue",
+			"position": pos, "speaker_component_id": speaker}),
+		element(target, f.board),
+		cmd("node.create", map[string]any{"id": jumper, "board_id": f.board, "type": "jumper", "position": pos,
+			"target": map[string]string{"board_id": f.board, "node_id": target}}),
+		cmd("node.delete", map[string]any{"id": entry}),
+		cmd("node.delete", map[string]any{"id": target}),
+		cmd("component.delete", map[string]any{"id": speaker, "force": true}),
+	)
+	// The draft keeps each reference, for a restore from the trash to mend.
+	for _, c := range []struct{ sql, id string }{
+		{`SELECT count(*) FROM board WHERE id = $1::uuid AND entry_node_id IS NOT NULL`,
+			decode(t, ids.Board, other).String()},
+		{`SELECT count(*) FROM node WHERE id = $1::uuid AND target_node_id IS NOT NULL`,
+			decode(t, ids.Node, jumper).String()},
+		{`SELECT count(*) FROM node WHERE id = $1::uuid AND speaker_component_id IS NOT NULL`,
+			decode(t, ids.Node, spoken).String()},
+	} {
+		if n := countRows(t, f.d, c.sql, c.id); n != 1 {
+			t.Fatalf("the draft does not keep the reference that %s reads", c.sql)
+		}
+	}
+
+	files := archiveOf(t, h, f.owner, f.project, waitForExport(t, f, f.owner,
+		askExport(t, h, f.owner, f.project, map[string]any{}).ID))
+	validateArchive(t, files)
+	nodes := items[authoring.Node](t, files, "draft/nodes.json")
+	nodeOf := func(id string) authoring.Node {
+		t.Helper()
+		i := slices.IndexFunc(nodes, func(n authoring.Node) bool { return n.ID == id })
+		if i < 0 {
+			t.Fatalf("the archive lacks the node %s", id)
+		}
+		return nodes[i]
+	}
+	if j := nodeOf(jumper); j.TargetBoardID != "" || j.TargetNodeID != "" {
+		t.Errorf("the jumper's target in the trash is held: %+v", j)
+	}
+	if s := nodeOf(spoken); s.SpeakerID != "" {
+		t.Errorf("the speaker in the trash is held: %+v", s)
+	}
+	for _, b := range items[authoring.Board](t, files, "draft/boards.json") {
+		switch {
+		case b.ID == other && b.EntryNodeID != "":
+			t.Errorf("the entry node in the trash is held: %+v", b)
+		case b.ID == f.board && b.EntryNodeID != f.node:
+			t.Errorf("the entry node outside the trash is not held: %+v", b)
+		}
+	}
+	for name, data := range files {
+		if !strings.HasPrefix(name, "draft/") {
+			continue
+		}
+		for _, gone := range []string{entry, target, speaker} {
+			if bytes.Contains(data, []byte(gone)) {
+				t.Errorf("%s names %s, which is in the trash", name, gone)
+			}
+		}
+	}
+}
+
+// TestAuthoringExportOfADeletedMuter checks that a full archive names who
+// muted a release's finding only while their account exists, as the API's
+// read of the report does, so that it holds no ID that people.json lacks.
+//
+// Verifies: FR-DATA-01/AC6
+func TestAuthoringExportOfADeletedMuter(t *testing.T) {
+	t.Parallel()
+	f := newRolesFixture(t)
+	h := f.s.main
+	owner := f.as["owner"]
+	p := f.project(t, "")
+	release := decode(t, ids.Snapshot, addSnapshot(t, f.admin, decode(t, ids.Workspace, f.ws), decode(t, ids.Project, p),
+		"1.0.0", "building", ids.UUID{}, nil))
+	gone := ids.Encode(ids.User, ids.New())
+	finding := func(by string) map[string]any {
+		return map[string]any{"code": "dead_end", "mute": map[string]any{"reason": "On purpose", "muted_by": by,
+			"muted_at": "2026-11-01T10:00:00Z"}}
+	}
+	report, err := json.Marshal(map[string]any{"seq": 0, "findings": []any{finding(owner.body.UserID), finding(gone)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.admin.Exec(t.Context(), `UPDATE snapshot SET status = 'ready', source_seq = 0,
+		validation_report = $2::jsonb, schema_version = 1, content_hash = $3, counts = '{"boards": 0}', built_at = now()
+		WHERE id = $1`, release, string(report), string(published.ContentHash(map[string]published.Hash{}))); err != nil {
+		t.Fatal(err)
+	}
+
+	files := archiveOf(t, h, owner, p, buildExport(t, f.s, owner, f.ws, p, askExport(t, h, owner, p, map[string]any{})))
+	validateArchive(t, files)
+	if bytes.Contains(files["releases/index.json"], []byte(gone)) {
+		t.Errorf("the release history names %s, whose account is deleted", gone)
+	}
+	releases := items[authoring.Release](t, files, "releases/index.json")
+	if len(releases) != 1 {
+		t.Fatalf("the releases are %+v", releases)
+	}
+	var stored struct {
+		Findings []struct {
+			Mute struct {
+				Reason  string `json:"reason"`
+				MutedBy string `json:"muted_by"`
+			} `json:"mute"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal(releases[0].ValidationReport, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Findings) != 2 || stored.Findings[0].Mute.MutedBy != owner.body.UserID ||
+		stored.Findings[1].Mute.MutedBy != "" || stored.Findings[1].Mute.Reason != "On purpose" {
+		t.Errorf("the stored report's findings are %+v", stored.Findings)
+	}
+	people := items[authoring.Person](t, files, "people.json")
+	if !slices.ContainsFunc(people, func(u authoring.Person) bool { return u.ID == owner.body.UserID }) {
+		t.Errorf("people.json is %+v, want who muted the finding", people)
+	}
 }
 
 // TestAuthoringExportOfRelease checks an archive of a release: its content is
@@ -455,6 +608,16 @@ func TestAuthoringExportOfRelease(t *testing.T) {
 	}
 	if got := items[authoring.PlayState](t, files, "play_states.json"); len(got) != 1 || got[0].ID != f.playState {
 		t.Errorf("the play states are %+v, want only the one at what the release has", got)
+	}
+
+	// A root that its author deleted is in the trash, so of its thread about
+	// what the release does not have, only the reply is counted.
+	reply := ids.Encode(ids.Comment, ids.New())
+	resultFrom(t, postComment(t, h, f.owner, f.project, reply, "", comment, "A reply"))
+	resultFrom(t, commentCommand(t, h, f.owner, f.project, "comment.delete", comment, nil))
+	e = waitForExport(t, f, f.owner, askExport(t, h, f.owner, f.project, map[string]any{"source": f.release.ID}).ID)
+	if got := validateArchive(t, archiveOf(t, h, f.owner, f.project, e)).LeftOut.Comments; got != 1 {
+		t.Errorf("the manifest leaves out %d comment(s), want the reply alone", got)
 	}
 
 	// A thread whose target the draft has deleted since is in the trash, so

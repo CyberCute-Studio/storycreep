@@ -16,9 +16,13 @@ SELECT id, kind, parent_id, name, "order" AS sort_key FROM live_folder
 WHERE workspace_id = @workspace_id AND project_id = @project_id ORDER BY id;
 
 -- name: AuthoringBoards :many
--- AuthoringBoards returns the project's boards that are not in its trash.
-SELECT id, folder_id, folder_kind, "order" AS sort_key, name, slug, description, color, entry_node_id FROM live_board
-WHERE workspace_id = @workspace_id AND project_id = @project_id ORDER BY id;
+-- AuthoringBoards returns the project's boards that are not in its trash, each
+-- with its entry node unless that is in the trash, which no archive holds.
+SELECT b.id, b.folder_id, b.folder_kind, b."order" AS sort_key, b.name, b.slug, b.description, b.color,
+    e.id AS entry_node_id
+FROM live_board b
+LEFT JOIN live_node e ON e.workspace_id = b.workspace_id AND e.project_id = b.project_id AND e.id = b.entry_node_id
+WHERE b.workspace_id = @workspace_id AND b.project_id = @project_id ORDER BY b.id;
 
 -- name: AuthoringVariables :many
 -- AuthoringVariables returns the project's variables that are not in its
@@ -41,12 +45,19 @@ FROM live_component WHERE workspace_id = @workspace_id AND project_id = @project
 
 -- name: AuthoringNodes :many
 -- AuthoringNodes returns the project's nodes that are not in its trash, their
--- geometry as the decimals that it is stored as.
-SELECT id, board_id, type, coalesce(kind, '')::text AS kind, title, text, speaker_component_id, cover_asset_id, color,
-    tags, x::text AS x, y::text AS y, coalesce(width::text, '')::text AS width,
-    coalesce(height::text, '')::text AS height, is_ending, target_board_id,
-    target_node_id
-FROM live_node WHERE workspace_id = @workspace_id AND project_id = @project_id ORDER BY id;
+-- geometry as the decimals that it is stored as, each with its speaker and a
+-- jumper's target unless they are in the trash, which no archive holds. A
+-- target is its board and its node together, as the table requires of a row.
+SELECT n.id, n.board_id, n.type, coalesce(n.kind, '')::text AS kind, n.title, n.text,
+    s.id AS speaker_component_id, n.cover_asset_id, n.color, n.tags, n.x::text AS x, n.y::text AS y,
+    coalesce(n.width::text, '')::text AS width, coalesce(n.height::text, '')::text AS height, n.is_ending,
+    t.board_id AS target_board_id, t.id AS target_node_id
+FROM live_node n
+LEFT JOIN live_component s ON s.workspace_id = n.workspace_id AND s.project_id = n.project_id
+    AND s.id = n.speaker_component_id
+LEFT JOIN live_node t ON t.workspace_id = n.workspace_id AND t.project_id = n.project_id
+    AND t.id = n.target_node_id AND t.board_id = n.target_board_id
+WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id ORDER BY n.id;
 
 -- name: AuthoringMutes :many
 -- AuthoringMutes returns the project's validation mutes, each with its owner,

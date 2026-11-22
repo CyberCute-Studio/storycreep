@@ -193,4 +193,33 @@ describe("the authoring export's dialog", () => {
     expect(screen.queryByText(/Building/)).toBeNull();
     expect(screen.getByRole("alert")).toBeTruthy();
   });
+
+  it("keeps reading an export on its way whose first read failed, until it has ended", async () => {
+    const queued = { ...base, status: "queued" as const };
+    const call = serve(queued);
+    const answer = call.getMockImplementation();
+    let reads = 0;
+    call.mockImplementation((async (op: string, ...rest: unknown[]) => {
+      if (op !== "getAuthoringExport") {
+        return (answer as (...args: unknown[]) => unknown)(op, ...rest);
+      }
+      reads += 1;
+      if (reads === 1) {
+        throw new TypeError("Failed to fetch");
+      }
+      return {
+        body: {
+          ...base,
+          status: "ready",
+          size_bytes: 4096,
+          file_name: "harbour-draft-authoring.zip",
+        },
+      };
+    }) as never);
+    await open();
+    expect(
+      await screen.findByText(/Ready: 4 kB/, undefined, { timeout: 4000 }),
+    ).toBeTruthy();
+    expect(reads).toBe(2);
+  }, 8000);
 });

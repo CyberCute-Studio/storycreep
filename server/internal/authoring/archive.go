@@ -29,6 +29,10 @@ import (
 // gone, by the time that the job reads it.
 var errProjectGone = errors.New("authoring: the project is in its workspace's trash")
 
+// errAssetMissing is the error of an export of an asset whose file the store
+// no longer has, which another attempt would only find missing again.
+var errAssetMissing = errors.New("authoring: the store has no file of an asset")
+
 // zipTime is the modification time of every member of an archive, the
 // earliest that a zip's MS-DOS time holds, as a snapshot export's are, since
 // the manifest says when the archive was made.
@@ -108,7 +112,9 @@ func (s *Service) read(ctx context.Context, row queries.AuthoringExport) (*conte
 				Version: snapshot.Version, ContentHash: snapshot.ContentHash.String}
 			suffix = snapshot.Version
 		}
-		var entries []ManifestSection
+		// Not nil, as an archive of a release without a section still lists
+		// them, as the empty array that the format requires.
+		entries := []ManifestSection{}
 		for _, sec := range sections {
 			if !sec.holds(row) {
 				continue
@@ -145,11 +151,12 @@ func (s *Service) read(ctx context.Context, row queries.AuthoringExport) (*conte
 }
 
 // write writes the archive of c to w: the README, the manifest, and the
-// sections, then the release's files, the release history, and the assets, a
-// file at a time, so that it holds at most one of them in memory. It reads
-// each file of the history in a transaction of its own, as a ready snapshot's
-// files never change, so that no transaction stays open for as long as the
-// archive takes.
+// sections, then the release's files, the release history, and the assets. It
+// lets go of the sections and the release's files once they are written, and
+// then holds one release of the history at a time in memory, and streams each
+// asset. It reads each release of the history in a transaction of its own, as
+// a ready snapshot's files never change, so that no transaction stays open for
+// as long as the archive takes.
 func (s *Service) write(ctx context.Context, w io.Writer, store blob.Store, row queries.AuthoringExport,
 	c *content) error {
 	zw := zip.NewWriter(w)
@@ -183,6 +190,7 @@ func (s *Service) write(ctx context.Context, w io.Writer, store blob.Store, row 
 			return err
 		}
 	}
+	c.members, c.release = nil, nil
 	for _, rel := range c.releases {
 		id, err := ids.Decode(ids.Snapshot, rel.ID)
 		if err != nil {
@@ -220,6 +228,9 @@ func (s *Service) write(ctx context.Context, w io.Writer, store blob.Store, row 
 // is compressed already.
 func copyAsset(ctx context.Context, zw *zip.Writer, store blob.Store, a assetFile) error {
 	src, _, err := store.Open(ctx, a.key)
+	if errors.Is(err, blob.ErrNotFound) {
+		return fmt.Errorf("%w: %s", errAssetMissing, a.path)
+	}
 	if err != nil {
 		return fmt.Errorf("authoring: read the asset's file %s: %w", a.path, err)
 	}

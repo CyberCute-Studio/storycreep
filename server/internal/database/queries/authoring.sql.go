@@ -61,8 +61,11 @@ func (q *Queries) AuthoringAssets(ctx context.Context, arg AuthoringAssetsParams
 }
 
 const authoringBoards = `-- name: AuthoringBoards :many
-SELECT id, folder_id, folder_kind, "order" AS sort_key, name, slug, description, color, entry_node_id FROM live_board
-WHERE workspace_id = $1 AND project_id = $2 ORDER BY id
+SELECT b.id, b.folder_id, b.folder_kind, b."order" AS sort_key, b.name, b.slug, b.description, b.color,
+    e.id AS entry_node_id
+FROM live_board b
+LEFT JOIN live_node e ON e.workspace_id = b.workspace_id AND e.project_id = b.project_id AND e.id = b.entry_node_id
+WHERE b.workspace_id = $1 AND b.project_id = $2 ORDER BY b.id
 `
 
 type AuthoringBoardsParams struct {
@@ -82,7 +85,8 @@ type AuthoringBoardsRow struct {
 	EntryNodeID pgtype.UUID
 }
 
-// AuthoringBoards returns the project's boards that are not in its trash.
+// AuthoringBoards returns the project's boards that are not in its trash, each
+// with its entry node unless that is in the trash, which no archive holds.
 func (q *Queries) AuthoringBoards(ctx context.Context, arg AuthoringBoardsParams) ([]AuthoringBoardsRow, error) {
 	rows, err := q.db.Query(ctx, authoringBoards, arg.WorkspaceID, arg.ProjectID)
 	if err != nil {
@@ -538,11 +542,16 @@ func (q *Queries) AuthoringMutes(ctx context.Context, arg AuthoringMutesParams) 
 }
 
 const authoringNodes = `-- name: AuthoringNodes :many
-SELECT id, board_id, type, coalesce(kind, '')::text AS kind, title, text, speaker_component_id, cover_asset_id, color,
-    tags, x::text AS x, y::text AS y, coalesce(width::text, '')::text AS width,
-    coalesce(height::text, '')::text AS height, is_ending, target_board_id,
-    target_node_id
-FROM live_node WHERE workspace_id = $1 AND project_id = $2 ORDER BY id
+SELECT n.id, n.board_id, n.type, coalesce(n.kind, '')::text AS kind, n.title, n.text,
+    s.id AS speaker_component_id, n.cover_asset_id, n.color, n.tags, n.x::text AS x, n.y::text AS y,
+    coalesce(n.width::text, '')::text AS width, coalesce(n.height::text, '')::text AS height, n.is_ending,
+    t.board_id AS target_board_id, t.id AS target_node_id
+FROM live_node n
+LEFT JOIN live_component s ON s.workspace_id = n.workspace_id AND s.project_id = n.project_id
+    AND s.id = n.speaker_component_id
+LEFT JOIN live_node t ON t.workspace_id = n.workspace_id AND t.project_id = n.project_id
+    AND t.id = n.target_node_id AND t.board_id = n.target_board_id
+WHERE n.workspace_id = $1 AND n.project_id = $2 ORDER BY n.id
 `
 
 type AuthoringNodesParams struct {
@@ -571,7 +580,9 @@ type AuthoringNodesRow struct {
 }
 
 // AuthoringNodes returns the project's nodes that are not in its trash, their
-// geometry as the decimals that it is stored as.
+// geometry as the decimals that it is stored as, each with its speaker and a
+// jumper's target unless they are in the trash, which no archive holds. A
+// target is its board and its node together, as the table requires of a row.
 func (q *Queries) AuthoringNodes(ctx context.Context, arg AuthoringNodesParams) ([]AuthoringNodesRow, error) {
 	rows, err := q.db.Query(ctx, authoringNodes, arg.WorkspaceID, arg.ProjectID)
 	if err != nil {

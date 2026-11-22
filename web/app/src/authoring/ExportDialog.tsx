@@ -70,7 +70,10 @@ function newestExportQuery(projectId: string) {
   });
 }
 
-/** The export id, read again until it ends or the server refuses it (nextPoll). */
+/**
+ * The export id, read again until it ends or the server refuses it (nextPoll),
+ * including when no read of it has succeeded yet, as the form waits on it.
+ */
 function exportQuery(projectId: string, id: string) {
   return queryOptions({
     queryKey: [...exportsKey(projectId), id] as const,
@@ -83,7 +86,9 @@ function exportQuery(projectId: string, id: string) {
         )
       ).body,
     refetchInterval: (query) =>
-      onItsWay(query.state.data) ? nextPoll(query.state.error) : false,
+      query.state.data === undefined || onItsWay(query.state.data)
+        ? nextPoll(query.state.error)
+        : false,
   });
 }
 

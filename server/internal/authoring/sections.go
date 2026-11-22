@@ -435,7 +435,11 @@ func readComments(ctx context.Context, r *reading) ([]Comment, error) {
 		}
 		target := ids.Encode(kind, c.TargetID.Bytes)
 		if r.release != nil && !r.release.has(target) {
-			r.leftOut.Comments++
+			// A root that its author deleted is in the trash, which is not
+			// counted, though its row holds its thread's place.
+			if !c.DeletedAt.Valid {
+				r.leftOut.Comments++
+			}
 			continue
 		}
 		x := Comment{ID: encode(ids.Comment, c.ID), ThreadID: encode(ids.Comment, c.ThreadID),
@@ -526,7 +530,7 @@ func readReleases(ctx context.Context, r *reading) ([]Release, error) {
 	}
 	out := make([]Release, len(rows))
 	for i, row := range rows {
-		report, err := r.report(row.ValidationReport)
+		report, err := r.report(ctx, row.ValidationReport)
 		if err != nil {
 			return nil, err
 		}
@@ -541,9 +545,10 @@ func readReleases(ctx context.Context, r *reading) ([]Release, error) {
 }
 
 // report returns a release's stored validation report as the archive holds
-// it: as it is in a full archive, which names who muted each finding, and
-// without their IDs in a content-only one, which names nobody.
-func (r *reading) report(raw []byte) (Value, error) {
+// it: in a full archive it names who muted each finding while their account
+// exists, as the API's read of the report does (snapshot.Report), and in a
+// content-only one it names nobody.
+func (r *reading) report(ctx context.Context, raw []byte) (Value, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var doc map[string]any
@@ -552,6 +557,8 @@ func (r *reading) report(raw []byte) (Value, error) {
 	}
 	findings, _ := doc["findings"].([]any)
 	stripped := false
+	var mutes []map[string]any
+	var users []pgtype.UUID
 	for _, f := range findings {
 		finding, _ := f.(map[string]any)
 		mute, _ := finding["mute"].(map[string]any)
@@ -568,7 +575,26 @@ func (r *reading) report(raw []byte) (Value, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read who muted a finding of a release: %w", err)
 		}
-		r.people[id] = true
+		mutes = append(mutes, mute)
+		users = append(users, pgtype.UUID{Bytes: id, Valid: true})
+	}
+	if len(users) > 0 {
+		rows, err := r.q.UsersWithAccounts(ctx, users)
+		if err != nil {
+			return nil, fmt.Errorf("read who muted the findings of a release: %w", err)
+		}
+		exist := make(map[ids.UUID]bool, len(rows))
+		for _, u := range rows {
+			exist[ids.UUID(u.Bytes)] = true
+		}
+		for i, mute := range mutes {
+			if u := ids.UUID(users[i].Bytes); exist[u] {
+				r.people[u] = true
+			} else {
+				delete(mute, "muted_by")
+				stripped = true
+			}
+		}
 	}
 	if !stripped {
 		return Value(raw), nil
