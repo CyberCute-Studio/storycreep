@@ -8,6 +8,7 @@ import {
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ExportButton } from "../authoring/ExportDialog";
 import { publishes } from "../content/deletion";
 import { projectQuery } from "../project/queries";
 import { PublishButton } from "../releases/PublishDialog";
@@ -90,15 +91,18 @@ function Releases() {
       width="wide"
     >
       <p>{t("releases.intro")}</p>
-      {publishes(project) && project.archived_at === undefined && (
-        <PublishButton
-          project={project}
-          // Cleared as an attempt is sent, so that the live region says the
-          // next build's start, of the same version too, as a change.
-          onPublishing={() => setPublished(undefined)}
-          onPublished={setPublished}
-        />
-      )}
+      <div className="flex flex-wrap gap-2">
+        {publishes(project) && project.archived_at === undefined && (
+          <PublishButton
+            project={project}
+            // Cleared as an attempt is sent, so that the live region says the
+            // next build's start, of the same version too, as a change.
+            onPublishing={() => setPublished(undefined)}
+            onPublished={setPublished}
+          />
+        )}
+        <ExportButton projectId={projectId} releases={releases} />
+      </div>
       <Status message={said} />
       {releases.length === 0 ? (
         <p>{t("releases.none")}</p>
