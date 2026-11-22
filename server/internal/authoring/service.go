@@ -29,11 +29,16 @@ import (
 // which its job deletes it and its file (note N90).
 const Retention = 7 * 24 * time.Hour
 
-// buildAttempts is how many attempts a build has, the last of which fails the
-// export rather than build, as a snapshot's does, so that no failure leaves
-// it on its way, which would keep its user from asking for another. A failure
-// that another attempt would repeat fails it at once (endsTheExport).
-const buildAttempts = 5
+// buildAttempts is how many attempts may build an export. A failure that
+// another attempt would repeat fails it at once (endsTheExport).
+const buildAttempts = 4
+
+// failAttempts is how many attempts follow those, which only fail the export,
+// so that no failure leaves it on its way, which would keep its user from
+// asking for another. There are several, as River's rescuer discards a job
+// whose last attempt the process's death cut off: an attempt that dies as it
+// fails the export leaves that to the next.
+const failAttempts = 3
 
 // buildTimeout is how long each attempt has: a build copies a project's every
 // release and asset, up to the gigabytes that an import takes, and it is
@@ -239,7 +244,8 @@ func (s *Service) Create(ctx context.Context, actor commands.Actor, projectID id
 			return err
 		}
 		args := jobArgs{WorkspaceID: ws.String(), ExportID: id.String()}
-		if _, err := s.queue.Enqueue(ctx, tx, buildJob(args), &jobs.EnqueueOptions{MaxAttempts: buildAttempts}); err != nil {
+		if _, err := s.queue.Enqueue(ctx, tx, buildJob(args), &jobs.EnqueueOptions{
+			MaxAttempts: buildAttempts + failAttempts}); err != nil {
 			return fmt.Errorf("authoring: enqueue the build: %w", err)
 		}
 		if _, err := s.queue.Enqueue(ctx, tx, expireJob(args), &jobs.EnqueueOptions{At: expires}); err != nil {
@@ -395,7 +401,7 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 			return jobs.Cancel(err)
 		}
 		svc := s.withDB(job.DB)
-		if job.Attempt >= job.MaxAttempts {
+		if onlyFails(job.Attempt) {
 			return svc.fail(ctx, workspaceID, id, errors.New("every attempt at the build failed"))
 		}
 		err = svc.Build(ctx, workspaceID, id)
@@ -442,6 +448,10 @@ func (s *Service) withDB(db *database.DB) *Service {
 	return &c
 }
 
+// onlyFails says whether the attempt of a build's job is one of those after
+// the attempts that may build, which only fail the export.
+func onlyFails(attempt int) bool { return attempt > buildAttempts }
+
 // endsTheExport says whether err, of a build that ran under ctx, is a failure
 // that another attempt would repeat: a project in the trash, an asset whose
 // file is gone, or the attempt's own timeout. The server's stopping cancels
@@ -454,7 +464,8 @@ func endsTheExport(ctx context.Context, err error) bool {
 // fail fails the export, deletes what an attempt of it stored, and ends its
 // job. Where the database does not take that, the job runs again rather than
 // end with the export still on its way. An export that has ended, as a ready
-// one whose job ran again, keeps its file.
+// one whose job ran again, keeps its file, and its job completes, as nothing
+// failed.
 func (s *Service) fail(ctx context.Context, ws, id ids.UUID, why error) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), failTimeout)
 	defer cancel()
@@ -474,9 +485,12 @@ func (s *Service) fail(ctx context.Context, ws, id ids.UUID, why error) error {
 			"export_id", ids.Encode(ids.Job, id), "error", err)
 		return jobs.Snooze(failRetry)
 	}
-	if key != "" {
-		s.dropFailed(ctx, id, key)
+	if key == "" {
+		s.log.InfoContext(ctx, "the authoring export had ended when its job came to fail it",
+			"export_id", ids.Encode(ids.Job, id))
+		return nil
 	}
+	s.dropFailed(ctx, id, key)
 	s.log.ErrorContext(ctx, "the authoring export failed", "export_id", ids.Encode(ids.Job, id), "error", why)
 	return jobs.Cancel(why)
 }

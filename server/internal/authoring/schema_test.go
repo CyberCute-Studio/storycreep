@@ -153,10 +153,13 @@ func TestReadme(t *testing.T) {
 	if got := readme(full); !strings.Contains(got, "it contains personal data") {
 		t.Errorf("a full archive's README does not state that it holds personal data:\n%s", got)
 	}
+	if got := readme(full); !strings.Contains(got, "A play state is held as it was saved") {
+		t.Errorf("a full archive's README does not say how it holds a play state:\n%s", got)
+	}
 	content := testManifest()
 	content.Profile, content.PersonalData = ProfileContent, false
 	if got := readme(content); strings.Contains(got, "it contains personal data") ||
-		!strings.Contains(got, "content-only") {
+		strings.Contains(got, "A play state is held") || !strings.Contains(got, "content-only") {
 		t.Errorf("a content-only archive's README:\n%s", got)
 	}
 	release := testManifest()

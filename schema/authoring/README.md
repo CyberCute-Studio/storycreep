@@ -18,13 +18,13 @@ An authoring export is a zip of a project's authoring data (PRD FR-DATA-01): wha
 | `draft/validation_mutes.json` | The muted warnings and infos of entities outside the trash | an archive of the draft |
 | `release/…` | The files of the release, byte for byte, in the published layout | an archive of a release |
 | `comments.json` | The threads that are shown. A root that its author deleted keeps its place without its body or its author | the full profile |
-| `play_states.json` | The saved play states | the full profile |
+| `play_states.json` | The saved play states, each as it was saved | the full profile |
 | `annotations.json` | The canvas annotations, empty until they exist (FR-EDIT-12) | the full profile |
 | `people.json` | The ID and display name of everyone whom the archive names. Never an email address | the full profile |
 | `releases/index.json`, `releases/<snapshot ID>/…` | Every ready release, with its metadata and its files byte for byte | unless left out |
 | `assets/index.json`, `assets/<ID's body>.<extension>` | The project's assets, node cover images among them, as they were uploaded | unless left out |
 
-A section that the manifest does not list is not in the archive. A file's items are in a stable order, by ID where they have one. A draft's field that names what is in the trash is left unset, as the archive does not hold it: the project's entry board or node, a jumper's target, a board's entry node, or an element's speaker. A reference inside a rich text or an expression's source stays as its author wrote it, so it may name what the archive does not hold, as it dangles in the draft, where validation reports it.
+A section that the manifest does not list is not in the archive. A file's items are in a stable order, by ID where they have one. A draft's field that names what is in the trash is left unset, as the archive does not hold it: the project's entry board or node, a jumper's target, a board's entry node, or an element's speaker. A reference inside a rich text or an expression's source stays as its author wrote it, so it may name what the archive does not hold, as it dangles in the draft, where validation reports it. A play state is held as it was saved, so its cursor, its values, and their names may name a node, a variable, or an attribute that has gone to the trash since, which a load drops and reports (FR-PLAY-05).
 
 ## An archive of a release
 

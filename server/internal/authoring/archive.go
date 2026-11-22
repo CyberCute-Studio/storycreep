@@ -52,10 +52,17 @@ type content struct {
 	members  []member
 	// release holds the files of the release that the archive is of, by
 	// their paths, or is nil for an archive of the draft.
-	release  map[string][]byte
-	releases []Release
+	release map[string][]byte
+	// releases are the releases of the history whose files are to be copied,
+	// without the metadata that their section has written.
+	releases []historyRelease
 	assets   []assetFile
 	fileName string
+}
+
+// historyRelease is what copying a release of the history needs of it.
+type historyRelease struct {
+	id, version, path string
 }
 
 // marshal writes v as a section's file: indented, as a person reads it, and
@@ -132,7 +139,11 @@ func (s *Service) read(ctx context.Context, row queries.AuthoringExport) (*conte
 			entries = append(entries, ManifestSection{Name: sec.Name, Path: sec.Path, Items: items,
 				SHA256: hex.EncodeToString(sum[:])})
 		}
-		c.releases, c.assets = r.releases, r.assets
+		c.assets = r.assets
+		c.releases = make([]historyRelease, len(r.releases))
+		for i, rel := range r.releases {
+			c.releases[i] = historyRelease{id: rel.ID, version: rel.Version, path: rel.Path}
+		}
 		c.manifest = Manifest{Format: Format, FormatVersion: Version,
 			PublishedSchemaVersion: published.SchemaVersion, Generator: serializer.Generator(),
 			ExportedAt: time.Now().UTC(), Project: ManifestProject{ID: ids.Encode(ids.Project, row.ProjectID.Bytes),
@@ -192,7 +203,7 @@ func (s *Service) write(ctx context.Context, w io.Writer, store blob.Store, row 
 	}
 	c.members, c.release = nil, nil
 	for _, rel := range c.releases {
-		id, err := ids.Decode(ids.Snapshot, rel.ID)
+		id, err := ids.Decode(ids.Snapshot, rel.id)
 		if err != nil {
 			return fmt.Errorf("authoring: read a release's ID: %w", err)
 		}
@@ -204,11 +215,11 @@ func (s *Service) write(ctx context.Context, w io.Writer, store blob.Store, row 
 			return err
 		})
 		if err != nil {
-			return fmt.Errorf("authoring: read the files of release %s: %w", rel.Version, err)
+			return fmt.Errorf("authoring: read the files of release %s: %w", rel.version, err)
 		}
 		slices.SortFunc(files, func(a, b queries.SnapshotFilesRow) int { return strings.Compare(a.Path, b.Path) })
 		for _, f := range files {
-			if err := file(rel.Path+f.Path, zip.Deflate, f.Bytes); err != nil {
+			if err := file(rel.path+f.Path, zip.Deflate, f.Bytes); err != nil {
 				return err
 			}
 		}
@@ -286,6 +297,11 @@ func readme(m Manifest) string {
 	} else {
 		line("The content is the project's draft as it was when the archive was made, under `draft/`, without")
 		line("what is in the project's trash.")
+	}
+	if m.Profile == ProfileFull {
+		line("")
+		line("A play state is held as it was saved, so its values and their names may still name a node, a")
+		line("variable, or an attribute that has gone to the trash since. Loading it drops those and says so.")
 	}
 	line("")
 	for _, s := range m.Sections {
