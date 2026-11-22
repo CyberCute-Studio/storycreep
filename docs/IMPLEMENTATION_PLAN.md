@@ -875,7 +875,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-SNAP-02 AC2 passes and the J4 flow has Playwright coverage.
 
 ### 82. Text export
-**Status:** todo · **Depends on:** 68, 79
+**Status:** done ([#97](https://github.com/CyberCute-Studio/storycreep/pull/97)) · **Depends on:** 68, 79
 **PRD:** FR-TEXT-05
 - CSV (RFC 4180, UTF-8 with BOM, formula-injection guard) and JSON exports for a project or a board, from a snapshot or the draft: `GET …/draft/text-export` and `GET …/snapshots/{snapshot_id}/text-export`, with `format` and `board`, which need `project:read` and count as exports (`server/internal/textexport`, `snapshot.Service.TextExport` and `TextExportDraft`, `httpserver/textexport.go`, N89). Columns as specified. A stable text hash computed over the original text.
 - A form of the scope and the format on the statistics' page, of the draft, and on a release's page (`web/app/src/textexport/TextExport.tsx`, N89).
