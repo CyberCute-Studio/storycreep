@@ -1,0 +1,161 @@
+import { createI18n } from "@storycreep/shared/i18n";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
+import { I18nextProvider } from "react-i18next";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { api } from "../api";
+import { refused } from "../test/fake";
+import { TextExport } from "./TextExport";
+
+// The form of the text export (PRD FR-TEXT-05): what it asks the server for,
+// of the draft or of a release, of the project or of a board, in each
+// format; the name that the file is saved under; and a refusal, in words.
+
+const boards = [
+  { id: "bd_a", name: "Quay" },
+  { id: "bd_b", name: "Attic" },
+];
+
+let saved: { name: string; href: string }[];
+
+beforeEach(() => {
+  saved = [];
+  vi.stubGlobal(
+    "URL",
+    Object.assign(URL, {
+      createObjectURL: vi.fn(() => "blob:file"),
+      revokeObjectURL: vi.fn(),
+    }),
+  );
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    saved.push({ name: this.download, href: this.href });
+  });
+});
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+/** The server's answer of a file named name. */
+function file(name: string) {
+  return {
+    status: 200,
+    body: new Blob(["x"]),
+    response: new Response(null, {
+      headers: { "Content-Disposition": `attachment; filename=${name}` },
+    }),
+  } as never;
+}
+
+async function wrapper() {
+  const i18n = await createI18n("en");
+  const client = new QueryClient();
+  return ({ children }: { children: ReactNode }) => (
+    <I18nextProvider i18n={i18n}>
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    </I18nextProvider>
+  );
+}
+
+describe("the text export's form", () => {
+  it("downloads the draft's whole project as CSV by default, under the server's name", async () => {
+    const call = vi
+      .spyOn(api, "call")
+      .mockResolvedValue(file("harbour-draft-text.csv"));
+    render(<TextExport projectId="prj_a" boards={boards} />, {
+      wrapper: await wrapper(),
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Download text" }),
+    );
+    await waitFor(() => expect(saved).toHaveLength(1));
+    expect(call).toHaveBeenCalledWith("exportDraftText", {
+      path: { project_id: "prj_a" },
+      query: { format: "csv" },
+    });
+    expect(saved[0].name).toBe("harbour-draft-text.csv");
+  });
+
+  it("asks for a release's board, as JSON", async () => {
+    const call = vi
+      .spyOn(api, "call")
+      .mockResolvedValue(file("harbour-1.0.0-attic-text.json"));
+    render(
+      <TextExport
+        projectId="prj_a"
+        release={{ id: "sn_a", version: "1.0.0" }}
+        boards={boards}
+      />,
+      { wrapper: await wrapper() },
+    );
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "Export" }),
+      "bd_b",
+    );
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "Format" }),
+      "json",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Download text" }),
+    );
+    await waitFor(() => expect(saved).toHaveLength(1));
+    expect(call).toHaveBeenCalledWith("exportSnapshotText", {
+      path: { project_id: "prj_a", snapshot_id: "sn_a" },
+      query: { format: "json", board: "bd_b" },
+    });
+  });
+
+  it("no longer asks for a board that the list has lost", async () => {
+    const call = vi
+      .spyOn(api, "call")
+      .mockResolvedValue(file("harbour-draft-text.csv"));
+    const Wrapper = await wrapper();
+    const { rerender } = render(
+      <Wrapper>
+        <TextExport projectId="prj_a" boards={boards} />
+      </Wrapper>,
+    );
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "Export" }),
+      "bd_b",
+    );
+    rerender(
+      <Wrapper>
+        <TextExport projectId="prj_a" boards={boards.slice(0, 1)} />
+      </Wrapper>,
+    );
+    expect(screen.getByRole("combobox", { name: "Export" })).toHaveProperty(
+      "value",
+      "",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Download text" }),
+    );
+    await waitFor(() => expect(saved).toHaveLength(1));
+    expect(call).toHaveBeenCalledWith("exportDraftText", {
+      path: { project_id: "prj_a" },
+      query: { format: "csv" },
+    });
+  });
+
+  it("says why the server refused it", async () => {
+    vi.spyOn(api, "call").mockRejectedValue(
+      refused(429, { code: "rate_limited" }),
+    );
+    render(<TextExport projectId="prj_a" boards={boards} />, {
+      wrapper: await wrapper(),
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Download text" }),
+    );
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(saved).toHaveLength(0);
+  });
+});

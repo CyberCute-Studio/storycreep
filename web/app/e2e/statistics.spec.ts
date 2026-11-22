@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import type { Locator, Page } from "@playwright/test";
 import { newId } from "@storycreep/shared/ids";
 import { canvasOf, drawn, makeProject, test } from "./boards.ts";
@@ -125,6 +126,43 @@ test.describe("a project's writing statistics", () => {
     await expect(row.getByRole("cell")).toHaveText(["2", "6", "37", "1", "1"], {
       timeout: 1000,
     });
+  });
+
+  // Verifies: FR-TEXT-05/AC3
+  test("downloads the draft's text, whose word counts add up to what the page shows", async ({
+    page,
+  }) => {
+    const story = await makeStory(page, "Exported");
+    await page.goto(`/app/projects/${story.projectId}/statistics`);
+    const project = page.getByRole("region", {
+      name: en["statistics.project"],
+    });
+    await expect(countOf(project, en["statistics.words"])).toHaveText("4");
+    const form = page.getByRole("region", { name: en["text_export.title"] });
+    await expect(form).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+
+    const download = page.waitForEvent("download");
+    await press(form.getByRole("button", { name: en["text_export.download"] }));
+    const file = await download;
+    expect(file.suggestedFilename()).toBe("lighthouse-draft-text.csv");
+    const bytes = await readFile(await file.path());
+    expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    const [header, ...rows] = bytes
+      .subarray(3)
+      .toString("utf8")
+      .trimEnd()
+      .split("\r\n")
+      .map((line) => line.split(","));
+    const words = header.indexOf("word_count");
+    // The board has no entry node, so its nodes are in the order of their IDs,
+    // which two made in one millisecond may have either way round.
+    expect(rows.map((row) => row[header.indexOf("text")]).sort()).toEqual([
+      "Ask",
+      "Fine.",
+      "Hello there.",
+    ]);
+    expect(rows.reduce((sum, row) => sum + Number(row[words]), 0)).toBe(4);
   });
 
   // Verifies: FR-TEXT-06/AC1

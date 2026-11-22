@@ -19952,6 +19952,157 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/draft/text-export": {
+      "get": {
+        "description": "Returns the narrative text of the project's draft as it is now, read as of one moment, or of one of its boards, as a CSV or a JSON file (PRD FR-TEXT-05), of what is not in its trash. The file has a row of each text, an element's text, of the type body, and a connection's label, of the type choice, with the columns node_id, board (its name), node_title, speaker, text_type, text (the plain text), condition (the source of a choice's condition, as its author wrote it), word_count, and text_hash (sha256: and the SHA-256 of the plain text), as PRD FR-TEXT-05 and schema/rich-text/README.md define them. A choice has no speaker, a body no condition, and a text without plain text no row. The rows are in one order: the boards by ID, each board's nodes as its script view lists them, breadth-first from its entry node, and then those that it does not reach, by ID, and each node's text before its choices, in the order that the flow offers them. So an unchanged project exports the same bytes, and the word counts of a draft's rows add up to its writing statistics (GET /api/v1/projects/{project_id}/statistics). In the CSV, whose records end with CRLF, a text cell that starts with =, +, -, @, a tab, or a carriage return is prefixed with a single quote, so that a spreadsheet shows it as text and never evaluates it. The JSON, an object of the project, the source, the board if the export is narrowed to one, the total of words, and the rows, is not altered, and the hash is always of the original text. Content-Disposition names the file, as an attachment. A board that is not an ID of a board is answered with 400 invalid_id. A board that the draft does not have, or that is in its trash, is answered with 404 not_found. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Exports share a rate limit of 60 an hour for each IP address, 30 for each account, and 30 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "exportDraftText",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The format of the file: csv, as RFC 4180 has it, in UTF-8 with a byte order mark, or json, the lossless format. Without it, csv.",
+            "explode": false,
+            "in": "query",
+            "name": "format",
+            "schema": {
+              "default": "csv",
+              "description": "The format of the file: csv, as RFC 4180 has it, in UTF-8 with a byte order mark, or json, the lossless format. Without it, csv.",
+              "enum": [
+                "csv",
+                "json"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "The ID of a board: only that board's text is exported. Without it, the whole project's.",
+            "explode": false,
+            "in": "query",
+            "name": "board",
+            "schema": {
+              "description": "The ID of a board: only that board's text is exported. Without it, the whole project's.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The draft's text, as a CSV or a JSON file",
+            "headers": {
+              "Content-Disposition": {
+                "schema": {
+                  "description": "attachment, with the file's name: the project's slug, the snapshot's version or draft, the board's slug if the export is narrowed to one, and text, as harbour-1.0.0-intro-text.csv",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "X-Content-Type-Options": {
+                "schema": {
+                  "description": "nosniff",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Export the draft's text",
+        "tags": [
+          "Snapshots"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/folders": {
       "get": {
         "description": "Lists the project's folders that are not deleted, of boards, variables, and components, or of the kind that kind names, in the order of their IDs, oldest first. Each names its parent and its place among the parent's children, from which a client builds each kind's tree. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the types board.* and folder.* create, rename, move, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
@@ -22127,6 +22278,167 @@
           }
         },
         "summary": "Export a snapshot",
+        "tags": [
+          "Snapshots"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/snapshots/{snapshot_id}/text-export": {
+      "get": {
+        "description": "Returns the narrative text of a ready snapshot, or of one of its boards, as a CSV or a JSON file (PRD FR-TEXT-05), as its files hold it. A snapshot that is building, or that failed, has no files, and is answered with 409 snapshot_not_ready, whose details.status says which. The file has a row of each text, an element's text, of the type body, and a connection's label, of the type choice, with the columns node_id, board (its name), node_title, speaker, text_type, text (the plain text), condition (the source of a choice's condition, as its author wrote it), word_count, and text_hash (sha256: and the SHA-256 of the plain text), as PRD FR-TEXT-05 and schema/rich-text/README.md define them. A choice has no speaker, a body no condition, and a text without plain text no row. The rows are in one order: the boards by ID, each board's nodes as its script view lists them, breadth-first from its entry node, and then those that it does not reach, by ID, and each node's text before its choices, in the order that the flow offers them. So an unchanged project exports the same bytes, and the word counts of a draft's rows add up to its writing statistics (GET /api/v1/projects/{project_id}/statistics). In the CSV, whose records end with CRLF, a text cell that starts with =, +, -, @, a tab, or a carriage return is prefixed with a single quote, so that a spreadsheet shows it as text and never evaluates it. The JSON, an object of the project, the source, the board if the export is narrowed to one, the total of words, and the rows, is not altered, and the hash is always of the original text. Content-Disposition names the file, as an attachment. A board that is not an ID of a board is answered with 400 invalid_id. A board that the snapshot does not have is answered with 404 not_found. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A snapshot that the project does not have is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Exports share a rate limit of 60 an hour for each IP address, 30 for each account, and 30 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "exportSnapshotText",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The snapshot's ID",
+            "in": "path",
+            "name": "snapshot_id",
+            "required": true,
+            "schema": {
+              "description": "The snapshot's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The format of the file: csv, as RFC 4180 has it, in UTF-8 with a byte order mark, or json, the lossless format. Without it, csv.",
+            "explode": false,
+            "in": "query",
+            "name": "format",
+            "schema": {
+              "default": "csv",
+              "description": "The format of the file: csv, as RFC 4180 has it, in UTF-8 with a byte order mark, or json, the lossless format. Without it, csv.",
+              "enum": [
+                "csv",
+                "json"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "The ID of a board: only that board's text is exported. Without it, the whole project's.",
+            "explode": false,
+            "in": "query",
+            "name": "board",
+            "schema": {
+              "description": "The ID of a board: only that board's text is exported. Without it, the whole project's.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The snapshot's text, as a CSV or a JSON file",
+            "headers": {
+              "Content-Disposition": {
+                "schema": {
+                  "description": "attachment, with the file's name: the project's slug, the snapshot's version or draft, the board's slug if the export is narrowed to one, and text, as harbour-1.0.0-intro-text.csv",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "X-Content-Type-Options": {
+                "schema": {
+                  "description": "nosniff",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Export a snapshot's text",
         "tags": [
           "Snapshots"
         ]

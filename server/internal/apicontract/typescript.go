@@ -24,7 +24,8 @@ import (
 // that is not an error's to the type of its body, or undefined for none;
 // the client reports errors, which have the envelope, as exceptions. A body
 // that is a file, in one or more media types that are all a binary string,
-// as an image is, is a Blob, which the client sends as it is, and an
+// at least one of them not JSON, as an image is, is a Blob, which the client
+// sends as it is, and an
 // operation that answers with one has blob set in routes, so that the
 // client reads it as one.
 //
@@ -487,19 +488,21 @@ func (g *tsGen) bodyType(content map[string]*MediaType) (string, error) {
 	return g.typeOf(content["application/json"].Schema, 3)
 }
 
-// isFile reports whether a body is a file: it has media types, none of them
-// JSON, and each a binary string, as huma documents a body of bytes.
+// isFile reports whether a body is a file: it has media types, each a binary
+// string, as huma documents a body of bytes, and at least one of them is not
+// JSON. So a file that an operation offers in several formats, of which JSON
+// is one, as the text export's CSV or JSON, is a file, and a body that is
+// JSON alone is read as JSON.
 func isFile(content map[string]*MediaType) bool {
-	if len(content) == 0 {
-		return false
-	}
+	file := false
 	for mt, m := range content {
-		if mt == "application/json" || strings.HasSuffix(mt, "+json") || m == nil || m.Schema == nil ||
-			!slices.Equal(m.Schema.Type, Types{"string"}) || m.Schema.Format != "binary" {
+		if m == nil || m.Schema == nil || !slices.Equal(m.Schema.Type, Types{"string"}) ||
+			m.Schema.Format != "binary" {
 			return false
 		}
+		file = file || mt != "application/json" && !strings.HasSuffix(mt, "+json")
 	}
-	return true
+	return file
 }
 
 // responses returns the type of an operation's responses that are not
