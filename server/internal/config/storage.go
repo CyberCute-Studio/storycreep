@@ -27,6 +27,9 @@ const (
 	// MaxAssetMaxBytes is the most that STORYCREEP_ASSET_MAX_BYTES may allow:
 	// the 50 MB that NFR-SEC-07 allows the body of an upload.
 	MaxAssetMaxBytes = 50 << 20
+	// DefaultImportMaxBytes is the largest archive that an import takes
+	// unless STORYCREEP_IMPORT_MAX_BYTES says otherwise: 2 GB (PRD FR-DATA-01).
+	DefaultImportMaxBytes = 2 << 30
 )
 
 // AssetStorage is where the instance stores the files of its assets (PRD

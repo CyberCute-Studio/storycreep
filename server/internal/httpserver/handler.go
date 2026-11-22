@@ -16,6 +16,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/apitoken"
 	"github.com/CyberCute-Studio/storycreep/server/internal/asset"
+	"github.com/CyberCute-Studio/storycreep/server/internal/authoring"
 	"github.com/CyberCute-Studio/storycreep/server/internal/board"
 	"github.com/CyberCute-Studio/storycreep/server/internal/clipboard"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
@@ -99,6 +100,7 @@ type server struct {
 	// snapshots publishes the projects' drafts as snapshots, builds them, and
 	// reads them (package snapshot).
 	snapshots *snapshot.Service
+	authoring *authoring.Service
 	// search searches the projects' content, from the index that their
 	// commands keep (package search).
 	search *search.Service
@@ -217,6 +219,8 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		MaxBytes:     cfg.AssetMaxBytes,
 		Log:          log,
 	})
+	s.authoring = authoring.New(readyDB{s.ready}, authoring.Options{Projects: s.projects, Queue: s.queue,
+		Storage: s.assets.Storage(), ImportMaxBytes: cfg.ImportMaxBytes, Log: log})
 	s.tokens = apitoken.New(readyDB{s.ready}, apitoken.Options{
 		Policy: role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},
 	})
@@ -301,6 +305,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerSnapshots(s.main, s.snapshots)
 	registerDiffs(s.main, s.snapshots)
 	registerTextExport(s.main, s.snapshots)
+	registerAuthoringExports(s.main, s.authoring)
 	registerSearch(s.main, s.search)
 	registerStatistics(s.main, s.statistics)
 	registerClipboard(s.main, s.clipboard)

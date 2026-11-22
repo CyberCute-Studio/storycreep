@@ -20,6 +20,8 @@
   "error.email_configured": "This server emails its links to each account's own address, so it gives none as text.",
   "error.email_not_configured": "This server does not send email. Ask an instance admin for the link instead.",
   "error.email_unverified": "Verify your email address first, with the link that was emailed to you.",
+  "error.export_in_progress": "You already have an export of this project on its way. Wait for it to finish before you start another.",
+  "error.export_not_ready": "This export has no file to download: it is still being built, or its build failed.",
   "error.folder_not_empty": "This folder still holds folders, boards, variables, or components. Move them out of it, or delete them, first.",
   "error.idempotency_mismatch": "Some of these changes were saved already and others were not, so none of them was saved.",
   "error.image_invalid": "The file is not an image that can be uploaded.",

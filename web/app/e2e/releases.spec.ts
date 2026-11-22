@@ -360,6 +360,46 @@ test.describe("a project's releases", () => {
   });
 
   // Verifies: FR-DEP-04/AC1
+  // Verifies: FR-DATA-01/AC5, FR-DATA-01/AC6
+  test("exports the project's authoring data from its dialog", async ({
+    page,
+  }) => {
+    const story = await makeStory(page, "Exporter");
+    await publishByApi(page, story, "1.3.0");
+    await openReleases(page, story);
+    await press(
+      page.getByRole("button", { name: en["authoring_export.open"] }),
+    );
+    const dialog = page.getByRole("dialog", {
+      name: en["authoring_export.title"],
+    });
+    const notice = dialog.getByText(en["authoring_export.personal_data"]);
+    await expect(notice).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+    expect(await smallTargets(page)).toEqual([]);
+
+    await press(
+      dialog.getByRole("radio", {
+        name: en["authoring_export.profile_content"],
+      }),
+    );
+    await expect(notice).toBeHidden();
+    await press(
+      dialog.getByRole("button", { name: en["authoring_export.submit"] }),
+    );
+    const link = dialog.getByRole("link", {
+      name: en["authoring_export.download"],
+    });
+    await expect(link).toBeVisible({ timeout: 30_000 });
+    expect(await violations(page)).toEqual([]);
+    expect(await smallTargets(page)).toEqual([]);
+    const downloading = page.waitForEvent("download");
+    await press(link);
+    expect((await downloading).suggestedFilename()).toMatch(
+      /-draft-authoring\.zip$/,
+    );
+  });
+
   test("does not publish a draft with an error", async ({ page }) => {
     const story = await makeStory(page, "Blocked", "gold >");
     await openReleases(page, story);

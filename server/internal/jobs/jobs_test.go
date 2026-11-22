@@ -298,16 +298,20 @@ func TestCancelledJob(t *testing.T) {
 
 // TestSnoozedJob checks that a job whose work returns an error of Snooze,
 // wrapped, runs again once the wait has passed, without the attempt counting
-// or the job keeping an error, however few attempts it has.
+// or the job keeping an error, however few attempts it has, and that each run
+// learns how many times the job has been snoozed.
 func TestSnoozedJob(t *testing.T) {
 	t.Parallel()
 	d := dbtest.New(t)
 	reg := NewRegistry()
 	var mu sync.Mutex
 	runs := 0
-	Register(reg, func(context.Context, *Job[failArgs]) error {
+	Register(reg, func(_ context.Context, j *Job[failArgs]) error {
 		mu.Lock()
 		defer mu.Unlock()
+		if j.Snoozes != runs {
+			t.Errorf("run %d found %d snoozes, want %d", runs+1, j.Snoozes, runs)
+		}
 		if runs++; runs < 3 {
 			return fmt.Errorf("left some: %w", Snooze(50*time.Millisecond))
 		}

@@ -80,6 +80,157 @@ func (s *S3) Put(ctx context.Context, key string, data []byte, contentType strin
 	return nil
 }
 
+// partSize is how much of a blob that a Writer writes it holds in memory
+// before it sends it as a part of a multipart upload, and maxParts how many
+// parts S3 takes of one, so that a blob may have up to 160 GiB.
+const (
+	partSize = 16 << 20
+	maxParts = 10000
+)
+
+// abortTimeout is how long a Writer waits for the storage to discard the
+// parts of an upload that failed, whatever became of its context.
+const abortTimeout = 30 * time.Second
+
+// Create returns a Writer that sends the blob as one object if it fits in a
+// part, and as a multipart upload otherwise, which S3 makes visible whole once
+// it is completed.
+func (s *S3) Create(ctx context.Context, key, contentType string) (Writer, error) {
+	if err := CheckKey(key); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return &s3Writer{s: s, ctx: ctx, key: key, contentType: contentType, buf: make([]byte, 0, partSize)}, nil
+}
+
+// s3Writer is the S3 driver's Writer. buf holds what no part has sent yet, and
+// upload names the multipart upload once the first part has started it.
+type s3Writer struct {
+	s                *S3
+	ctx              context.Context
+	key, contentType string
+	buf              []byte
+	upload           *string
+	parts            []types.CompletedPart
+	// ended says that Commit or Abort has been called.
+	ended bool
+}
+
+// Write adds p to the part that is being filled, and sends each part that
+// fills up.
+func (w *s3Writer) Write(p []byte) (int, error) {
+	if w.ended {
+		return 0, fmt.Errorf("blob: write %s: the writer has ended", w.key)
+	}
+	written := 0
+	for len(p) > 0 {
+		n := min(len(p), partSize-len(w.buf))
+		w.buf = append(w.buf, p[:n]...)
+		p = p[n:]
+		written += n
+		if len(w.buf) == partSize {
+			if err := w.flush(); err != nil {
+				return written, err
+			}
+		}
+	}
+	return written, nil
+}
+
+// flush sends what buf holds as the next part, starting the upload if this
+// is its first.
+func (w *s3Writer) flush() error {
+	if len(w.parts) == maxParts {
+		return fmt.Errorf("blob: store %s in the bucket: it needs more than %d parts", w.key, maxParts)
+	}
+	if w.upload == nil {
+		out, err := w.s.client.CreateMultipartUpload(w.ctx, &s3.CreateMultipartUploadInput{
+			Bucket:      aws.String(w.s.bucket),
+			Key:         aws.String(w.key),
+			ContentType: aws.String(w.contentType),
+		})
+		if err != nil {
+			return fmt.Errorf("blob: start the upload of %s to the bucket: %w", w.key, err)
+		}
+		w.upload = out.UploadId
+	}
+	number := aws.Int32(int32(len(w.parts) + 1))
+	out, err := w.s.client.UploadPart(w.ctx, &s3.UploadPartInput{
+		Bucket:        aws.String(w.s.bucket),
+		Key:           aws.String(w.key),
+		UploadId:      w.upload,
+		PartNumber:    number,
+		Body:          bytes.NewReader(w.buf),
+		ContentLength: aws.Int64(int64(len(w.buf))),
+	})
+	if err != nil {
+		return fmt.Errorf("blob: send part %d of %s to the bucket: %w", *number, w.key, err)
+	}
+	w.parts = append(w.parts, types.CompletedPart{ETag: out.ETag, PartNumber: number})
+	w.buf = w.buf[:0]
+	return nil
+}
+
+// Commit stores what a blob of less than a part holds as one object, and
+// otherwise sends the last part and completes the upload. A failure discards
+// the upload's parts.
+func (w *s3Writer) Commit() (err error) {
+	if w.ended {
+		return fmt.Errorf("blob: store %s: the writer has ended", w.key)
+	}
+	if w.upload == nil {
+		w.ended = true
+		return w.s.Put(w.ctx, w.key, w.buf, w.contentType)
+	}
+	defer func() {
+		if err != nil {
+			_ = w.Abort()
+		}
+		w.ended = true
+	}()
+	if len(w.buf) > 0 {
+		if err := w.flush(); err != nil {
+			return err
+		}
+	}
+	_, err = w.s.client.CompleteMultipartUpload(w.ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:          aws.String(w.s.bucket),
+		Key:             aws.String(w.key),
+		UploadId:        w.upload,
+		MultipartUpload: &types.CompletedMultipartUpload{Parts: w.parts},
+	})
+	if err != nil {
+		return fmt.Errorf("blob: complete the upload of %s to the bucket: %w", w.key, err)
+	}
+	return nil
+}
+
+// Abort discards the upload's parts, if it has started, however the Writer's
+// context ended.
+func (w *s3Writer) Abort() error {
+	if w.ended {
+		return nil
+	}
+	w.ended = true
+	w.buf = nil
+	if w.upload == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(w.ctx), abortTimeout)
+	defer cancel()
+	_, err := w.s.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+		Bucket:   aws.String(w.s.bucket),
+		Key:      aws.String(w.key),
+		UploadId: w.upload,
+	})
+	if err != nil {
+		return fmt.Errorf("blob: discard the upload of %s to the bucket: %w", w.key, err)
+	}
+	return nil
+}
+
 // Open gets the object.
 func (s *S3) Open(ctx context.Context, key string) (io.ReadCloser, Info, error) {
 	if err := CheckKey(key); err != nil {

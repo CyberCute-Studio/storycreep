@@ -87,6 +87,9 @@ type Config struct {
 	// AssetMaxBytes is the largest file that an upload of an asset takes
 	// (PRD FR-ASSET-02).
 	AssetMaxBytes int64
+	// ImportMaxBytes is the largest archive that the instance imports,
+	// which the authoring export's dialog warns of (PRD FR-DATA-01).
+	ImportMaxBytes int64
 
 	mode     mode
 	file     string

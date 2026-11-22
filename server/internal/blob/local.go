@@ -62,55 +62,115 @@ func (l *Local) Close() error {
 // upload's whose client went away, stores nothing, as a request of the S3
 // driver that is cut short stores nothing, rather than leave a blob that its
 // caller will not refer to.
-func (l *Local) Put(ctx context.Context, key string, data []byte, _ string) (err error) {
-	if err := CheckKey(key); err != nil {
+func (l *Local) Put(ctx context.Context, key string, data []byte, contentType string) error {
+	w, err := l.Create(ctx, key, contentType)
+	if err != nil {
 		return err
 	}
-	if err := ctx.Err(); err != nil {
+	defer func() { _ = w.Abort() }()
+	if _, err := w.Write(data); err != nil {
 		return err
+	}
+	return w.Commit()
+}
+
+// Create opens a new file next to the key's, which Commit syncs and renames
+// to the key's, as Put does.
+func (l *Local) Create(ctx context.Context, key, _ string) (Writer, error) {
+	if err := CheckKey(key); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	dir := path.Dir(key)
 	if err := l.root.MkdirAll(dir, dirPerm); err != nil {
-		return fmt.Errorf("blob: create the directory of %s: %w", key, err)
+		return nil, fmt.Errorf("blob: create the directory of %s: %w", key, err)
 	}
 	tmp := path.Join(dir, tempPrefix+rand.Text())
 	f, err := l.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, filePerm)
 	if err != nil {
-		return fmt.Errorf("blob: create a file for %s: %w", key, err)
+		return nil, fmt.Errorf("blob: create a file for %s: %w", key, err)
 	}
+	return &localWriter{l: l, ctx: ctx, key: key, dir: dir, tmp: tmp, f: f}, nil
+}
+
+// localWriter is the local driver's Writer, of the file tmp.
+type localWriter struct {
+	l             *Local
+	ctx           context.Context
+	key, dir, tmp string
+	f             *os.File
+	// ended says that Commit or Abort has been called.
+	ended bool
+}
+
+// Write writes p to the file, unless the Writer's context has ended.
+func (w *localWriter) Write(p []byte) (int, error) {
+	if w.ended {
+		return 0, fmt.Errorf("blob: write %s: the writer has ended", w.key)
+	}
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := w.f.Write(p)
+	if err != nil {
+		return n, fmt.Errorf("blob: write %s: %w", w.key, err)
+	}
+	return n, nil
+}
+
+// Commit syncs the file, renames it to the key's, and syncs the directories
+// above it, as Put's doc says.
+func (w *localWriter) Commit() (err error) {
+	if w.ended {
+		return fmt.Errorf("blob: store %s: the writer has ended", w.key)
+	}
+	w.ended = true
 	defer func() {
 		if err != nil {
-			_ = f.Close()
-			_ = l.root.Remove(tmp)
+			_ = w.f.Close()
+			_ = w.l.root.Remove(w.tmp)
 		}
 	}()
-	if _, err = f.Write(data); err != nil {
-		return fmt.Errorf("blob: write %s: %w", key, err)
+	if err = w.f.Sync(); err != nil {
+		return fmt.Errorf("blob: write %s: %w", w.key, err)
 	}
-	if err = f.Sync(); err != nil {
-		return fmt.Errorf("blob: write %s: %w", key, err)
+	if err = w.f.Close(); err != nil {
+		return fmt.Errorf("blob: write %s: %w", w.key, err)
 	}
-	if err = f.Close(); err != nil {
-		return fmt.Errorf("blob: write %s: %w", key, err)
-	}
-	if err = ctx.Err(); err != nil {
+	if err = w.ctx.Err(); err != nil {
 		return err
 	}
-	if err = l.root.Rename(tmp, key); err != nil {
-		return fmt.Errorf("blob: store %s: %w", key, err)
+	if err = w.l.root.Rename(w.tmp, w.key); err != nil {
+		return fmt.Errorf("blob: store %s: %w", w.key, err)
 	}
 	// The directory holds the file's new name, and each of its parents the
 	// name of the one below, which MkdirAll may have created, here or in a
 	// Put into the same directory at the same moment, which has not yet
 	// synced it, so every one of them is synced, up to the store's own.
-	for d := dir; ; d = path.Dir(d) {
-		if err = syncDir(l.root, d); err != nil {
-			return fmt.Errorf("blob: store %s: sync its directory: %w", key, err)
+	for d := w.dir; ; d = path.Dir(d) {
+		if err = syncDir(w.l.root, d); err != nil {
+			return fmt.Errorf("blob: store %s: sync its directory: %w", w.key, err)
 		}
 		if d == "." {
 			return nil
 		}
 	}
+}
+
+// Abort closes and removes the file, unless Commit or Abort has ended the
+// Writer already.
+func (w *localWriter) Abort() error {
+	if w.ended {
+		return nil
+	}
+	w.ended = true
+	_ = w.f.Close()
+	if err := w.l.root.Remove(w.tmp); err != nil {
+		return fmt.Errorf("blob: discard %s: %w", w.key, err)
+	}
+	return nil
 }
 
 // Open opens the key's file.
@@ -169,9 +229,12 @@ func (l *Local) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// staleTemp is how long after it was last written a file that Put was
-// writing is left behind, as when the process died while it wrote, which no
-// Put still writes: Put writes a file of 50 MB at most, in moments.
+// staleTemp is how long after it was last written a file that Put or a Writer
+// was writing is left behind, as when the process died while it wrote. Nothing
+// still writes it by then: Put writes a file of 50 MB at most, in moments, and
+// a Writer, which may stream gigabytes, must write again or finish within this
+// time, as the job that holds one does, whose timeout is under an hour
+// (jobs.Timeout).
 const staleTemp = time.Hour
 
 // List walks the directory of prefix, and each of its directories, in the
