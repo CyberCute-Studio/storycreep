@@ -5,8 +5,8 @@
 // An export has a row of each text: an element's text, of the type body, and
 // a connection's label, of the type choice, each with the node that holds it
 // or that it leaves, as the writing statistics count them (FR-TEXT-06), so
-// that its word counts add up to theirs (AC3). A text that derives no plain
-// text has no row. The draft's rows are read from the draft itself rather
+// that its word counts add up to theirs whenever those say that they are
+// complete (AC3). A text that derives no plain text has no row. The draft's rows are read from the draft itself rather
 // than from the files that its export writes, which leave out what no release
 // may hold, as a reference of a variable in the trash, which the statistics
 // count by its key, and a connection from a port that its node does not have.

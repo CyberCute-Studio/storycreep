@@ -16,7 +16,7 @@ import (
 // TextExportParams are the parameters of a text export.
 type TextExportParams struct {
 	Format string `query:"format" enum:"csv,json" default:"csv" doc:"The format of the file: csv, as RFC 4180 has it, in UTF-8 with a byte order mark, or json, the lossless format. Without it, csv."`
-	Board  string `query:"board" doc:"The ID of a board: only that board's text is exported. Without it, the whole project's."`
+	Board  string `query:"board" doc:"The ID of a board: only that board's text is exported. Without it, or with it empty, the whole project's."`
 }
 
 type draftTextExportInput struct {
@@ -42,8 +42,9 @@ const textExportDoc = " The file has a row of each text, an element's text, of t
 	"in one order: the boards by ID, each board's nodes as its script view lists them, breadth-first from its " +
 	"entry node, and then those that it does not reach, by ID, and each node's text before its choices, in the " +
 	"order that the flow offers them. So an unchanged project exports the same bytes, and the word counts of a " +
-	"draft's rows add up to its writing statistics (GET /api/v1/projects/{project_id}/statistics). In the CSV, " +
-	"whose records end with CRLF, a text cell that starts with =, +, -, @, a tab, or a carriage return is prefixed " +
+	"draft's rows add up to its writing statistics (GET /api/v1/projects/{project_id}/statistics) whenever those " +
+	"say complete, as until then they leave out a text that their job has yet to count, which the export holds. " +
+	"In the CSV, whose records end with CRLF, a text cell that starts with =, +, -, @, a tab, or a carriage return is prefixed " +
 	"with a single quote, so that a spreadsheet that reads the file as comma-separated shows it as text and never " +
 	"evaluates it. One set to another list separator, as a semicolon, splits a text at it, and the guard does not " +
 	"reach the part after it: import the file as comma-separated, or use the JSON. The JSON, an object of " +

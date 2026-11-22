@@ -1,7 +1,8 @@
 // The text export (PRD FR-TEXT-05, plan note N89): a project's narrative
 // text, or one board's, of the draft or of a release, as a CSV or a JSON file
 // for review and voice-over. The statistics' page offers the draft's, whose
-// word counts add up to what it shows, and a release's page that release's.
+// word counts add up to what it shows once it has counted every text, and a
+// release's page that release's.
 
 import type { Snapshot } from "@storycreep/shared/api";
 import { useMutation } from "@tanstack/react-query";
@@ -51,7 +52,8 @@ export async function downloadText({
  * release, or else of the draft, and of the whole project or one of boards.
  * A board that the list no longer holds, as one that another session deleted
  * while the form was open, is no longer chosen, so that the form never asks
- * for what it does not show.
+ * for what it does not show. Its choices wait while a download is on its way,
+ * so that a refusal is always of what they show.
  */
 export function TextExport({
   projectId,
@@ -77,12 +79,8 @@ export function TextExport({
       }),
   });
   // A refusal is of what was asked for, so it goes once the form asks for
-  // something else. A download on its way is left to end.
-  const clearRefusal = () => {
-    if (download.isError) {
-      download.reset();
-    }
-  };
+  // something else, which it cannot while a download is on its way.
+  const clearRefusal = () => download.reset();
   return (
     <section aria-labelledby={heading} className="space-y-2">
       <h2 id={heading} className="text-xl font-semibold">
@@ -97,6 +95,7 @@ export function TextExport({
         <SelectField
           label={t("text_export.scope")}
           value={board}
+          disabled={download.isPending}
           onChange={(e) => {
             setChosen(e.target.value);
             clearRefusal();
@@ -112,6 +111,7 @@ export function TextExport({
         <SelectField
           label={t("text_export.format")}
           value={format}
+          disabled={download.isPending}
           onChange={(e) => {
             setFormat(e.target.value as TextExportFormat);
             clearRefusal();

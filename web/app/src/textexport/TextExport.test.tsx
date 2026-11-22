@@ -159,6 +159,31 @@ describe("the text export's form", () => {
     expect(saved).toHaveLength(0);
   });
 
+  it("holds its choices while a download is on its way, so that a refusal is of what they show", async () => {
+    let refuse: (error: unknown) => void = () => {};
+    vi.spyOn(api, "call").mockReturnValue(
+      new Promise((_, reject) => {
+        refuse = reject;
+      }),
+    );
+    render(<TextExport projectId="prj_a" boards={boards} />, {
+      wrapper: await wrapper(),
+    });
+    const scope = screen.getByRole("combobox", { name: "Export" });
+    const format = screen.getByRole("combobox", { name: "Format" });
+    await userEvent.selectOptions(scope, "bd_b");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Download text" }),
+    );
+    await waitFor(() => expect(scope).toHaveProperty("disabled", true));
+    expect(format).toHaveProperty("disabled", true);
+    refuse(refused(404, { code: "not_found" }));
+    const alert = screen.getByRole("alert");
+    await waitFor(() => expect(alert.textContent).not.toBe(""));
+    expect(scope).toHaveProperty("disabled", false);
+    expect(scope).toHaveProperty("value", "bd_b");
+  });
+
   it("drops a refusal once the form asks for something else", async () => {
     vi.spyOn(api, "call").mockRejectedValue(
       refused(404, { code: "not_found" }),
