@@ -39,6 +39,20 @@ const buildAttempts = 5
 // within the hour after which River's rescuer would take a job for stuck.
 const buildTimeout = 50 * time.Minute
 
+// failRetry and expireRetry are how long a job waits before it tries again to
+// end its export, when the attempt that should have done so could not. The job
+// is snoozed rather than left to run out of attempts, as a build whose export
+// stays on its way keeps its user from asking for another, and an export that
+// is never deleted outlives its retention.
+const (
+	failRetry   = time.Minute
+	expireRetry = time.Hour
+)
+
+// insertAttempts is how many times Create tries to add an export when each
+// attempt finds one on its way that has ended by the time it is read.
+const insertAttempts = 3
+
 // The statuses of an export.
 const (
 	StatusQueued   = "queued"
@@ -162,11 +176,21 @@ func storageKey(ws, id ids.UUID) string {
 
 // Create asks for an export of the project projectID, which a job builds,
 // once the actor may read the project, and records it in the audit log, in
-// one transaction. It returns the errors of project.Service.Get, an
-// *InProgressError where the user has one on its way, and, for a release,
-// snapshot.ErrNotFound or a *snapshot.NotReadyError. The token's export:read
-// is the route's to check.
+// one transaction. It returns the errors of project.Service.Get,
+// asset.ErrSetupRequired while first-run setup may yet choose the store that
+// the archive would be left behind in, an *InProgressError where the user has
+// one on its way, and, for a release, snapshot.ErrNotFound or a
+// *snapshot.NotReadyError. The token's export:read is the route's to check.
 func (s *Service) Create(ctx context.Context, actor commands.Actor, projectID ids.UUID, req Request) (Export, error) {
+	// Outside the transaction, as reading the store's settings takes a
+	// connection of its own, and after the project, so that who may not read
+	// it learns nothing of the instance.
+	if _, err := s.projects.Get(ctx, actor, projectID); err != nil {
+		return Export{}, err
+	}
+	if _, err := s.storage.FinalStore(ctx); err != nil {
+		return Export{}, err
+	}
 	id := ids.New()
 	var out Export
 	err := s.projects.ReadContent(ctx, s.db, actor, projectID, func(tx pgx.Tx, ws ids.UUID) error {
@@ -187,15 +211,12 @@ func (s *Service) Create(ctx context.Context, actor commands.Actor, projectID id
 			}
 		}
 		expires := time.Now().Add(Retention)
-		row, err := q.InsertAuthoringExport(ctx, queries.InsertAuthoringExportParams{ID: uuid(id), WorkspaceID: uuid(ws),
+		row, err := insert(ctx, q, queries.InsertAuthoringExportParams{ID: uuid(id), WorkspaceID: uuid(ws),
 			ProjectID: uuid(projectID), RequestedBy: uuid(actor.UserID), SnapshotID: snapshotID,
 			Profile: string(req.Profile), IncludeAssets: req.IncludeAssets, IncludeReleases: req.IncludeReleases,
 			StorageKey: storageKey(ws, id), ExpiresAt: pgtype.Timestamptz{Time: expires, Valid: true}})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return s.inProgress(ctx, q, ws, projectID, actor.UserID)
-		}
 		if err != nil {
-			return fmt.Errorf("authoring: add the export: %w", err)
+			return err
 		}
 		source := "draft"
 		if req.SnapshotID != nil {
@@ -225,20 +246,30 @@ func (s *Service) Create(ctx context.Context, actor commands.Actor, projectID id
 	return out, nil
 }
 
-// inProgress returns the *InProgressError of the user's export of the project
-// that is on its way.
-func (s *Service) inProgress(ctx context.Context, q *queries.Queries, ws, projectID, user ids.UUID) error {
-	rows, err := q.AuthoringExports(ctx, queries.AuthoringExportsParams{WorkspaceID: uuid(ws),
-		ProjectID: uuid(projectID), RequestedBy: uuid(user), After: uuid(ids.UUID{}), RowLimit: 100})
-	if err != nil {
-		return fmt.Errorf("authoring: read the user's exports: %w", err)
-	}
-	for _, r := range rows {
-		if r.Status == StatusQueued || r.Status == StatusBuilding {
-			return &InProgressError{ID: ids.Encode(ids.Job, r.ID.Bytes)}
+// insert adds the export p, or returns the *InProgressError of the user's
+// export of the project that is on its way. One that stopped the insert and
+// ended before it was read leaves the way clear, so the insert is made again.
+func insert(ctx context.Context, q *queries.Queries, p queries.InsertAuthoringExportParams) (queries.AuthoringExport,
+	error) {
+	for range insertAttempts {
+		row, err := q.InsertAuthoringExport(ctx, p)
+		if err == nil {
+			return row, nil
 		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return row, fmt.Errorf("authoring: add the export: %w", err)
+		}
+		running, err := q.AuthoringExportInProgress(ctx, queries.AuthoringExportInProgressParams{
+			WorkspaceID: p.WorkspaceID, ProjectID: p.ProjectID, RequestedBy: p.RequestedBy})
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return row, fmt.Errorf("authoring: read the user's export on its way: %w", err)
+		}
+		return row, &InProgressError{ID: ids.Encode(ids.Job, running.Bytes)}
 	}
-	return errors.New("authoring: the user's export that was on its way has ended")
+	return queries.AuthoringExport{}, errors.New("authoring: the user's exports kept ending as this one was added")
 }
 
 func uuid(id ids.UUID) pgtype.UUID { return pgtype.UUID{Bytes: id, Valid: true} }
@@ -372,7 +403,14 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 		if err != nil {
 			return jobs.Cancel(err)
 		}
-		return s.withDB(job.DB).Expire(ctx, workspaceID, id)
+		svc := s.withDB(job.DB)
+		err = svc.Expire(ctx, workspaceID, id)
+		if err != nil && job.Attempt >= job.MaxAttempts {
+			svc.log.ErrorContext(ctx, "the authoring export could not be deleted, and its job will try again",
+				"export_id", ids.Encode(ids.Job, id), "error", err)
+			return jobs.Snooze(expireRetry)
+		}
+		return err
 	})
 }
 
@@ -396,7 +434,8 @@ func (s *Service) withDB(db *database.DB) *Service {
 	return &c
 }
 
-// fail fails the export, and ends its job.
+// fail fails the export, and ends its job. Where the database does not take
+// that, the job runs again rather than end with the export still on its way.
 func (s *Service) fail(ctx context.Context, ws, id ids.UUID, why error) error {
 	err := s.db.InTx(ctx, database.Scope{WorkspaceID: ws}, func(tx pgx.Tx) error {
 		_, err := queries.New(tx).FailAuthoringExport(ctx, queries.FailAuthoringExportParams{WorkspaceID: uuid(ws),
@@ -404,7 +443,9 @@ func (s *Service) fail(ctx context.Context, ws, id ids.UUID, why error) error {
 		return err
 	})
 	if err != nil {
-		return fmt.Errorf("authoring: fail the export: %w", err)
+		s.log.ErrorContext(ctx, "the authoring export could not be failed, and its job will try again",
+			"export_id", ids.Encode(ids.Job, id), "error", err)
+		return jobs.Snooze(failRetry)
 	}
 	s.log.ErrorContext(ctx, "the authoring export failed", "export_id", ids.Encode(ids.Job, id), "error", why)
 	return jobs.Cancel(why)
@@ -442,7 +483,9 @@ func (s *Service) Build(ctx context.Context, ws, id ids.UUID) (err error) {
 	if err != nil {
 		return err
 	}
-	store, err := s.storage.Store(ctx)
+	// The final store, which Create has checked that there is, as an archive
+	// stored anywhere else could be neither downloaded nor deleted.
+	store, err := s.storage.FinalStore(ctx)
 	if err != nil {
 		return fmt.Errorf("authoring: open the store: %w", err)
 	}

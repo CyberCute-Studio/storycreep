@@ -111,6 +111,8 @@ A file is stored under `{workspace}/{sha256}.{ext}`, the same key in the volume 
 docker run --rm --volumes-from "$(docker compose ps --all --quiet app)" alpine rm /var/lib/storycreep/assets/storycreep-owner
 ```
 
+In a bucket, a project's authoring export is written as a multipart upload. The server discards the parts of one that fails, but a server that is killed midway leaves them behind, where they take up storage without being listed as objects, and the hourly job does not see them. On Amazon S3 they stay until a lifecycle rule aborts them, so add one that does so after a day (`AbortIncompleteMultipartUpload`). On another S3-compatible storage, check how it expires incomplete uploads.
+
 An upload takes PNG, JPEG, GIF, WebP, and SVG images of at most `STORYCREEP_ASSET_MAX_BYTES`, and tells their type from their content. An SVG file is stored without its scripts and its references to anything outside it. The server holds an upload's file in memory while it checks and stores it, and the uploads in progress take turns for 256 MiB of files, of which one user's take a quarter at most, so that a burst of them waits rather than takes more. It makes the thumbnails one at a time, and decodes no image whose decoding would take more than 256 MiB of memory, which is then its own thumbnail.
 
 ### API tokens

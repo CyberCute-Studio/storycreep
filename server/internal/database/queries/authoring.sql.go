@@ -283,6 +283,7 @@ func (q *Queries) AuthoringComponents(ctx context.Context, arg AuthoringComponen
 const authoringExport = `-- name: AuthoringExport :one
 SELECT id, workspace_id, project_id, requested_by, snapshot_id, profile, include_assets, include_releases, status, storage_key, size_bytes, file_name, created_at, finished_at, expires_at FROM authoring_export
 WHERE workspace_id = $1 AND project_id = $2 AND requested_by = $3 AND id = $4
+    AND expires_at > now()
 `
 
 type AuthoringExportParams struct {
@@ -292,7 +293,8 @@ type AuthoringExportParams struct {
 	ID          pgtype.UUID
 }
 
-// AuthoringExport returns the export of the project that the user asked for.
+// AuthoringExport returns the export of the project that the user asked for,
+// unless its time has passed, whether or not its job has deleted it yet.
 func (q *Queries) AuthoringExport(ctx context.Context, arg AuthoringExportParams) (AuthoringExport, error) {
 	row := q.db.QueryRow(ctx, authoringExport,
 		arg.WorkspaceID,
@@ -319,6 +321,27 @@ func (q *Queries) AuthoringExport(ctx context.Context, arg AuthoringExportParams
 		&i.ExpiresAt,
 	)
 	return i, err
+}
+
+const authoringExportInProgress = `-- name: AuthoringExportInProgress :one
+SELECT id FROM authoring_export
+WHERE workspace_id = $1 AND project_id = $2 AND requested_by = $3
+    AND status IN ('queued', 'building')
+`
+
+type AuthoringExportInProgressParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	RequestedBy pgtype.UUID
+}
+
+// AuthoringExportInProgress returns the ID of the user's export of the project
+// that is on its way, which keeps another from being added whatever its time.
+func (q *Queries) AuthoringExportInProgress(ctx context.Context, arg AuthoringExportInProgressParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, authoringExportInProgress, arg.WorkspaceID, arg.ProjectID, arg.RequestedBy)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const authoringExportOfJob = `-- name: AuthoringExportOfJob :one
@@ -357,6 +380,7 @@ func (q *Queries) AuthoringExportOfJob(ctx context.Context, arg AuthoringExportO
 const authoringExports = `-- name: AuthoringExports :many
 SELECT id, workspace_id, project_id, requested_by, snapshot_id, profile, include_assets, include_releases, status, storage_key, size_bytes, file_name, created_at, finished_at, expires_at FROM authoring_export
 WHERE workspace_id = $1 AND project_id = $2 AND requested_by = $3
+    AND expires_at > now()
     AND ($4::uuid = '00000000-0000-0000-0000-000000000000' OR id < $4::uuid)
 ORDER BY id DESC LIMIT $5
 `
@@ -369,9 +393,9 @@ type AuthoringExportsParams struct {
 	RowLimit    int32
 }
 
-// AuthoringExports returns the user's exports of the project, newest first,
-// at most row_limit of them, after the export of the UUID after, or from the
-// newest for the zero UUID.
+// AuthoringExports returns the user's exports of the project whose time has
+// not passed, newest first, at most row_limit of them, after the export of the
+// UUID after, or from the newest for the zero UUID.
 func (q *Queries) AuthoringExports(ctx context.Context, arg AuthoringExportsParams) ([]AuthoringExport, error) {
 	rows, err := q.db.Query(ctx, authoringExports,
 		arg.WorkspaceID,

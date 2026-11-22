@@ -28,7 +28,7 @@ A section that the manifest does not list is not in the archive. A file's items 
 
 ## An archive of a release
 
-A release holds only what a game needs, so an archive of one has no folders, no component descriptions, and none of the other data that only the draft holds. Its comments and play states are those of the project when the archive was made: a comment whose thread's target is in the release, and a play state with no cursor or whose cursor's node is in the release. The others are left out, and `leftOut` in the manifest and the README count them, so that nothing goes missing silently.
+A release holds only what a game needs, so an archive of one has no folders, no component descriptions, and none of the other data that only the draft holds. Its comments and play states are those of the project when the archive was made: a comment whose thread's target is in the release, and a play state with no cursor or whose cursor's node is in the release. The others are left out, and `leftOut` in the manifest and the README count them, so that nothing goes missing silently. What is in the project's trash is neither exported nor counted, and the README says so: that includes a thread whose target the draft has deleted since, even where the release still has that target.
 
 ## Versions
 

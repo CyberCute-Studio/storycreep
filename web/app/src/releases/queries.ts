@@ -149,7 +149,7 @@ export function refusedByServer(error: unknown): error is ApiError {
  * gone, ends the poll. A read that no answer came to, that the server
  * failed, or that a proxy answered, is tried again at the usual pace.
  */
-function nextPoll(error: unknown): number | false {
+export function nextPoll(error: unknown): number | false {
   if (!refusedByServer(error)) {
     return buildPoll;
   }

@@ -101,7 +101,7 @@ function Releases() {
             onPublished={setPublished}
           />
         )}
-        <ExportButton projectId={projectId} releases={releases} />
+        <ExportButton projectId={projectId} />
       </div>
       <Status message={said} />
       {releases.length === 0 ? (

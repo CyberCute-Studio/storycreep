@@ -269,6 +269,8 @@ func readme(m Manifest) string {
 			line("Comments and play states are those of the project when the archive was made, about what this")
 			line("release still has. %d comment(s) and %d play state(s) about anything else were left out.",
 				m.LeftOut.Comments, m.LeftOut.PlayStates)
+			line("What is in the project's trash is neither held nor counted, as a thread about something that the")
+			line("draft has deleted since, even where this release still has it.")
 		}
 	} else {
 		line("The content is the project's draft as it was when the archive was made, under `draft/`, without")

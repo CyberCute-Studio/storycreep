@@ -16,11 +16,13 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/authoring"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 	"github.com/CyberCute-Studio/storycreep/server/internal/snapshot"
 )
 
@@ -454,6 +456,55 @@ func TestAuthoringExportOfRelease(t *testing.T) {
 	if got := items[authoring.PlayState](t, files, "play_states.json"); len(got) != 1 || got[0].ID != f.playState {
 		t.Errorf("the play states are %+v, want only the one at what the release has", got)
 	}
+
+	// A thread whose target the draft has deleted since is in the trash, so
+	// it is neither held nor counted, though the release still has the node.
+	sendBatch(t, h, f.owner, f.project, wireCommand{Type: "node.delete", Payload: map[string]any{"id": f.node}})
+	e = waitForExport(t, f, f.owner, askExport(t, h, f.owner, f.project, map[string]any{"source": f.release.ID}).ID)
+	files = archiveOf(t, h, f.owner, f.project, e)
+	if got := validateArchive(t, files).LeftOut.Comments; got != 1 {
+		t.Errorf("the manifest leaves out %d comment(s), want only the one about the later node", got)
+	}
+	if got := items[authoring.Comment](t, files, "comments.json"); len(got) != 0 {
+		t.Errorf("the comments are %+v, want none of a thread in the trash", got)
+	}
+	if !strings.Contains(string(files[authoring.ReadmePath]), "neither held nor counted") {
+		t.Errorf("the README does not say that the trash is not counted:\n%s", files[authoring.ReadmePath])
+	}
+}
+
+// TestAuthoringExportBeforeSetup checks that an export is refused while
+// first-run setup may yet choose the store, where its archive would be left
+// behind, and is taken once the configuration names the store.
+func TestAuthoringExportBeforeSetup(t *testing.T) {
+	t.Parallel()
+	for _, fixed := range []bool{false, true} {
+		env := inviteEnv("open", map[string]string{"STORYCREEP_ASSET_STORAGE": ""})
+		if fixed {
+			env["STORYCREEP_ASSET_STORAGE"] = t.TempDir()
+		}
+		s, d := pendingServer(t, env)
+		if _, err := account.Create(t.Context(), d.Open(t), account.NewHasher(), account.Registration{
+			Email: "jo@example.com", DisplayName: "Jo", Password: secret.New(testPassword)}, false); err != nil {
+			t.Fatal(err)
+		}
+		jo := signIn(t, s.main, "jo@example.com")
+		res := call(s.main, http.MethodPost, workspacesPath, jsonBody(t, map[string]string{"name": "Harbour"}),
+			jo.header(true))
+		var ws struct {
+			ID string `json:"id"`
+		}
+		if res.status != http.StatusCreated || json.Unmarshal(res.body, &ws) != nil {
+			t.Fatalf("create a workspace before setup: %d %s, want 201", res.status, res.body)
+		}
+		p := createProject(t, s.main, jo, ws.ID, "Lighthouse").ID
+		if fixed {
+			askExport(t, s.main, jo, p, map[string]any{})
+			continue
+		}
+		wantCode(t, "an export before setup", call(s.main, http.MethodPost, authoringExportsPath(p),
+			jsonBody(t, map[string]any{}), jo.header(true)), http.StatusForbidden, api.CodeSetupRequired)
+	}
 }
 
 // TestAuthoringExportAccess checks who reads an export, and the refusals: a
@@ -570,6 +621,22 @@ func TestAuthoringExportExpires(t *testing.T) {
 	}
 	if !referenced() {
 		t.Errorf("the orphan reconciliation does not read %s as an export's", key)
+	}
+	// Past its time an export is gone to its user, though its job has not run,
+	// and its file stays referenced until the job deletes it.
+	if _, err := f.d.Admin(t).Exec(t.Context(), `UPDATE authoring_export SET expires_at = now() - interval '1 second'
+		WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	wantCode(t, "an export past its time", call(h, http.MethodGet, authoringExportsPath(p)+"/"+e.ID, nil,
+		owner.header(false)), http.StatusNotFound, api.CodeNotFound)
+	wantCode(t, "the download of one past its time", call(h, http.MethodGet,
+		authoringExportsPath(p)+"/"+e.ID+"/download", nil, owner.header(false)), http.StatusNotFound, api.CodeNotFound)
+	if got := itemIDs(t, h, owner.header(false), authoringExportsPath(p)); len(got) != 0 {
+		t.Errorf("the list holds %q past their time", got)
+	}
+	if !referenced() {
+		t.Errorf("%s is no longer read as an export's before its job has run", key)
 	}
 	if err := f.s.authoring.Expire(t.Context(), ws, id); err != nil {
 		t.Fatal(err)

@@ -12,6 +12,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
+	"github.com/CyberCute-Studio/storycreep/server/internal/asset"
 	"github.com/CyberCute-Studio/storycreep/server/internal/authoring"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
@@ -107,12 +108,14 @@ func registerAuthoringExports(m *api.Mux, exports *authoring.Service) {
 			"the format of schema/authoring/v1, and answers 202 with the export, queued, whose URL Location names. A " +
 			"job builds it. The archive holds the draft's entities without its trash, or a release's files, whose " +
 			"folders and other draft-only data no release keeps; with the full profile, the comments, play states, " +
-			"and an annotations section, of a release those about what it still has, the rest being counted in the " +
-			"archive's manifest and README; the release history with its files; and the assets, node cover images " +
-			"among them (PRD FR-DATA-01, FR-EDIT-06 AC3). The archive is kept for seven days. A user has one export " +
-			"of a project on its way at a time, and another request is answered with 409 export_in_progress, whose " +
-			"details.export_id names it. A snapshot that is building or failed is answered with 409 " +
-			"snapshot_not_ready, and a source that is neither draft nor a snapshot's ID with 400 invalid_id." +
+			"and an annotations section, of a release those about what it still has, the others outside the trash " +
+			"being counted in the archive's manifest and README; the release history with its files; and the " +
+			"assets, node cover images among them (PRD FR-DATA-01, FR-EDIT-06 AC3). The archive is kept for seven " +
+			"days. A user has one export of a project on its way at a time, and another request is answered with " +
+			"409 export_in_progress, whose details.export_id names it. A snapshot that is building or failed is " +
+			"answered with 409 snapshot_not_ready, and a source that is neither draft nor a snapshot's ID with 400 " +
+			"invalid_id. Until the instance's first-run setup has completed, which may yet choose where files are " +
+			"stored, the answer is 403 setup_required, unless STORYCREEP_ASSET_STORAGE names where they are." +
 			authoringExportDoc + projectNotFoundDoc + tokenNotFoundDoc + snapshotNotFoundDoc +
 			tokenPostReadDoc(scope.ExportRead),
 		Tags:          []string{"Authoring export"},
@@ -263,6 +266,8 @@ func authoringError(ctx context.Context, err error) error {
 	switch {
 	case errors.Is(err, authoring.ErrNotFound):
 		return api.NewError(api.CodeNotFound)
+	case errors.Is(err, asset.ErrSetupRequired):
+		return api.NewError(api.CodeSetupRequired)
 	case errors.As(err, &inProgress):
 		return &api.Error{Code: api.CodeExportInProgress, Details: map[string]any{"export_id": inProgress.ID}}
 	case errors.As(err, &notReady):

@@ -25,7 +25,11 @@ import { useTranslation } from "react-i18next";
 import { api, sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
-import { buildPoll } from "../releases/queries";
+import {
+  nextPoll,
+  readyReleasesQuery,
+  refusedByServer,
+} from "../releases/queries";
 import { Button, buttonClass } from "../ui/Button";
 import { DialogFrame, FormButtons } from "../ui/Dialog";
 import {
@@ -66,7 +70,7 @@ function newestExportQuery(projectId: string) {
   });
 }
 
-/** The export id, read again every buildPoll until it ends. */
+/** The export id, read again until it ends or the server refuses it (nextPoll). */
 function exportQuery(projectId: string, id: string) {
   return queryOptions({
     queryKey: [...exportsKey(projectId), id] as const,
@@ -79,19 +83,12 @@ function exportQuery(projectId: string, id: string) {
         )
       ).body,
     refetchInterval: (query) =>
-      onItsWay(query.state.data) ? buildPoll : false,
+      onItsWay(query.state.data) ? nextPoll(query.state.error) : false,
   });
 }
 
 /** The button that opens the dialog, whose form starts anew each time. */
-export function ExportButton({
-  projectId,
-  releases,
-}: {
-  projectId: string;
-  /** The project's releases that the page has read, of which the ready ones may be exported. */
-  releases: readonly Snapshot[];
-}) {
+export function ExportButton({ projectId }: { projectId: string }) {
   const { t } = useTranslation();
   return (
     <Dialog.Root>
@@ -102,23 +99,18 @@ export function ExportButton({
         title={t("authoring_export.title")}
         description={t("authoring_export.intro")}
       >
-        <ExportForm projectId={projectId} releases={releases} />
+        <ExportForm projectId={projectId} />
       </DialogFrame>
     </Dialog.Root>
   );
 }
 
-function ExportForm({
-  projectId,
-  releases,
-}: {
-  projectId: string;
-  releases: readonly Snapshot[];
-}) {
+function ExportForm({ projectId }: { projectId: string }) {
   const { t } = useTranslation();
   const session = useSuspenseQuery(sessionQuery).data;
   const client = useQueryClient();
-  const ready = releases.filter((r) => r.status === "ready");
+  // Every ready release, rather than the pages that the page behind has read.
+  const ready = useQuery(readyReleasesQuery(projectId)).data ?? [];
   const [chosen, setChosen] = useState(draftSource);
   // A release that left the list is no longer chosen, so that the form never
   // asks for what it does not show.
@@ -135,9 +127,13 @@ function ExportForm({
     ...exportQuery(projectId, id ?? ""),
     enabled: id !== undefined,
   });
-  const shown =
-    current.data ??
-    (newest.data?.id === id ? (newest.data ?? undefined) : undefined);
+  // A refusal other than the rate limit's says that the export is no longer
+  // the user's to read, so what was last read of it no longer holds the form.
+  const gone = refusedByServer(current.error) && current.error.status !== 429;
+  const shown = gone
+    ? undefined
+    : (current.data ??
+      (newest.data?.id === id ? (newest.data ?? undefined) : undefined));
 
   const start = useMutation({
     mutationFn: async () =>
@@ -167,9 +163,9 @@ function ExportForm({
     },
   });
   const refusal =
-    inProgressId(start.error) === undefined
+    (inProgressId(start.error) === undefined
       ? refusalOf(start.error, t)
-      : undefined;
+      : undefined) ?? (gone ? refusalOf(current.error, t) : undefined);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -237,7 +233,7 @@ function ExportForm({
       />
       <RefusalAlert refusal={refusal} />
       {shown !== undefined && (
-        <ExportResult projectId={projectId} item={shown} releases={releases} />
+        <ExportResult projectId={projectId} item={shown} releases={ready} />
       )}
       <FormButtons
         cancel={t("authoring_export.close")}

@@ -104,18 +104,28 @@ ON CONFLICT (workspace_id, project_id, requested_by) WHERE status IN ('queued', 
 RETURNING *;
 
 -- name: AuthoringExport :one
--- AuthoringExport returns the export of the project that the user asked for.
+-- AuthoringExport returns the export of the project that the user asked for,
+-- unless its time has passed, whether or not its job has deleted it yet.
 SELECT * FROM authoring_export
-WHERE workspace_id = @workspace_id AND project_id = @project_id AND requested_by = @requested_by AND id = @id;
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND requested_by = @requested_by AND id = @id
+    AND expires_at > now();
 
 -- name: AuthoringExports :many
--- AuthoringExports returns the user's exports of the project, newest first,
--- at most row_limit of them, after the export of the UUID after, or from the
--- newest for the zero UUID.
+-- AuthoringExports returns the user's exports of the project whose time has
+-- not passed, newest first, at most row_limit of them, after the export of the
+-- UUID after, or from the newest for the zero UUID.
 SELECT * FROM authoring_export
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND requested_by = @requested_by
+    AND expires_at > now()
     AND (@after::uuid = '00000000-0000-0000-0000-000000000000' OR id < @after::uuid)
 ORDER BY id DESC LIMIT @row_limit;
+
+-- name: AuthoringExportInProgress :one
+-- AuthoringExportInProgress returns the ID of the user's export of the project
+-- that is on its way, which keeps another from being added whatever its time.
+SELECT id FROM authoring_export
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND requested_by = @requested_by
+    AND status IN ('queued', 'building');
 
 -- name: AuthoringExportOfJob :one
 -- AuthoringExportOfJob returns the export of a job, whoever asked for it.

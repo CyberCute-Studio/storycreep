@@ -34,13 +34,25 @@ const release = {
   status: "ready",
 } as never;
 
-/** Answers the dialog's requests, with created as the answer of asking for an export. */
-function serve(newest: AuthoringExportBody | null, created?: unknown) {
+/**
+ * Answers the dialog's requests, with created as the answer of asking for an
+ * export, and readError, if any, as the answer of reading one.
+ */
+function serve(
+  newest: AuthoringExportBody | null,
+  created?: unknown,
+  readError?: Error,
+) {
   return vi.spyOn(api, "call").mockImplementation((async (op: string) => {
     switch (op) {
+      case "listSnapshots":
+        return { body: { items: [release], next_cursor: null } };
       case "listAuthoringExports":
         return { body: { items: newest === null ? [] : [newest] } };
       case "getAuthoringExport":
+        if (readError !== undefined) {
+          throw readError;
+        }
         return { body: newest ?? { ...base, id: "job_b" } };
       case "createAuthoringExport":
         if (created instanceof Error) {
@@ -66,7 +78,7 @@ async function open() {
       </QueryClientProvider>
     </I18nextProvider>
   );
-  render(<ExportButton projectId="prj_a" releases={[release]} />, { wrapper });
+  render(<ExportButton projectId="prj_a" />, { wrapper });
   await userEvent.click(
     await screen.findByRole("button", { name: "Export project" }),
   );
@@ -107,6 +119,7 @@ describe("the authoring export's dialog", () => {
     await open();
     await userEvent.click(screen.getByRole("radio", { name: /Content only/ }));
     expect(screen.queryByText(/contains personal data/)).toBeNull();
+    await screen.findByRole("option", { name: /1\.2\.0/ });
     await userEvent.selectOptions(screen.getByRole("combobox"), "snp_a");
     expect(screen.getByText(/no folders/)).toBeTruthy();
     await userEvent.click(
@@ -164,5 +177,20 @@ describe("the authoring export's dialog", () => {
       ),
     );
     expect(screen.queryByText("on its way")).toBeNull();
+  });
+
+  it("lets go of an export on its way that the server no longer answers for, and says so", async () => {
+    const gone = refused(404, { code: "not_found", message: "no such export" });
+    serve({ ...base, status: "building" }, undefined, gone);
+    await open();
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Start export" })
+          .hasAttribute("disabled"),
+      ).toBe(false),
+    );
+    expect(screen.queryByText(/Building/)).toBeNull();
+    expect(screen.getByRole("alert")).toBeTruthy();
   });
 });
