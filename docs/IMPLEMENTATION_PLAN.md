@@ -883,7 +883,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-TEXT-05 AC1–AC4 pass.
 
 ### 83. Authoring export
-**Status:** todo · **Depends on:** 29, 73, 74, 79
+**Status:** done ([#98](https://github.com/CyberCute-Studio/storycreep/pull/98)) · **Depends on:** 29, 73, 74, 79
 **PRD:** FR-DATA-01 (export: AC5, AC6), FR-DATA-04 (authoring schema), FR-EDIT-06 (AC3), FR-AUTH-04 (AC7)
 - A zip export built by a job, with a documented format and schema version. Contents: draft or snapshot, comments, play states, an `annotations` section (empty until item 127), the release history with files, and optional assets, including node cover images (`server/internal/authoring`, whose `Sections` registry item 84 reads too, `schema/authoring`, N90).
 - The archive schema defines the annotation item from its first version, with the §5.3 `annotation` fields (ID, board, kind `note` or `frame`, geometry, text), so a v1 archive validates against it (N4).
