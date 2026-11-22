@@ -248,6 +248,13 @@ function isJSON(response: Response): boolean {
   return type === "application/json" || type.endsWith("+json");
 }
 
+/** Returns whether the response's Content-Disposition offers it as a file to save. */
+function isAttachment(response: Response): boolean {
+  return /^\s*attachment\s*(;|$)/i.test(
+    response.headers.get("Content-Disposition") ?? "",
+  );
+}
+
 /**
  * Returns the JSON body of a response, or undefined if it has none. A body
  * that is not JSON, such as the page that a proxy or a development server
@@ -275,7 +282,8 @@ async function readBody(
  * Returns the body of an answer of an operation that answers with a file, as
  * a Blob, or undefined if it has none, as a 304 has not. A body that is JSON
  * is not the file, but the page of something in between, as a proxy, so it is
- * refused, as readBody refuses one that is not JSON. An instance that keeps
+ * refused, as readBody refuses one that is not JSON, unless the server sends
+ * it as an attachment, as the text export's JSON file. An instance that keeps
  * its files in an S3 bucket answers with a redirect to a URL of the bucket,
  * which fetch follows to the bucket's origin, and reads only if the bucket's
  * CORS rules allow the application's origin; a page that only shows a file
@@ -285,7 +293,7 @@ async function readFile(
   response: Response,
   signal?: AbortSignal,
 ): Promise<Blob | undefined> {
-  if (isJSON(response)) {
+  if (isJSON(response) && !isAttachment(response)) {
     throw new Error(
       `The server answered with the status ${response.status} and a body that is JSON, not a file.`,
     );

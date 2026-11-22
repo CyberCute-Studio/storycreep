@@ -215,6 +215,10 @@ func newWorld(t *testing.T) world {
 	}
 	greet := element(w.entry, w.first, "Start", "Hello there.")
 	greet.Speaker = elara
+	// A narration that keeps the speaker that it had as dialogue, whom no row
+	// names.
+	five := element(w.five, w.first, "", "Five.")
+	five.Kind, five.Speaker = "narration", elara
 	conn := func(from, output, to, order, label, condition string) serializer.Connection {
 		c := serializer.Connection{ID: ids.Encode(ids.Connection, ids.New()), Board: w.first, From: from,
 			FromOutput: output, To: to, Order: order}
@@ -237,7 +241,7 @@ func newWorld(t *testing.T) world {
 			{ID: w.gate, Board: w.first, Type: published.NodeBranch, Title: "Gate"},
 			element(w.one, w.first, "One", "One,"),
 			element(w.empty, w.first, "Empty", ""),
-			element(w.five, w.first, "", "Five."),
+			five,
 			element(w.stray, w.first, "Stray", "Stray."),
 			element(w.other, w.second, "Other", "Other board."),
 		},

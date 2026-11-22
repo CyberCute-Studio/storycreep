@@ -67,8 +67,10 @@ type Row struct {
 	Board string `json:"board"`
 	// NodeTitle is the node's title, "" for none.
 	NodeTitle string `json:"node_title"`
-	// Speaker is the name of the component that says a body's line, "" for
-	// none, and for a choice, which its element's speaker does not say.
+	// Speaker is the name of the component that says a line of dialogue, ""
+	// for none, for a speaker in the draft's trash, for a narration, which no
+	// one says, though it keeps the speaker that it had as dialogue, and for a
+	// choice, which its element's speaker does not say.
 	Speaker string `json:"speaker"`
 	// TextType is TypeBody or TypeChoice.
 	TextType string `json:"text_type"`
@@ -133,6 +135,19 @@ func textOf(segs richtext.Segments) *text {
 		return nil
 	}
 	return &text{plain: plain, words: richtext.WordCount(segs), hash: richtext.Hash(plain)}
+}
+
+// narration is the kind of an element that no one says (FR-EDIT-02).
+const narration = "narration"
+
+// speakerOf returns the name, of speakers, of the component that says an
+// element of the kind and the stored speaker: none for a narration, as the
+// script view shows it, whatever speaker it keeps.
+func speakerOf(kind, speaker string, speakers map[string]string) string {
+	if kind == narration {
+		return ""
+	}
+	return speakers[speaker]
 }
 
 // choice is a connection that leaves a node, in the order that the flow
@@ -286,7 +301,7 @@ func FromDraft(d *serializer.Draft, names richtext.Names, boardID string) (*Expo
 		if b == nil {
 			continue
 		}
-		out := &node{id: n.ID, title: n.Title, speaker: speakers[n.Speaker]}
+		out := &node{id: n.ID, title: n.Title, speaker: speakerOf(n.Kind, n.Speaker, speakers)}
 		if n.Text != nil {
 			out.body = textOf(n.Text.Segments(names))
 		}
@@ -423,7 +438,7 @@ func boardOfFile(info Board, entry string, f *published.Board, speakers map[stri
 		n := &node{id: raw.NodeID()}
 		switch v := raw.(type) {
 		case *published.Element:
-			n.title, n.speaker = v.Title, speakers[v.Speaker]
+			n.title, n.speaker = v.Title, speakerOf(v.Kind, v.Speaker, speakers)
 			if v.Text != nil {
 				n.body = textOf(v.Text.Segments)
 			}
@@ -480,7 +495,10 @@ var header = []string{"node_id", "board", "node_title", "speaker", "text_type", 
 // white space at either end, as RFC 4180 says. It writes the records itself,
 // as encoding/csv's Writer with UseCRLF writes each line feed in a field as
 // CRLF, which would not round-trip. Every text cell passes through guard
-// (AC4), so a spreadsheet never evaluates one.
+// (AC4), so a spreadsheet that reads the file as comma-separated evaluates
+// none. One set to another list separator, as a semicolon, splits a text at
+// it, and the guard does not reach the part after it, which only importing
+// the file as comma-separated, or the JSON, avoids.
 func (e *Export) CSV() []byte {
 	var b bytes.Buffer
 	b.WriteRune(0xFEFF)
@@ -519,9 +537,9 @@ func needsQuotes(f string) bool {
 
 // guard returns the text of a cell of the CSV, prefixed with a single quote
 // where its first character is one that a spreadsheet may take for the start
-// of a formula, =, +, -, @, a tab, or a carriage return, so that it shows the
-// text and never evaluates it (FR-TEXT-05 AC4). The JSON and the hash are of
-// the original text.
+// of a formula, =, +, -, @, a tab, or a carriage return, so that one that
+// reads the file as comma-separated shows the text and never evaluates it
+// (FR-TEXT-05 AC4). The JSON and the hash are of the original text.
 func guard(s string) string {
 	if s != "" && strings.IndexByte("=+-@\t\r", s[0]) >= 0 {
 		return "'" + s

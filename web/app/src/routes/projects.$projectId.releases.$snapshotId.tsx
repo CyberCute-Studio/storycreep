@@ -117,11 +117,13 @@ function Release() {
       {content.data !== undefined && (
         <ReleaseView content={content.data} boardId={board} />
       )}
-      {content.data !== undefined && (
+      {/* The export is the server's, so it needs no read of the zip, which
+          only lists the release's boards to narrow it to. */}
+      {release.status === "ready" && (
         <TextExport
           projectId={projectId}
           release={release}
-          boards={content.data.boards}
+          boards={content.data?.boards ?? []}
         />
       )}
       {release.status !== "building" && (

@@ -36,13 +36,17 @@ const textExportDoc = " The file has a row of each text, an element's text, of t
 	"label, of the type choice, with the columns node_id, board (its name), node_title, speaker, text_type, text " +
 	"(the plain text), condition (the source of a choice's condition, as its author wrote it), word_count, and " +
 	"text_hash (sha256: and the SHA-256 of the plain text), as PRD FR-TEXT-05 and schema/rich-text/README.md " +
-	"define them. A choice has no speaker, a body no condition, and a text without plain text no row. The rows are " +
+	"define them. The speaker is a line of dialogue's: a choice has none, nor has a narration, even one that keeps " +
+	"the speaker that it had as dialogue, nor a line whose speaker is in the draft's trash. A body has no condition, " +
+	"and a text without plain text no row. The rows are " +
 	"in one order: the boards by ID, each board's nodes as its script view lists them, breadth-first from its " +
 	"entry node, and then those that it does not reach, by ID, and each node's text before its choices, in the " +
 	"order that the flow offers them. So an unchanged project exports the same bytes, and the word counts of a " +
 	"draft's rows add up to its writing statistics (GET /api/v1/projects/{project_id}/statistics). In the CSV, " +
 	"whose records end with CRLF, a text cell that starts with =, +, -, @, a tab, or a carriage return is prefixed " +
-	"with a single quote, so that a spreadsheet shows it as text and never evaluates it. The JSON, an object of " +
+	"with a single quote, so that a spreadsheet that reads the file as comma-separated shows it as text and never " +
+	"evaluates it. One set to another list separator, as a semicolon, splits a text at it, and the guard does not " +
+	"reach the part after it: import the file as comma-separated, or use the JSON. The JSON, an object of " +
 	"the project, the source, the board if the export is narrowed to one, the total of words, and the rows, is " +
 	"not altered, and the hash is always of the original text. Content-Disposition names the file, as an " +
 	"attachment. A board that is not an ID of a board is answered with 400 invalid_id."

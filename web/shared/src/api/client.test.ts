@@ -133,6 +133,28 @@ describe("the API client", () => {
     await expect(call).rejects.toThrow("not a file");
   });
 
+  it("reads JSON that the server sends as an attachment as the file", async () => {
+    const { fetch } = fakeFetch(
+      () =>
+        new Response('{"rows":[]}', {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Disposition": "attachment; filename=harbour-text.json",
+          },
+        }),
+    );
+    const answer = await createClient<Operations>(routes, {
+      baseUrl,
+      fetch,
+    }).call("getThingPicture", { path: { id: "t1" } });
+    expect(answer.status).toBe(200);
+    if (answer.status === 200) {
+      expect(answer.body).toBeInstanceOf(Blob);
+      expect(await answer.body.text()).toBe('{"rows":[]}');
+    }
+  });
+
   it("throws the error envelope as an ApiError", async () => {
     const envelope = {
       error: {

@@ -158,4 +158,28 @@ describe("the text export's form", () => {
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(saved).toHaveLength(0);
   });
+
+  it("drops a refusal once the form asks for something else", async () => {
+    vi.spyOn(api, "call").mockRejectedValue(
+      refused(404, { code: "not_found" }),
+    );
+    render(<TextExport projectId="prj_a" boards={boards} />, {
+      wrapper: await wrapper(),
+    });
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "Export" }),
+      "bd_b",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Download text" }),
+    );
+    // The alert is always there, as a live region, and empty without a refusal.
+    const alert = screen.getByRole("alert");
+    await waitFor(() => expect(alert.textContent).not.toBe(""));
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "Export" }),
+      "",
+    );
+    await waitFor(() => expect(alert.textContent).toBe(""));
+  });
 });

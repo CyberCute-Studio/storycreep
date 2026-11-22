@@ -76,6 +76,13 @@ export function TextExport({
         ...(board === "" ? {} : { board }),
       }),
   });
+  // A refusal is of what was asked for, so it goes once the form asks for
+  // something else. A download on its way is left to end.
+  const clearRefusal = () => {
+    if (download.isError) {
+      download.reset();
+    }
+  };
   return (
     <section aria-labelledby={heading} className="space-y-2">
       <h2 id={heading} className="text-xl font-semibold">
@@ -90,7 +97,10 @@ export function TextExport({
         <SelectField
           label={t("text_export.scope")}
           value={board}
-          onChange={(e) => setChosen(e.target.value)}
+          onChange={(e) => {
+            setChosen(e.target.value);
+            clearRefusal();
+          }}
         >
           <option value="">{t("text_export.whole_project")}</option>
           {boards.map((b) => (
@@ -102,7 +112,10 @@ export function TextExport({
         <SelectField
           label={t("text_export.format")}
           value={format}
-          onChange={(e) => setFormat(e.target.value as TextExportFormat)}
+          onChange={(e) => {
+            setFormat(e.target.value as TextExportFormat);
+            clearRefusal();
+          }}
         >
           <option value="csv">{t("text_export.csv")}</option>
           <option value="json">{t("text_export.json")}</option>

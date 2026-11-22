@@ -163,6 +163,19 @@ test.describe("a project's writing statistics", () => {
       "Hello there.",
     ]);
     expect(rows.reduce((sum, row) => sum + Number(row[words]), 0)).toBe(4);
+
+    // The JSON file comes through the same client, as a file.
+    await form
+      .getByRole("combobox", { name: en["text_export.format"] })
+      .selectOption("json");
+    const jsonDownload = page.waitForEvent("download");
+    await press(form.getByRole("button", { name: en["text_export.download"] }));
+    const jsonFile = await jsonDownload;
+    expect(jsonFile.suggestedFilename()).toBe("lighthouse-draft-text.json");
+    const exported = JSON.parse(
+      (await readFile(await jsonFile.path())).toString("utf8"),
+    ) as { words: number };
+    expect(exported.words).toBe(4);
   });
 
   // Verifies: FR-TEXT-06/AC1
