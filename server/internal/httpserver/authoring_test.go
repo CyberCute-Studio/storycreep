@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"slices"
@@ -19,9 +20,11 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/authoring"
+	"github.com/CyberCute-Studio/storycreep/server/internal/blob"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 	"github.com/CyberCute-Studio/storycreep/server/internal/snapshot"
@@ -315,6 +318,14 @@ func TestAuthoringExportFull(t *testing.T) {
 	if len(releases) != 1 || releases[0].ID != f.release.ID || releases[0].PublishedBy != f.owner.body.UserID {
 		t.Fatalf("the releases are %+v", releases)
 	}
+	// What its author acknowledged is the release's metadata too, which the
+	// snapshot's row requires.
+	var warnings []map[string]any
+	if err := json.Unmarshal(releases[0].AcknowledgedWarnings, &warnings); err != nil || warnings == nil ||
+		releases[0].AcknowledgedSeq != f.release.AcknowledgedSeq {
+		t.Errorf("the release's acknowledgement is seq %d, warnings %s (%v), want seq %d", releases[0].AcknowledgedSeq,
+			releases[0].AcknowledgedWarnings, err, f.release.AcknowledgedSeq)
+	}
 	zipped := exportFiles(t, h, f.owner, snapshotsPath(f.project)+"/"+f.release.ID+"/export")
 	for name, want := range zipped {
 		if got, ok := files[releases[0].Path+name]; !ok || !bytes.Equal(got, want) {
@@ -410,9 +421,9 @@ func TestAuthoringExportContentOnly(t *testing.T) {
 }
 
 // TestAuthoringExportLeavesTheTrashUnreferenced checks that a draft's archive
-// holds no reference to what is in the trash, which it does not hold: a
-// jumper's target, a board's entry node, and an element's speaker. A reference
-// to what is not in the trash stays.
+// holds no reference to what is in the trash, which it does not hold: the
+// project's entry, a jumper's target, a board's entry node, and an element's
+// speaker. A reference to what is not in the trash stays.
 //
 // Verifies: FR-DATA-01/AC5
 func TestAuthoringExportLeavesTheTrashUnreferenced(t *testing.T) {
@@ -428,10 +439,14 @@ func TestAuthoringExportLeavesTheTrashUnreferenced(t *testing.T) {
 		return cmd("node.create", map[string]any{"id": id, "board_id": board, "type": "element", "kind": "narration",
 			"position": pos})
 	}
+	prefix, body, _ := strings.Cut(other, "_")
 	sendBatch(t, h, f.owner, f.project,
 		cmd("board.create", map[string]any{"id": other, "name": "Pier"}),
 		element(entry, other),
 		cmd("board.set_entry_node", map[string]any{"id": other, "node_id": entry}),
+		// In another letter case than the archive's IDs, which the entry keeps.
+		cmd("project.update_settings", map[string]any{"entry": map[string]string{
+			"board_id": prefix + "_" + strings.ToUpper(body), "node_id": entry}}),
 		cmd("component_type.create", map[string]any{"id": typ, "name": "Ghost"}),
 		cmd("component.create", map[string]any{"id": speaker, "component_type_id": typ, "name": "Mira"}),
 		cmd("node.create", map[string]any{"id": spoken, "board_id": f.board, "type": "element", "kind": "dialogue",
@@ -493,6 +508,93 @@ func TestAuthoringExportLeavesTheTrashUnreferenced(t *testing.T) {
 			}
 		}
 	}
+	entryOf := func(files map[string][]byte) project.ProjectEntry {
+		t.Helper()
+		var doc authoring.Project
+		if err := json.Unmarshal(files["draft/project.json"], &doc); err != nil {
+			t.Fatal(err)
+		}
+		var set struct {
+			Entry project.ProjectEntry `json:"entry"`
+		}
+		if err := json.Unmarshal(doc.Settings, &set); err != nil {
+			t.Fatal(err)
+		}
+		return set.Entry
+	}
+	// The entry's board is outside the trash, by the ID that the archive's
+	// boards have, and its node is not.
+	if got := entryOf(files); got != (project.ProjectEntry{BoardID: other}) {
+		t.Errorf("the project's entry is %+v, want the board %s alone", got, other)
+	}
+	sendBatch(t, h, f.owner, f.project, cmd("board.delete", map[string]any{"id": other, "confirm": true}))
+	files = archiveOf(t, h, f.owner, f.project, waitForExport(t, f, f.owner,
+		askExport(t, h, f.owner, f.project, map[string]any{}).ID))
+	if got := entryOf(files); got != (project.ProjectEntry{}) {
+		t.Errorf("the project's entry on a board in the trash is %+v, want none", got)
+	}
+}
+
+// TestAuthoringExportFailedDropsItsArchive checks that an export that fails
+// does not keep what an attempt stored before it could record its end, which
+// nobody could download and which may hold personal data.
+func TestAuthoringExportFailedDropsItsArchive(t *testing.T) {
+	t.Parallel()
+	f := newRolesFixture(t)
+	h := f.s.main
+	owner := f.as["owner"]
+	p := f.project(t, "")
+	upload(t, h, owner, p, testPNG(t, 4, 4), http.StatusCreated)
+	e := buildExport(t, f.s, owner, f.ws, p, askExport(t, h, owner, p, map[string]any{}))
+	if e.Status != authoring.StatusReady {
+		t.Fatalf("the export is %+v", e)
+	}
+	id := decode(t, ids.Job, e.ID)
+	var key, assetKey string
+	if err := f.d.Admin(t).QueryRow(t.Context(), `SELECT e.storage_key, a.storage_key FROM authoring_export e
+		JOIN asset a ON a.workspace_id = e.workspace_id AND a.project_id = e.project_id WHERE e.id = $1`,
+		id).Scan(&key, &assetKey); err != nil {
+		t.Fatal(err)
+	}
+	store, err := f.s.assets.Storage().Store(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The attempt stored the archive but could not record that, and the next
+	// finds an asset's file gone, which fails the export.
+	if _, err := f.d.Admin(t).Exec(t.Context(), `UPDATE authoring_export SET status = 'building', size_bytes = NULL,
+		file_name = NULL, finished_at = NULL WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Delete(t.Context(), assetKey); err != nil {
+		t.Fatal(err)
+	}
+	startWorkers(t, f.s, f.d)
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		var status string
+		if err := f.d.Admin(t).QueryRow(t.Context(), `SELECT status FROM authoring_export WHERE id = $1`,
+			id).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		if status == authoring.StatusFailed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the export is still %s", status)
+		}
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		_, err := store.Stat(t.Context(), key)
+		if errors.Is(err, blob.ErrNotFound) {
+			return
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the archive of the failed export is still stored")
+		}
+	}
 }
 
 // TestAuthoringExportOfADeletedMuter checks that a full archive names who
@@ -513,7 +615,8 @@ func TestAuthoringExportOfADeletedMuter(t *testing.T) {
 		return map[string]any{"code": "dead_end", "mute": map[string]any{"reason": "On purpose", "muted_by": by,
 			"muted_at": "2026-11-01T10:00:00Z"}}
 	}
-	report, err := json.Marshal(map[string]any{"seq": 0, "findings": []any{finding(owner.body.UserID), finding(gone)}})
+	report, err := json.Marshal(map[string]any{"seq": 0, "findings": []any{finding(owner.body.UserID), finding(gone),
+		finding("not-a-user")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -543,8 +646,9 @@ func TestAuthoringExportOfADeletedMuter(t *testing.T) {
 	if err := json.Unmarshal(releases[0].ValidationReport, &stored); err != nil {
 		t.Fatal(err)
 	}
-	if len(stored.Findings) != 2 || stored.Findings[0].Mute.MutedBy != owner.body.UserID ||
-		stored.Findings[1].Mute.MutedBy != "" || stored.Findings[1].Mute.Reason != "On purpose" {
+	if len(stored.Findings) != 3 || stored.Findings[0].Mute.MutedBy != owner.body.UserID ||
+		stored.Findings[1].Mute.MutedBy != "" || stored.Findings[1].Mute.Reason != "On purpose" ||
+		stored.Findings[2].Mute.MutedBy != "" || stored.Findings[2].Mute.Reason != "On purpose" {
 		t.Errorf("the stored report's findings are %+v", stored.Findings)
 	}
 	people := items[authoring.Person](t, files, "people.json")

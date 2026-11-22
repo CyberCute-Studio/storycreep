@@ -20,6 +20,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
 )
 
@@ -187,7 +188,50 @@ func readProject(ctx context.Context, r *reading) (any, int, error) {
 	if err != nil {
 		return nil, 0, fmt.Errorf("authoring: read the project: %w", err)
 	}
-	return Project{Name: row.Name, Slug: row.Slug, Description: row.Description, Settings: Value(row.Settings)}, 1, nil
+	settings, err := r.settings(ctx, row.Settings)
+	if err != nil {
+		return nil, 0, fmt.Errorf("authoring: read the project's entry: %w", err)
+	}
+	return Project{Name: row.Name, Slug: row.Slug, Description: row.Description, Settings: settings}, 1, nil
+}
+
+// settings returns the project's settings as the archive holds them: with its
+// entry's board and node left unset where they are in the trash, which the
+// settings keep for a restore to mend, and by their canonical IDs, which the
+// archive's boards and nodes have, as the stored entry keeps the case of its
+// letters as they were sent.
+func (r *reading) settings(ctx context.Context, doc []byte) (Value, error) {
+	board, node, err := project.EntryOf(doc)
+	if err != nil {
+		return nil, err
+	}
+	if board == (ids.UUID{}) && node == (ids.UUID{}) {
+		return Value(doc), nil
+	}
+	live, err := r.q.AuthoringEntry(ctx, queries.AuthoringEntryParams{WorkspaceID: r.ws, ProjectID: r.project,
+		BoardID: uuid(board), NodeID: uuid(node)})
+	if err != nil {
+		return nil, err
+	}
+	var entry project.ProjectEntry
+	if live.BoardLive {
+		entry.BoardID = ids.Encode(ids.Board, board)
+		if live.NodeLive {
+			entry.NodeID = ids.Encode(ids.Node, node)
+		}
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(doc, &fields); err != nil {
+		return nil, err
+	}
+	if fields["entry"], err = json.Marshal(entry); err != nil {
+		return nil, err
+	}
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return nil, err
+	}
+	return Value(out), nil
 }
 
 func readFolders(ctx context.Context, r *reading) ([]Folder, error) {
@@ -535,7 +579,8 @@ func readReleases(ctx context.Context, r *reading) ([]Release, error) {
 			return nil, err
 		}
 		id := encode(ids.Snapshot, row.ID)
-		out[i] = Release{ID: id, Version: row.Version, Note: row.Note, SchemaVersion: int(row.SchemaVersion.Int32),
+		out[i] = Release{ID: id, Version: row.Version, Note: row.Note, AcknowledgedSeq: row.AcknowledgedSeq,
+			AcknowledgedWarnings: Value(row.AcknowledgedWarnings), SchemaVersion: int(row.SchemaVersion.Int32),
 			ContentHash: row.ContentHash.String, SourceSeq: row.SourceSeq.Int64, Counts: Value(row.Counts),
 			ValidationReport: report, PublishedBy: r.person(row.PublishedBy), PublishedAt: row.PublishedAt.Time.UTC(),
 			BuiltAt: row.BuiltAt.Time.UTC(), Path: "releases/" + id + "/"}
@@ -546,8 +591,9 @@ func readReleases(ctx context.Context, r *reading) ([]Release, error) {
 
 // report returns a release's stored validation report as the archive holds
 // it: in a full archive it names who muted each finding while their account
-// exists, as the API's read of the report does (snapshot.Report), and in a
-// content-only one it names nobody.
+// exists, as the API's read of the report does (snapshot.Report), which also
+// reads an ID that names no user as no account, and in a content-only one it
+// names nobody.
 func (r *reading) report(ctx context.Context, raw []byte) (Value, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
@@ -573,7 +619,9 @@ func (r *reading) report(ctx context.Context, raw []byte) (Value, error) {
 		}
 		id, err := ids.Decode(ids.User, by)
 		if err != nil {
-			return nil, fmt.Errorf("read who muted a finding of a release: %w", err)
+			delete(mute, "muted_by")
+			stripped = true
+			continue
 		}
 		mutes = append(mutes, mute)
 		users = append(users, pgtype.UUID{Bytes: id, Valid: true})

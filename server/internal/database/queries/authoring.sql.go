@@ -284,6 +284,45 @@ func (q *Queries) AuthoringComponents(ctx context.Context, arg AuthoringComponen
 	return items, nil
 }
 
+const authoringEntry = `-- name: AuthoringEntry :one
+SELECT EXISTS (
+        SELECT 1 FROM live_board b
+        WHERE b.workspace_id = $1 AND b.project_id = $2 AND b.id = $3
+    ) AS board_live,
+    EXISTS (
+        SELECT 1 FROM live_node n
+        WHERE n.workspace_id = $1 AND n.project_id = $2 AND n.id = $4
+            AND n.board_id = $3
+    ) AS node_live
+`
+
+type AuthoringEntryParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	BoardID     pgtype.UUID
+	NodeID      pgtype.UUID
+}
+
+type AuthoringEntryRow struct {
+	BoardLive bool
+	NodeLive  bool
+}
+
+// AuthoringEntry says whether the board of the project's entry, and its node
+// on that board, are outside the trash, as the settings keep an entry that is
+// not, for a restore from the trash to mend, which no archive holds.
+func (q *Queries) AuthoringEntry(ctx context.Context, arg AuthoringEntryParams) (AuthoringEntryRow, error) {
+	row := q.db.QueryRow(ctx, authoringEntry,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.BoardID,
+		arg.NodeID,
+	)
+	var i AuthoringEntryRow
+	err := row.Scan(&i.BoardLive, &i.NodeLive)
+	return i, err
+}
+
 const authoringExport = `-- name: AuthoringExport :one
 SELECT id, workspace_id, project_id, requested_by, snapshot_id, profile, include_assets, include_releases, status, storage_key, size_bytes, file_name, created_at, finished_at, expires_at FROM authoring_export
 WHERE workspace_id = $1 AND project_id = $2 AND requested_by = $3 AND id = $4
@@ -738,8 +777,8 @@ func (q *Queries) AuthoringProject(ctx context.Context, arg AuthoringProjectPara
 }
 
 const authoringReleases = `-- name: AuthoringReleases :many
-SELECT id, version, note, schema_version, content_hash, source_seq, counts, validation_report, published_by,
-    published_at, built_at
+SELECT id, version, note, acknowledged_seq, acknowledged_warnings, schema_version, content_hash, source_seq, counts,
+    validation_report, published_by, published_at, built_at
 FROM snapshot WHERE workspace_id = $1 AND project_id = $2 AND status = 'ready' ORDER BY id
 `
 
@@ -749,17 +788,19 @@ type AuthoringReleasesParams struct {
 }
 
 type AuthoringReleasesRow struct {
-	ID               pgtype.UUID
-	Version          string
-	Note             string
-	SchemaVersion    pgtype.Int4
-	ContentHash      pgtype.Text
-	SourceSeq        pgtype.Int8
-	Counts           []byte
-	ValidationReport []byte
-	PublishedBy      pgtype.UUID
-	PublishedAt      pgtype.Timestamptz
-	BuiltAt          pgtype.Timestamptz
+	ID                   pgtype.UUID
+	Version              string
+	Note                 string
+	AcknowledgedSeq      int64
+	AcknowledgedWarnings []byte
+	SchemaVersion        pgtype.Int4
+	ContentHash          pgtype.Text
+	SourceSeq            pgtype.Int8
+	Counts               []byte
+	ValidationReport     []byte
+	PublishedBy          pgtype.UUID
+	PublishedAt          pgtype.Timestamptz
+	BuiltAt              pgtype.Timestamptz
 }
 
 // AuthoringReleases returns the project's ready snapshots, oldest first.
@@ -776,6 +817,8 @@ func (q *Queries) AuthoringReleases(ctx context.Context, arg AuthoringReleasesPa
 			&i.ID,
 			&i.Version,
 			&i.Note,
+			&i.AcknowledgedSeq,
+			&i.AcknowledgedWarnings,
 			&i.SchemaVersion,
 			&i.ContentHash,
 			&i.SourceSeq,
@@ -872,9 +915,10 @@ func (q *Queries) DeleteAuthoringExport(ctx context.Context, arg DeleteAuthoring
 	return result.RowsAffected(), nil
 }
 
-const failAuthoringExport = `-- name: FailAuthoringExport :execrows
+const failAuthoringExport = `-- name: FailAuthoringExport :one
 UPDATE authoring_export SET status = 'failed', finished_at = now()
 WHERE workspace_id = $1 AND id = $2 AND status IN ('queued', 'building')
+RETURNING storage_key
 `
 
 type FailAuthoringExportParams struct {
@@ -882,13 +926,13 @@ type FailAuthoringExportParams struct {
 	ID          pgtype.UUID
 }
 
-// FailAuthoringExport fails an export that has not ended.
-func (q *Queries) FailAuthoringExport(ctx context.Context, arg FailAuthoringExportParams) (int64, error) {
-	result, err := q.db.Exec(ctx, failAuthoringExport, arg.WorkspaceID, arg.ID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+// FailAuthoringExport fails an export that has not ended, and returns the key
+// of its archive, or no row if it has ended.
+func (q *Queries) FailAuthoringExport(ctx context.Context, arg FailAuthoringExportParams) (string, error) {
+	row := q.db.QueryRow(ctx, failAuthoringExport, arg.WorkspaceID, arg.ID)
+	var storage_key string
+	err := row.Scan(&storage_key)
+	return storage_key, err
 }
 
 const finishAuthoringExport = `-- name: FinishAuthoringExport :execrows

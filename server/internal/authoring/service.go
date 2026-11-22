@@ -451,14 +451,22 @@ func endsTheExport(ctx context.Context, err error) bool {
 		(err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded))
 }
 
-// fail fails the export, and ends its job. Where the database does not take
-// that, the job runs again rather than end with the export still on its way.
+// fail fails the export, deletes what an attempt of it stored, and ends its
+// job. Where the database does not take that, the job runs again rather than
+// end with the export still on its way. An export that has ended, as a ready
+// one whose job ran again, keeps its file.
 func (s *Service) fail(ctx context.Context, ws, id ids.UUID, why error) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), failTimeout)
 	defer cancel()
+	var key string
 	err := s.db.InTx(ctx, database.Scope{WorkspaceID: ws}, func(tx pgx.Tx) error {
-		_, err := queries.New(tx).FailAuthoringExport(ctx, queries.FailAuthoringExportParams{WorkspaceID: uuid(ws),
+		var err error
+		key, err = queries.New(tx).FailAuthoringExport(ctx, queries.FailAuthoringExportParams{WorkspaceID: uuid(ws),
 			ID: uuid(id)})
+		if errors.Is(err, pgx.ErrNoRows) {
+			key = ""
+			return nil
+		}
 		return err
 	})
 	if err != nil {
@@ -466,8 +474,25 @@ func (s *Service) fail(ctx context.Context, ws, id ids.UUID, why error) error {
 			"export_id", ids.Encode(ids.Job, id), "error", err)
 		return jobs.Snooze(failRetry)
 	}
+	if key != "" {
+		s.dropFailed(ctx, id, key)
+	}
 	s.log.ErrorContext(ctx, "the authoring export failed", "export_id", ids.Encode(ids.Job, id), "error", why)
 	return jobs.Cancel(why)
+}
+
+// dropFailed deletes the archive of a failed export, which an attempt may have
+// stored before it could record that, and which nobody can download. A store
+// that does not take that leaves it to the export's expiry, so it only logs.
+func (s *Service) dropFailed(ctx context.Context, id ids.UUID, key string) {
+	store, err := s.storage.Store(ctx)
+	if err == nil {
+		err = store.Delete(ctx, key)
+	}
+	if err != nil {
+		s.log.WarnContext(ctx, "the archive of a failed authoring export stays until the export expires",
+			"export_id", ids.Encode(ids.Job, id), "error", err)
+	}
 }
 
 // Build builds the archive of the export id of the workspace ws, unless it

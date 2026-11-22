@@ -77,6 +77,8 @@ function newestExportQuery(projectId: string) {
 function exportQuery(projectId: string, id: string) {
   return queryOptions({
     queryKey: [...exportsKey(projectId), id] as const,
+    // The form shows a refusal of it.
+    meta: { showsRefusals: true },
     queryFn: async ({ signal }) =>
       (
         await api.call(
@@ -156,6 +158,9 @@ function ExportForm({ projectId }: { projectId: string }) {
       ).body,
     onSuccess: (e) => {
       client.setQueryData(exportQuery(projectId, e.id).queryKey, e);
+      // The newest too, so that the dialog opened again shows this one rather
+      // than the one before it until the list has been read.
+      client.setQueryData(newestExportQuery(projectId).queryKey, e);
       setFollowed(e.id);
     },
     onError: (error) => {
@@ -164,6 +169,9 @@ function ExportForm({ projectId }: { projectId: string }) {
       const existing = inProgressId(error);
       if (existing !== undefined) {
         setFollowed(existing);
+        void client.invalidateQueries({
+          queryKey: newestExportQuery(projectId).queryKey,
+        });
       }
     },
   });

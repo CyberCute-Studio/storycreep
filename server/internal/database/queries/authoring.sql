@@ -10,6 +10,20 @@
 SELECT name, slug, description, settings FROM project
 WHERE workspace_id = @workspace_id AND id = @id AND deleted_at IS NULL;
 
+-- name: AuthoringEntry :one
+-- AuthoringEntry says whether the board of the project's entry, and its node
+-- on that board, are outside the trash, as the settings keep an entry that is
+-- not, for a restore from the trash to mend, which no archive holds.
+SELECT EXISTS (
+        SELECT 1 FROM live_board b
+        WHERE b.workspace_id = @workspace_id AND b.project_id = @project_id AND b.id = @board_id
+    ) AS board_live,
+    EXISTS (
+        SELECT 1 FROM live_node n
+        WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id AND n.id = @node_id
+            AND n.board_id = @board_id
+    ) AS node_live;
+
 -- name: AuthoringFolders :many
 -- AuthoringFolders returns the project's folders that are not in its trash.
 SELECT id, kind, parent_id, name, "order" AS sort_key FROM live_folder
@@ -95,8 +109,8 @@ WHERE workspace_id = @workspace_id AND project_id = @project_id ORDER BY id;
 
 -- name: AuthoringReleases :many
 -- AuthoringReleases returns the project's ready snapshots, oldest first.
-SELECT id, version, note, schema_version, content_hash, source_seq, counts, validation_report, published_by,
-    published_at, built_at
+SELECT id, version, note, acknowledged_seq, acknowledged_warnings, schema_version, content_hash, source_seq, counts,
+    validation_report, published_by, published_at, built_at
 FROM snapshot WHERE workspace_id = @workspace_id AND project_id = @project_id AND status = 'ready' ORDER BY id;
 
 -- name: AuthoringPeople :many
@@ -153,10 +167,12 @@ WHERE workspace_id = @workspace_id AND id = @id AND status IN ('queued', 'buildi
 UPDATE authoring_export SET status = 'ready', size_bytes = @size_bytes, file_name = @file_name, finished_at = now()
 WHERE workspace_id = @workspace_id AND id = @id AND status = 'building';
 
--- name: FailAuthoringExport :execrows
--- FailAuthoringExport fails an export that has not ended.
+-- name: FailAuthoringExport :one
+-- FailAuthoringExport fails an export that has not ended, and returns the key
+-- of its archive, or no row if it has ended.
 UPDATE authoring_export SET status = 'failed', finished_at = now()
-WHERE workspace_id = @workspace_id AND id = @id AND status IN ('queued', 'building');
+WHERE workspace_id = @workspace_id AND id = @id AND status IN ('queued', 'building')
+RETURNING storage_key;
 
 -- name: DeleteAuthoringExport :execrows
 -- DeleteAuthoringExport deletes an export whose time has passed.

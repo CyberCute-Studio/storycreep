@@ -24,7 +24,7 @@ An authoring export is a zip of a project's authoring data (PRD FR-DATA-01): wha
 | `releases/index.json`, `releases/<snapshot ID>/…` | Every ready release, with its metadata and its files byte for byte | unless left out |
 | `assets/index.json`, `assets/<ID's body>.<extension>` | The project's assets, node cover images among them, as they were uploaded | unless left out |
 
-A section that the manifest does not list is not in the archive. A file's items are in a stable order, by ID where they have one. A draft's reference to what is in the trash is left unset, as the archive does not hold it: a jumper's target, a board's entry node, or an element's speaker.
+A section that the manifest does not list is not in the archive. A file's items are in a stable order, by ID where they have one. A draft's field that names what is in the trash is left unset, as the archive does not hold it: the project's entry board or node, a jumper's target, a board's entry node, or an element's speaker. A reference inside a rich text or an expression's source stays as its author wrote it, so it may name what the archive does not hold, as it dangles in the draft, where validation reports it.
 
 ## An archive of a release
 

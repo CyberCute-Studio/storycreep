@@ -179,6 +179,45 @@ describe("the authoring export's dialog", () => {
     expect(screen.queryByText("on its way")).toBeNull();
   });
 
+  it("shows the export just started when it opens again, before the list has been read", async () => {
+    const before = {
+      ...base,
+      status: "ready" as const,
+      size_bytes: 4096,
+      file_name: "harbour-draft-authoring.zip",
+    };
+    const started = { ...base, id: "job_b" };
+    const call = serve(before, started);
+    const answer = call.getMockImplementation();
+    let listHangs = false;
+    call.mockImplementation((async (op: string, ...rest: unknown[]) => {
+      if (op === "listAuthoringExports" && listHangs) {
+        return new Promise(() => {});
+      }
+      if (op === "getAuthoringExport") {
+        const { path } = rest[0] as { path: { export_id: string } };
+        return { body: path.export_id === started.id ? started : before };
+      }
+      return (answer as (...args: unknown[]) => unknown)(op, ...rest);
+    }) as never);
+    await open();
+    await screen.findByRole("link", { name: "Download archive" });
+    await userEvent.click(screen.getByRole("button", { name: "Start export" }));
+    await screen.findByText("Waiting to start…");
+    listHangs = true;
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Export project" }),
+    );
+    await screen.findByText("Waiting to start…");
+    expect(screen.queryByRole("link", { name: "Download archive" })).toBeNull();
+    expect(
+      screen
+        .getByRole("button", { name: "Start export" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+  });
+
   it("lets go of an export on its way that the server no longer answers for, and says so", async () => {
     const gone = refused(404, { code: "not_found", message: "no such export" });
     serve({ ...base, status: "building" }, undefined, gone);

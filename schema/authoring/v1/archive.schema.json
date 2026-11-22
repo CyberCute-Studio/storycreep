@@ -1112,6 +1112,15 @@
     "Release": {
       "additionalProperties": false,
       "properties": {
+        "acknowledgedSeq": {
+          "description": "The project's operation sequence of the validation report that its author acknowledged when they published it.",
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "acknowledgedWarnings": {
+          "description": "The warnings of that report that its author acknowledged, each by its code, its entity, its field, and its target."
+        },
         "builtAt": {
           "description": "When its build ended.",
           "format": "date-time",
@@ -1169,6 +1178,8 @@
         "id",
         "version",
         "note",
+        "acknowledgedSeq",
+        "acknowledgedWarnings",
         "schemaVersion",
         "contentHash",
         "sourceSeq",

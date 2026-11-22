@@ -615,6 +615,30 @@ func (s *Service) reconcileWorkspace(ctx context.Context, store blob.Store, work
 			known[c.ThumbnailKey.String] = true
 		}
 	}
+	// An export's archive that a row names is no candidate either, so that
+	// the exports that a workspace keeps for days do not spend the run's
+	// budget on checks under locks, which would only find them referenced.
+	// In a transaction of its own, and only where the listing has an archive.
+	var archives []string
+	for _, key := range l.keys {
+		if strings.HasSuffix(key, ".export.zip") {
+			archives = append(archives, key)
+		}
+	}
+	if len(archives) > 0 {
+		var referenced []string
+		if err := s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
+			var err error
+			referenced, err = queries.New(tx).ReferencedBlobs(ctx, queries.ReferencedBlobsParams{
+				WorkspaceID: nullUUID(workspaceID), Keys: archives})
+			return err
+		}); err != nil {
+			return 0, fmt.Errorf("asset: read the archives that workspace %s refers to: %w", workspaceID, err)
+		}
+		for _, key := range referenced {
+			known[key] = true
+		}
+	}
 	var candidates []orphan
 	for _, key := range l.keys {
 		if cl.refused != nil || known[key] || l.young[key] {
