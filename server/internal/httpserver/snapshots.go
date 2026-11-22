@@ -362,9 +362,17 @@ func serveExport(e snapshot.Export) (*huma.StreamResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": e.Name})
+	return serveFile(data, zipType, e.Name), nil
+}
+
+// serveFile answers with data, a file of the media type contentType, whose
+// length it gives, as an attachment of the given name, and with the file
+// alone to a GET, which a HEAD request, which the route answers as GET
+// (middleware.GetHead), is answered without.
+func serveFile(data []byte, contentType, name string) *huma.StreamResponse {
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": name})
 	return &huma.StreamResponse{Body: func(hc huma.Context) {
-		hc.SetHeader("Content-Type", zipType)
+		hc.SetHeader("Content-Type", contentType)
 		hc.SetHeader("Content-Length", strconv.Itoa(len(data)))
 		hc.SetHeader("Content-Disposition", disposition)
 		hc.SetHeader("X-Content-Type-Options", "nosniff")
@@ -376,7 +384,7 @@ func serveExport(e snapshot.Export) (*huma.StreamResponse, error) {
 		// only end the answer early, which the client sees as a body shorter
 		// than its Content-Length.
 		_, _ = hc.BodyWriter().Write(data)
-	}}, nil
+	}}
 }
 
 // snapshotError returns the error that the API answers err with, an error of

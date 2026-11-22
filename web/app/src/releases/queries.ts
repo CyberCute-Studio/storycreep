@@ -353,13 +353,26 @@ export async function downloadRelease(
   const { body, response } = await api.call("exportSnapshot", {
     path: { project_id: projectId, snapshot_id: release.id },
   });
+  saveDownload(body, response, `release-${release.version}.zip`);
+}
+
+/**
+ * Saves body, a file that the server answered with in response, as the
+ * browser's download, under the name that its Content-Disposition gives, or
+ * else fallback.
+ */
+export function saveDownload(
+  body: Blob,
+  response: Response,
+  fallback: string,
+): void {
   const named = /filename="?([^";]+)"?/i.exec(
     response.headers.get("Content-Disposition") ?? "",
   )?.[1];
   const url = URL.createObjectURL(body);
   const link = document.createElement("a");
   link.href = url;
-  link.download = named ?? `release-${release.version}.zip`;
+  link.download = named ?? fallback;
   document.body.append(link);
   link.click();
   link.remove();

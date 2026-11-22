@@ -426,6 +426,13 @@ var permissionMatrix = []struct {
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodGet, projectPath(f.project(t, "")), nil, si.header(false))
 				}},
+			// §5.6's row "Export text / project data", which needs what reading
+			// the project does.
+			{name: "export the draft's text", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodGet, projectPath(f.project(t, ""))+"/draft/text-export", nil,
+						si.header(false))
+				}},
 			{name: "list a project's boards", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodGet, boardsPath(f.project(t, "")), nil, si.header(false))

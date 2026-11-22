@@ -10,6 +10,7 @@ import { buildTree, itemsInOrder } from "../project/tree";
 import { found } from "../shell/found";
 import { CountList } from "../statistics/Counts";
 import { projectStatisticsQuery } from "../statistics/queries";
+import { TextExport } from "../textexport/TextExport";
 import { Page, Status, TextLink } from "../ui/Page";
 
 export const Route = createFileRoute("/projects/$projectId/statistics")({
@@ -148,6 +149,12 @@ function Statistics() {
           </div>
         )}
       </section>
+      <TextExport
+        key={projectId}
+        projectId={projectId}
+        doc={doc}
+        boards={boards}
+      />
     </Page>
   );
 }

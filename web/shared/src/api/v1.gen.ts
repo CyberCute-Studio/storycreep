@@ -4423,6 +4423,28 @@ export interface Operations {
     };
   };
   /**
+   * Export the draft's text
+   *
+   * Returns the narrative text of the project's draft as it is now, read as of one moment, or of one of its boards, as a CSV or a JSON file (PRD FR-TEXT-05), of what is not in its trash. The file has a row of each text, an element's text, of the type body, and a connection's label, of the type choice, with the columns node_id, board (its name), node_title, speaker, text_type, text (the plain text), condition (the source of a choice's condition, as its author wrote it), word_count, and text_hash (sha256: and the SHA-256 of the plain text), as PRD FR-TEXT-05 and schema/rich-text/README.md define them. The speaker is a line of dialogue's: a choice has none, nor has a narration, even one that keeps the speaker that it had as dialogue, nor a line whose speaker is in the draft's trash. A body has no condition, and a text without plain text no row. The rows are in one order: the boards by ID, each board's nodes as its script view lists them, breadth-first from its entry node, and then those that it does not reach, by ID, and each node's text before its choices, in the order that the flow offers them. So an unchanged project exports the same bytes, and the word counts of a draft's rows add up to its writing statistics (GET /api/v1/projects/{project_id}/statistics) whenever those say complete, as until then they leave out a text that their job has yet to count, which the export holds. In the CSV, whose records end with CRLF, a single quote is written at the start of a text cell that starts with a carriage return or a line feed, and at the start of a text cell, and after each semicolon, carriage return, or line feed within one, wherever what follows, past any double quotes, starts with =, +, -, @, or a tab, so that a spreadsheet shows it as text and never evaluates it, whether its list separator is a comma or a semicolon, which starts a new cell at each of those. The JSON, an object of the project, the source, the board if the export is narrowed to one, the total of words, and the rows, is not altered, and the hash is always of the original text. Content-Disposition names the file, as an attachment. A board that is not an ID of a board is answered with 400 invalid_id. A board that the draft does not have, or that is in its trash, is answered with 404 not_found. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Exports share a rate limit of 60 an hour for each IP address, 30 for each account, and 30 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.
+   */
+  exportDraftText: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The ID of a board: only that board's text is exported. Without it, or with it empty, the whole project's. */
+        board?: string;
+        /** The format of the file: csv, as RFC 4180 has it, in UTF-8 with a byte order mark, or json, the lossless format. Without it, csv. */
+        format?: "csv" | "json";
+      };
+    };
+    responses: {
+      200: Blob;
+    };
+  };
+  /**
    * Export a snapshot
    *
    * Returns a ready snapshot's files as a zip of the published layout, at the version of the published game format that schema asks for, or, without it, at the snapshot's own version, as its schema_version names it, the files that its build stored, byte for byte (PRD FR-SNAP-02, FR-SYNC-01 AC1): what a game pulls (PRD §7.5), and what a release's download is. A snapshot that is building, or that failed, has no files, and is answered with 409 snapshot_not_ready, whose details.status says which. The zip holds a member of each file of the published layout (PRD §6.3), at its path, as storycreep.json or boards/harbour-intro.json, in the order of their paths, with no member of a directory, which the manifest lists with each file's SHA-256, and Content-Disposition names it, as an attachment. A release of the server always makes the same zip of the same files, and another release may compress them otherwise, so a client compares the files, by the manifest's hashes, not the zip's bytes. Asked with schema, the files are rendered at that version of the published format: down to an older version by the renderer of each version between, or up to a newer one by the migration to each, and they validate against that version's JSON Schemas (PRD FR-SYNC-01 AC2), with the manifest's hashes and content hash those of the files at that version. A version that the server does not read is answered with 409 schema_unsupported, with details.min and details.max, the oldest and the newest that it reads (AC3), and an older version that cannot express what the files hold with 409 schema_unrepresentable, which lists each value that it cannot express, so that nothing is dropped silently (PRD §6.4). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A snapshot that the project does not have is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope snapshot:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Exports share a rate limit of 60 an hour for each IP address, 30 for each account, and 30 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.
@@ -4438,6 +4460,30 @@ export interface Operations {
       query?: {
         /** The version of the published game format, its schemaVersion, that the files are rendered at: one of the versions that the server reads, which /version declares as published_schema, as the newest that the client reads too. Without it, the snapshot's own version. */
         schema?: number;
+      };
+    };
+    responses: {
+      200: Blob;
+    };
+  };
+  /**
+   * Export a snapshot's text
+   *
+   * Returns the narrative text of a ready snapshot, or of one of its boards, as a CSV or a JSON file (PRD FR-TEXT-05), as its files hold it. A snapshot that is building, or that failed, has no files, and is answered with 409 snapshot_not_ready, whose details.status says which. A snapshot stored at a newer version of the published format than the server writes, as only a server that reads both versions holds, whose content the server's version cannot express, is answered with 409 schema_unrepresentable, whose details.schema is the server's version and details.constructs lists each value that it cannot express (PRD §6.4). The file has a row of each text, an element's text, of the type body, and a connection's label, of the type choice, with the columns node_id, board (its name), node_title, speaker, text_type, text (the plain text), condition (the source of a choice's condition, as its author wrote it), word_count, and text_hash (sha256: and the SHA-256 of the plain text), as PRD FR-TEXT-05 and schema/rich-text/README.md define them. The speaker is a line of dialogue's: a choice has none, nor has a narration, even one that keeps the speaker that it had as dialogue, nor a line whose speaker is in the draft's trash. A body has no condition, and a text without plain text no row. The rows are in one order: the boards by ID, each board's nodes as its script view lists them, breadth-first from its entry node, and then those that it does not reach, by ID, and each node's text before its choices, in the order that the flow offers them. So an unchanged project exports the same bytes, and the word counts of a draft's rows add up to its writing statistics (GET /api/v1/projects/{project_id}/statistics) whenever those say complete, as until then they leave out a text that their job has yet to count, which the export holds. In the CSV, whose records end with CRLF, a single quote is written at the start of a text cell that starts with a carriage return or a line feed, and at the start of a text cell, and after each semicolon, carriage return, or line feed within one, wherever what follows, past any double quotes, starts with =, +, -, @, or a tab, so that a spreadsheet shows it as text and never evaluates it, whether its list separator is a comma or a semicolon, which starts a new cell at each of those. The JSON, an object of the project, the source, the board if the export is narrowed to one, the total of words, and the rows, is not altered, and the hash is always of the original text. Content-Disposition names the file, as an attachment. A board that is not an ID of a board is answered with 400 invalid_id. A board that the snapshot does not have is answered with 404 not_found. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A snapshot that the project does not have is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Exports share a rate limit of 60 an hour for each IP address, 30 for each account, and 30 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.
+   */
+  exportSnapshotText: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+        /** The snapshot's ID */
+        snapshot_id: string;
+      };
+      query?: {
+        /** The ID of a board: only that board's text is exported. Without it, or with it empty, the whole project's. */
+        board?: string;
+        /** The format of the file: csv, as RFC 4180 has it, in UTF-8 with a byte order mark, or json, the lossless format. Without it, csv. */
+        format?: "csv" | "json";
       };
     };
     responses: {
@@ -6287,7 +6333,9 @@ export const routes = {
   deleteProject: { method: "DELETE", path: "/api/v1/projects/{project_id}" },
   diffSnapshots: { method: "POST", path: "/api/v1/projects/{project_id}/diff" },
   exportDraft: { method: "GET", path: "/api/v1/projects/{project_id}/draft/export", blob: true },
+  exportDraftText: { method: "GET", path: "/api/v1/projects/{project_id}/draft/text-export", blob: true },
   exportSnapshot: { method: "GET", path: "/api/v1/projects/{project_id}/snapshots/{snapshot_id}/export", blob: true },
+  exportSnapshotText: { method: "GET", path: "/api/v1/projects/{project_id}/snapshots/{snapshot_id}/text-export", blob: true },
   getAccount: { method: "GET", path: "/api/v1/auth/account" },
   getAsset: { method: "GET", path: "/api/v1/projects/{project_id}/assets/{asset_id}" },
   getAssetContent: { method: "GET", path: "/api/v1/projects/{project_id}/assets/{asset_id}/content", blob: true },

@@ -18,6 +18,7 @@ import {
 } from "../releases/ReleaseItem";
 import { ReleaseView } from "../releases/ReleaseView";
 import { canonicalId, found, searchId } from "../shell/found";
+import { TextExport } from "../textexport/TextExport";
 import { Alert, Page, textLink } from "../ui/Page";
 import { type FindingNames, whereText } from "../validation/Findings";
 import { findingKey } from "../validation/queries";
@@ -115,6 +116,16 @@ function Release() {
       />
       {content.data !== undefined && (
         <ReleaseView content={content.data} boardId={board} />
+      )}
+      {/* The export is the server's, so it needs no read of the zip, which
+          only lists the release's boards to narrow it to. */}
+      {release.status === "ready" && (
+        <TextExport
+          key={release.id}
+          projectId={projectId}
+          release={release}
+          boards={content.data?.boards ?? []}
+        />
       )}
       {release.status !== "building" && (
         <StoredReport
