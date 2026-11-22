@@ -428,8 +428,8 @@ var Tables = []Table{
 		id := ids.New()
 		return Statement{id, "INSERT INTO authoring_export (id, workspace_id, project_id, requested_by, profile, " +
 			"include_assets, include_releases, status, storage_key, finished_at, expires_at) " +
-			"VALUES ($1, $2, $3, $4, 'full', true, true, 'failed', $1::text, now(), now() + interval '7 days')",
-			[]any{id, w.ID, w.Rows["project"], user}}, nil
+			"VALUES ($1, $2, $3, $4, 'full', true, true, 'failed', $5, now(), now() + interval '7 days')",
+			[]any{id, w.ID, w.Rows["project"], user, id.String()}}, nil
 	}},
 	{Name: "snapshot_file", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
 		// A file of a snapshot of the workspace's project of its own, building,

@@ -299,7 +299,9 @@ function ExportResult({
                     new Date(item.expires_at),
                   ),
                 })
-              : t(`authoring_export.${item.status}`)
+              : item.status === "building"
+                ? t("authoring_export.building")
+                : t("authoring_export.queued")
           }
         />
       )}

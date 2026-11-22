@@ -13,11 +13,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/authoring"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/snapshot"
 )
@@ -550,8 +552,30 @@ func TestAuthoringExportExpires(t *testing.T) {
 		t.Fatalf("the export is %+v", e)
 	}
 	ws, id := decode(t, ids.Workspace, f.ws), decode(t, ids.Job, e.ID)
+	// The orphan reconciliation reads the archive's key as a row's while the
+	// export exists, and as nobody's once it is gone.
+	var key string
+	if err := f.d.Admin(t).QueryRow(t.Context(), `SELECT storage_key FROM authoring_export WHERE id = $1`,
+		id).Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	referenced := func() bool {
+		t.Helper()
+		got, err := queries.New(f.d.Admin(t)).ReferencedBlobs(t.Context(), queries.ReferencedBlobsParams{
+			WorkspaceID: pgtype.UUID{Bytes: ws, Valid: true}, Keys: []string{key}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(got) == 1
+	}
+	if !referenced() {
+		t.Errorf("the orphan reconciliation does not read %s as an export's", key)
+	}
 	if err := f.s.authoring.Expire(t.Context(), ws, id); err != nil {
 		t.Fatal(err)
+	}
+	if referenced() {
+		t.Errorf("%s is still read as an export's once the export is gone", key)
 	}
 	wantCode(t, "an export that expired", call(h, http.MethodGet, authoringExportsPath(p)+"/"+e.ID, nil,
 		owner.header(false)), http.StatusNotFound, api.CodeNotFound)

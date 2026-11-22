@@ -211,17 +211,16 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	s.comments = comment.New(readyDB{s.ready}, comment.Options{Projects: s.projects})
 	s.notifications = notification.New(readyDB{s.ready})
 	s.trash = trash.New(readyDB{s.ready}, trash.Options{Projects: s.projects})
-	storage := asset.NewStorage(readyDB{s.ready}, asset.StorageOptions{Configured: cfg.AssetStorage})
 	s.assets = asset.New(readyDB{s.ready}, asset.Options{
 		Projects:     s.projects,
 		Entitlements: s.entitlements,
-		Storage:      storage,
+		Storage:      asset.NewStorage(readyDB{s.ready}, asset.StorageOptions{Configured: cfg.AssetStorage}),
 		Queue:        s.queue,
 		MaxBytes:     cfg.AssetMaxBytes,
 		Log:          log,
 	})
 	s.authoring = authoring.New(readyDB{s.ready}, authoring.Options{Projects: s.projects, Queue: s.queue,
-		Storage: storage, ImportMaxBytes: cfg.ImportMaxBytes, Log: log})
+		Storage: s.assets.Storage(), ImportMaxBytes: cfg.ImportMaxBytes, Log: log})
 	s.tokens = apitoken.New(readyDB{s.ready}, apitoken.Options{
 		Policy: role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},
 	})
