@@ -433,6 +433,11 @@ var permissionMatrix = []struct {
 					return call(f.s.main, http.MethodGet, projectPath(f.project(t, ""))+"/draft/text-export", nil,
 						si.header(false))
 				}},
+			{name: "ask for an authoring export", project: true, success: http.StatusAccepted,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodPost, projectPath(f.project(t, ""))+"/authoring-exports",
+						jsonBody(t, map[string]any{}), si.header(true))
+				}},
 			{name: "list a project's boards", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodGet, boardsPath(f.project(t, "")), nil, si.header(false))
@@ -1279,6 +1284,8 @@ var sampleBodies = map[api.Route]func(t *testing.T, f *rolesFixture, params map[
 // what they read does not fit in a URL: the clipboard's and the diff's, which
 // a role that reads the project's content may use, as a GET of it.
 var postReads = map[api.Route]bool{
+	// Asking for an authoring export changes no content of the project.
+	createAuthoringExportRoute: true,
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/clipboard/copy"}:    true,
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/clipboard/resolve"}: true,
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/diff"}:              true,
@@ -1408,12 +1415,32 @@ func routeParams(t *testing.T, f *rolesFixture) map[string]string {
 		"connection_id":     f.connection(t, p),
 		"play_state_id":     f.playState(t, p),
 		"snapshot_id":       f.snapshot(t, p),
+		"export_id":         f.authoringExport(t, p),
 		"from_board_id":     f.board(t, p),
 		"to_board_id":       f.board(t, p),
 		// No account has the notification, which the routes of the
 		// notification centre answer with 404.
 		"notification_id": ids.Encode(ids.Notification, ids.New()),
 	}
+}
+
+// authoringExport returns the ID of a ready authoring export of the project
+// p, which its owner asked for, and which nobody else reads.
+func (f *rolesFixture) authoringExport(t *testing.T, p string) string {
+	t.Helper()
+	res := call(f.s.main, http.MethodPost, projectPath(p)+"/authoring-exports", jsonBody(t, map[string]any{}),
+		f.as["owner"].header(true))
+	if res.status != http.StatusAccepted {
+		t.Fatalf("ask for an authoring export: %d %s", res.status, res.body)
+	}
+	var e AuthoringExportBody
+	if err := json.Unmarshal(res.body, &e); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.authoring.Build(t.Context(), decode(t, ids.Workspace, f.ws), decode(t, ids.Job, e.ID)); err != nil {
+		t.Fatal(err)
+	}
+	return e.ID
 }
 
 // auditEntriesOf returns how many entries of the fixture's workspace's audit
@@ -1424,6 +1451,10 @@ func auditEntriesOf(t *testing.T, f *rolesFixture, si signedIn) int {
 		AND workspace_id = $2::uuid`, decode(t, ids.User, si.body.UserID).String(),
 		decode(t, ids.Workspace, f.ws).String())
 }
+
+// createAuthoringExportRoute asks for an authoring export, which a viewer may.
+var createAuthoringExportRoute = api.Route{Method: http.MethodPost,
+	Pattern: "/api/v1/projects/{project_id}/authoring-exports"}
 
 // TestViewerReadsOnly walks every route of a workspace and of a project
 // (routeCalls), and calls it as a viewer. Each route that changes something
@@ -1437,7 +1468,7 @@ func TestViewerReadsOnly(t *testing.T) {
 	t.Parallel()
 	f := newRolesFixture(t)
 	viewer := f.as["viewer"]
-	var mutating, reads int
+	var mutating, reads, exports int
 	for _, c := range routeCalls(t, f, routeParams(t, f)) {
 		r := c.route
 		res := call(f.s.main, r.Method, c.path, c.body, viewer.header(r.Method != http.MethodGet))
@@ -1451,6 +1482,16 @@ func TestViewerReadsOnly(t *testing.T) {
 		switch {
 		case !ok:
 			t.Errorf("%s requires %s, which viewerReads does not name; add it", r, c.capability)
+		case strings.Contains(r.Pattern, "{export_id}"):
+			// An authoring export is read by the user who asked for it alone
+			// (note N90), and the walk's is the owner's.
+			wantCode(t, "a viewer's "+r.String()+" of the owner's export", res, http.StatusNotFound, api.CodeNotFound)
+		case r == createAuthoringExportRoute:
+			// §5.6 lets a viewer export, which a job then does.
+			if res.status != http.StatusAccepted {
+				t.Errorf("a viewer's %s: %d %s, want 202", r, res.status, res.body)
+			}
+			exports++
 		case allowed && res.status != http.StatusOK:
 			t.Errorf("a viewer's %s: %d %s, want 200", r, res.status, res.body)
 		case !allowed:
@@ -1461,8 +1502,10 @@ func TestViewerReadsOnly(t *testing.T) {
 	if mutating < 6 || reads < 3 {
 		t.Errorf("the test tried %d routes that change something and %d that read", mutating, reads)
 	}
-	if n := auditEntriesOf(t, f, viewer); n != 0 {
-		t.Errorf("the workspace's audit log has %d entries of the viewer, want none", n)
+	// The one thing that a viewer's reads record is asking for an export.
+	if n := auditEntriesOf(t, f, viewer); n != exports || exports != 1 {
+		t.Errorf("the workspace's audit log has %d entries of the viewer, and it asked for %d exports, want one of each",
+			n, exports)
 	}
 }
 

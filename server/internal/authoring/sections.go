@@ -113,6 +113,7 @@ func Sections() []Section { return slices.Clone(sections) }
 // project's authoring data. A new table joins a section or this list, which
 // TestEveryProjectTableIsAccounted holds them to.
 var NotExported = map[string]string{
+	"api_token":            "credentials of this instance's accounts",
 	"applied_command":      "the operation log's record of applied commands, which is this instance's history",
 	"authoring_export":     "the exports themselves",
 	"expression_name":      "an index that compiling the expressions writes again",

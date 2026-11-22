@@ -74,6 +74,12 @@ var tokenRoutes = map[api.Route]scope.Scope{
 	// FR-TEXT-05).
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/draft/text-export"}:                   scope.ProjectRead,
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/snapshots/{snapshot_id}/text-export"}: scope.ProjectRead,
+	// The authoring export needs export:read, which no other scope implies
+	// (FR-AUTH-04 AC7).
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/authoring-exports"}:                     scope.ExportRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/authoring-exports"}:                      scope.ExportRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/authoring-exports/{export_id}"}:          scope.ExportRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/authoring-exports/{export_id}/download"}: scope.ExportRead,
 	// A diff of two of them needs snapshot:read, and the route checks that a
 	// diff into the draft needs project:read too (FR-SYNC-02).
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/diff"}: scope.SnapshotRead,
@@ -326,12 +332,15 @@ var authRoutes = map[api.Route]bool{
 // exportRoutes are the routes that count in the export bucket (PRD
 // FR-API-04), whose limits are lower than reads', since each reads a
 // project's files whole: the exports of a snapshot and of the draft, of their
-// files and of their text.
+// files and of their text, and asking for an authoring export and downloading
+// it.
 var exportRoutes = map[api.Route]bool{
-	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/snapshots/{snapshot_id}/export"}:      true,
-	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/draft/export"}:                        true,
-	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/snapshots/{snapshot_id}/text-export"}: true,
-	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/draft/text-export"}:                   true,
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/authoring-exports"}:                     true,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/authoring-exports/{export_id}/download"}: true,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/snapshots/{snapshot_id}/export"}:         true,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/draft/export"}:                           true,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/snapshots/{snapshot_id}/text-export"}:    true,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/draft/text-export"}:                      true,
 }
 
 // TestEveryRouteRateLimited checks that a rate limit counts every route of

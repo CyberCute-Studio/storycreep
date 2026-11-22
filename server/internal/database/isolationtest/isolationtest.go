@@ -418,6 +418,19 @@ var Tables = []Table{
 		id, patch := ids.New(), versionPatch()
 		return Statement{id, snapshotInsert, []any{id, w.ID, w.Rows["project"], patch}}, nil
 	}},
+	{Name: "authoring_export", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+		// A finished export, by a user of its own, as a user has one export
+		// of a project on its way at a time.
+		user, err := NewUser(ctx, admin)
+		if err != nil {
+			return Statement{}, err
+		}
+		id := ids.New()
+		return Statement{id, "INSERT INTO authoring_export (id, workspace_id, project_id, requested_by, profile, " +
+			"include_assets, include_releases, status, storage_key, finished_at, expires_at) " +
+			"VALUES ($1, $2, $3, $4, 'full', true, true, 'failed', $1::text, now(), now() + interval '7 days')",
+			[]any{id, w.ID, w.Rows["project"], user}}, nil
+	}},
 	{Name: "snapshot_file", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
 		// A file of a snapshot of the workspace's project of its own, building,
 		// to which alone a file is added.
