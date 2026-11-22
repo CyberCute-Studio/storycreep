@@ -321,6 +321,22 @@ var keys = []key{
 		},
 	},
 	{
+		name: "STORYCREEP_IMPORT_MAX_BYTES",
+		doc: "The largest project archive, in bytes, that the instance imports (PRD FR-DATA-01). The authoring " +
+			"export shows an archive's size, and warns when it is larger than this, as this instance could not " +
+			"import it again.",
+		valuesDoc: "A whole number of at least 1",
+		def:       constant(strconv.Itoa(DefaultImportMaxBytes)),
+		parse: func(c *Config, v string) error {
+			n, err := strconv.ParseInt(v, 10, 64)
+			if err != nil || n < 1 {
+				return errors.New("must be a whole number of at least 1")
+			}
+			c.ImportMaxBytes = n
+			return nil
+		},
+	},
+	{
 		name: "STORYCREEP_SETUP_OWNER_EMAIL",
 		doc: "The email address of the first owner, for unattended first-run setup (PRD FR-ADMIN-02). With " +
 			"`STORYCREEP_SETUP_OWNER_NAME`, `STORYCREEP_SETUP_OWNER_PASSWORD`, and `STORYCREEP_SETUP_WORKSPACE_NAME`, " +

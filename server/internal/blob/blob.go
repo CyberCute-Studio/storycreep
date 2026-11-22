@@ -49,6 +49,12 @@ type Store interface {
 	// that the key may name already. A blob is stored whole or not at all:
 	// a reader of the key finds the old blob, or none, until Put returns.
 	Put(ctx context.Context, key string, data []byte, contentType string) error
+	// Create starts a blob of key, with the content type, that is written a
+	// piece at a time, as one too large to hold in memory is, and that its
+	// Writer's Commit stores, as Put does: whole or not at all, in place of a
+	// blob that the key may name already. ctx is that of every request that
+	// the Writer makes.
+	Create(ctx context.Context, key, contentType string) (Writer, error)
 	// Open returns the blob of key, to read and then close, with its Info,
 	// or ErrNotFound if there is none.
 	Open(ctx context.Context, key string) (io.ReadCloser, Info, error)
@@ -72,6 +78,20 @@ type Store interface {
 	// server serves itself. It does not check that the blob exists.
 	SignedURL(ctx context.Context, key string, ttl time.Duration, contentType, disposition string) (string, bool,
 		error)
+}
+
+// Writer writes a blob that Store.Create started. A reader of its key finds
+// the old blob, or none, until Commit returns. Either Commit or Abort ends it,
+// and one of them must, so that it leaves nothing behind: Abort after Commit
+// does nothing, so a caller may defer it. It is not safe to call at once from
+// several goroutines.
+type Writer interface {
+	io.Writer
+	// Commit stores what was written under the key. After a failure the
+	// store holds nothing of it.
+	Commit() error
+	// Abort discards what was written.
+	Abort() error
 }
 
 // CacheControl returns the Cache-Control of an answer that the browser that

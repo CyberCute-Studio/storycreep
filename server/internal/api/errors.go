@@ -71,6 +71,8 @@ const (
 	CodeWarningsUnacknowledged Code = "warnings_unacknowledged"
 	CodeVersionNotNewer        Code = "version_not_newer"
 	CodeSnapshotNotReady       Code = "snapshot_not_ready"
+	CodeExportInProgress       Code = "export_in_progress"
+	CodeExportNotReady         Code = "export_not_ready"
 	CodeSchemaUnsupported      Code = "schema_unsupported"
 	CodeSchemaUnrepresentable  Code = "schema_unrepresentable"
 	CodeIdempotencyMismatch    Code = "idempotency_mismatch"
@@ -395,6 +397,14 @@ var codes = []codeSpec{
 			"be published again. `details.latest_version` is the newest version, and `details.proposed_version` " +
 			"its patch bump, which `GET /api/v1/projects/{project_id}/snapshots/next-version` proposes too. " +
 			"`details.errors` names the field, with its `location` and a `message`, as for `validation_failed`."},
+	{CodeExportInProgress, http.StatusConflict, i18n.K("error.export_in_progress"),
+		"The user already has an authoring export of this project on its way, and each reads the project whole, so " +
+			"`POST /api/v1/projects/{project_id}/authoring-exports` made no other (PRD FR-DATA-01). " +
+			"`details.export_id` names the one on its way, which `GET " +
+			"/api/v1/projects/{project_id}/authoring-exports/{export_id}` reads."},
+	{CodeExportNotReady, http.StatusConflict, i18n.K("error.export_not_ready"),
+		"The authoring export has no file to download: it is `queued` or `building`, whose build has not ended, or " +
+			"`failed`, which never has one (PRD FR-DATA-01). `details.status` says which."},
 	{CodeSnapshotNotReady, http.StatusConflict, i18n.K("error.snapshot_not_ready"),
 		"The snapshot is not ready, and only a ready snapshot has files to export or to compare (PRD " +
 			"FR-SYNC-01, FR-SYNC-02, §7.3): `GET /api/v1/projects/{project_id}/snapshots/{snapshot_id}/export` " +

@@ -139,6 +139,13 @@ const (
 	// build made the snapshot ready or failed is the snapshot's own record,
 	// not the log's.
 	ActionSnapshotPublish Action = "snapshot.publish"
+	// ActionProjectExport is a request for an authoring export of a project
+	// (FR-DATA-01), which can hold comments and personal data, by its actor.
+	// It belongs to the project's workspace, its subject is the project, and
+	// its metadata's export_id names the export, source says what it is of,
+	// draft or a snapshot's ID, profile whether it is full or content, and
+	// include_assets and include_releases what else it holds.
+	ActionProjectExport Action = "project.export"
 	// ActionProjectGrantCreate is a member's new grant on a project, with the
 	// role that its metadata's role names, which replaces the member's role
 	// in the workspace on that project, by an owner or admin of the
@@ -268,6 +275,8 @@ var events = []eventSpec{
 		metadata: []string{"publish_min_role", "previous_publish_min_role"}},
 	{action: ActionSnapshotPublish, inWorkspace: true, subject: "snapshot", results: []Result{ResultSuccess},
 		metadata: []string{"project_id", "version"}},
+	{action: ActionProjectExport, inWorkspace: true, subject: "project", results: []Result{ResultSuccess},
+		metadata: []string{"export_id", "source", "profile", "include_assets", "include_releases"}},
 	{action: ActionProjectGrantCreate, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},
 		metadata: []string{"project_id", "role"}},
 	{action: ActionProjectGrantChange, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},

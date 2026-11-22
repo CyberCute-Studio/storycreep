@@ -423,6 +423,7 @@ func (s *server) serverJobs() *jobs.Registry {
 	commands.RegisterJobs(r)
 	s.assets.RegisterJobs(r)
 	s.snapshots.RegisterJobs(r)
+	s.authoring.RegisterJobs(r)
 	return r
 }
 

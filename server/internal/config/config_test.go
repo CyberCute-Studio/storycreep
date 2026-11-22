@@ -136,6 +136,7 @@ func TestDefaults(t *testing.T) {
 		{"STORYCREEP_SMTP_FROM", "", SourceUnset},
 		{"STORYCREEP_ASSET_STORAGE", "", SourceUnset},
 		{"STORYCREEP_ASSET_MAX_BYTES", "10485760", SourceDefault},
+		{"STORYCREEP_IMPORT_MAX_BYTES", "2147483648", SourceDefault},
 		{"STORYCREEP_SETUP_OWNER_EMAIL", "", SourceUnset},
 		{"STORYCREEP_SETUP_OWNER_NAME", "", SourceUnset},
 		{"STORYCREEP_SETUP_OWNER_PASSWORD", "", SourceUnset},

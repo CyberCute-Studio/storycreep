@@ -41,14 +41,17 @@ SELECT * FROM asset WHERE workspace_id = @workspace_id AND project_id = @project
 
 -- name: ReferencedBlobs :many
 -- ReferencedBlobs returns those of the keys that a row of the workspace
--- refers to, as the file of an asset or as its thumbnail: the check that
--- keeps a blob from the orphan reconciliation, which an upload makes of its
--- one blob, and the reconciliation of a batch of blobs in one query.
+-- refers to, as the file of an asset, as its thumbnail, or as the archive of
+-- an authoring export: the check that keeps a blob from the orphan
+-- reconciliation, which an upload makes of its one blob, and the
+-- reconciliation of a batch of blobs in one query.
 SELECT k.key::text AS key FROM unnest(@keys::text[]) AS k (key)
 WHERE EXISTS (
     SELECT FROM asset a WHERE a.workspace_id = @workspace_id AND a.storage_key = k.key
 ) OR EXISTS (
     SELECT FROM asset a WHERE a.workspace_id = @workspace_id AND a.thumbnail_key = k.key
+) OR EXISTS (
+    SELECT FROM authoring_export e WHERE e.workspace_id = @workspace_id AND e.storage_key = k.key
 );
 
 -- name: InsertAsset :one

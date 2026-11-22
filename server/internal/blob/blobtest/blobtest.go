@@ -116,6 +116,82 @@ func Suite(t *testing.T, store blob.Store) {
 		}
 	})
 
+	t.Run("a writer stores the blob whole on commit", func(t *testing.T) {
+		ws := workspace()
+		key := ws + "/writer.bin"
+		if err := store.Put(ctx, key, []byte("old"), "application/zip"); err != nil {
+			t.Fatal(err)
+		}
+		w, err := store.Create(ctx, key, "application/zip")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = w.Abort() }()
+		// More than the S3 driver's part, so that it sends a multipart upload.
+		want := bytes.Repeat([]byte("0123456789abcdef"), 1<<20+1)
+		for chunk := range slices.Chunk(want, 1<<20) {
+			if _, err := w.Write(chunk); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := read(t, store, key); string(got) != "old" {
+			t.Errorf("before the commit, the key holds %d bytes, want the old blob", len(got))
+		}
+		if err := w.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Abort(); err != nil {
+			t.Errorf("Abort after Commit: %v", err)
+		}
+		if got := read(t, store, key); !bytes.Equal(got, want) {
+			t.Errorf("the blob has %d bytes, want %d", len(got), len(want))
+		}
+	})
+
+	t.Run("a small blob through a writer", func(t *testing.T) {
+		ws := workspace()
+		key := ws + "/writer-small.bin"
+		w, err := store.Create(ctx, key, "text/plain")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte("small")); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		if got := read(t, store, key); string(got) != "small" {
+			t.Errorf("the blob is %q", got)
+		}
+	})
+
+	t.Run("an aborted writer stores nothing", func(t *testing.T) {
+		ws := workspace()
+		key := ws + "/writer-aborted.bin"
+		w, err := store.Create(ctx, key, "application/zip")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write(bytes.Repeat([]byte{1}, 17<<20)); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Abort(); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Abort(); err != nil {
+			t.Errorf("a second Abort: %v", err)
+		}
+		if _, err := store.Stat(ctx, key); !errors.Is(err, blob.ErrNotFound) {
+			t.Errorf("Stat of an aborted blob: %v, want ErrNotFound", err)
+		}
+		for _, k := range list(t, store, ws+"/") {
+			if strings.Contains(k, "writer-aborted") {
+				t.Errorf("the store lists %s", k)
+			}
+		}
+	})
+
 	t.Run("missing", func(t *testing.T) {
 		key := workspace() + "/missing.png"
 		if _, _, err := store.Open(ctx, key); !errors.Is(err, blob.ErrNotFound) {

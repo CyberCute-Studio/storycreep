@@ -309,6 +309,39 @@ export interface AttributeSetRuntimePayload {
   runtime: boolean;
 }
 
+export interface AuthoringExportBody {
+  /** Whether the archive holds personal data, as a full export does. */
+  contains_personal_data: boolean;
+  /** When the export was asked for. */
+  created_at: string;
+  /** Whether the archive is larger than import_max_bytes, so that this instance could not import it. */
+  exceeds_import_limit: boolean;
+  /** When the export and its file are deleted. */
+  expires_at: string;
+  /** The name that a ready archive is downloaded under. */
+  file_name?: string;
+  /** When its build ended. */
+  finished_at?: string;
+  /** The export's ID, a job's. */
+  id: string;
+  /** The largest archive that this instance imports (STORYCREEP_IMPORT_MAX_BYTES). */
+  import_max_bytes: number;
+  /** Whether the archive holds the project's assets, node cover images among them. */
+  include_assets: boolean;
+  /** Whether the archive holds the release history, with each release's files. */
+  include_releases: boolean;
+  /** full holds comments, play states, and annotations, and names who wrote them; content holds none of them. */
+  profile: "full" | "content";
+  /** The project's ID. */
+  project_id: string;
+  /** The archive's size, once it is ready. */
+  size_bytes?: number;
+  /** The release that the archive holds as its content. Without it, the draft. */
+  snapshot_id?: string;
+  /** Where the export is: queued, building, ready, with a file to download, or failed. */
+  status: "queued" | "building" | "ready" | "failed";
+}
+
 export interface Board {
   /** The board's colour, none or a name of the palette */
   color: "none" | "red" | "orange" | "yellow" | "green" | "teal" | "blue" | "purple" | "pink" | "gray";
@@ -1689,6 +1722,17 @@ export interface Counts {
   warnings: number;
 }
 
+export interface CreateAuthoringExportInputBody {
+  /** Whether to include the project's assets, node cover images among them. Without it, true. */
+  include_assets?: boolean;
+  /** Whether to include the release history, every ready snapshot with its files. Without it, true. */
+  include_releases?: boolean;
+  /** full, the default, includes comments, play states, and annotations, and names who wrote them, so it contains personal data; content leaves them out. */
+  profile?: "full" | "content";
+  /** What the archive's content is of: draft, or the ID of a ready snapshot. Without it, the draft. */
+  source?: string;
+}
+
 export interface CreateInviteBody {
   /** The email address to invite, which the account that accepts the invitation must have, in any case. Without it, the invitation is a link invitation, which whoever holds its link may accept, with any account. */
   email?: string;
@@ -2595,6 +2639,12 @@ export interface NotificationProject {
 
 export interface PageAPITokenBody {
   items: Array<APITokenBody>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
+export interface PageAuthoringExportBody {
+  items: Array<AuthoringExportBody>;
   /** The cursor of the next page, or null if this is the last page */
   next_cursor: string | null;
 }
@@ -4261,6 +4311,27 @@ export interface Operations {
     };
   };
   /**
+   * Export a project's authoring data
+   *
+   * Asks for a zip of the project's authoring data, of its draft or of one of its ready snapshots, in the format of schema/authoring/v1, and answers 202 with the export, queued, whose URL Location names. A job builds it. The archive holds the draft's entities without its trash, or a release's files, whose folders and other draft-only data no release keeps; with the full profile, the comments, play states, and an annotations section, of a release those about what it still has, the rest being counted in the archive's manifest and README; the release history with its files; and the assets, node cover images among them (PRD FR-DATA-01, FR-EDIT-06 AC3). The archive is kept for seven days. A user has one export of a project on its way at a time, and another request is answered with 409 export_in_progress, whose details.export_id names it. A snapshot that is building or failed is answered with 409 snapshot_not_ready, and a source that is neither draft nor a snapshot's ID with 400 invalid_id. Only the user who asked for an export reads it, and an export of anyone else, or one that has expired, is answered with 404 not_found. **A full export contains personal data**: the comments, and the display names of the people who wrote them, saved play states, muted findings, and published releases. The profile content leaves all of it out. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A snapshot that the project does not have is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope export:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. It is a POST, so a request made with the session cookie also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token needs none. Exports share a rate limit of 60 an hour for each IP address, 30 for each account, and 30 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.
+   */
+  createAuthoringExport: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      headers?: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return: a request made with the session cookie without it is answered with 403 csrf_failed, and a request made with an API token needs none */
+        "X-CSRF-Token"?: string;
+      };
+      body: CreateAuthoringExportInputBody;
+    };
+    responses: {
+      202: AuthoringExportBody;
+    };
+  };
+  /**
    * Invite someone to a workspace
    *
    * Invites an email address, or, without one, whoever holds the invitation's link, to join a workspace with a role, for 14 days. Only an owner invites someone as owner, and an admin is answered with 403 owner_required. Only an owner or an admin of the workspace may, and anyone else with a role in it is answered with 403 insufficient_role. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. An address that belongs to a member of the workspace is answered with 409 already_member, and one that has an open invitation of the workspace already, expired or not, with 409 invite_exists. On an instance that sends email, as GET /api/v1/instance says, an invitation to an address is emailed, with a link that lasts its 14 days from when the email is sent, and the answer holds no link. A workspace emails an address one invitation in 10 minutes at most, so the email of an invitation made sooner after the workspace last emailed the address, as after revoking an invitation that was emailed and inviting the address again, is sent once those 10 minutes have passed. The instance also emails a mailbox 10 invitations at most in each clock hour (UTC), from all workspaces together, counting the addresses that differ only in a +tag, as jo+work@example.com and jo@example.com, in how their domain is written, as in full-width letters, or, at Gmail, in dots, as one. The email of an invitation over that limit is not sent, and the invitation stays without a link, its sent_at empty; send it anew later. An email counts once, in the hour that the instance first tries to send it, so that one sent again after a failure, as while the SMTP server is down, counts nothing more. On an instance that sends no email, and for a link invitation on every instance, the answer's url is the link, which the signed-in user gives the person invited; the server keeps no copy of it. The email names the instance and the role, but neither the workspace nor who invites, which the page that the link opens shows instead (POST /api/v1/invites/lookup). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, an instance admin's taking one as text, inviting someone to a workspace, sending an invitation anew, reading, accepting, or registering with an invitation's link, and making, listing, or revoking an API token share a rate limit of 20 requests a minute for each IP address. Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 a minute for each email address, so that each counts against the other for the same address, and changing a password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a link as text, inviting someone, sending an invitation anew, accepting one, and making, listing, or revoking an API token share one of 10 a minute for each account. No request made with an API token counts against these, so that the requests of a token, which count against its owner's account too, cannot keep the owner from finding and revoking it, after which no limit counts them. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
@@ -4400,6 +4471,24 @@ export interface Operations {
     };
     responses: {
       200: Diff;
+    };
+  };
+  /**
+   * Download an authoring export
+   *
+   * Returns the archive of a ready export, as a zip, whose README and authoring.json say what it holds, and Content-Disposition names it, as an attachment. An export that is not ready is answered with 409 export_not_ready, whose details.status says where it is. Only the user who asked for an export reads it, and an export of anyone else, or one that has expired, is answered with 404 not_found. **A full export contains personal data**: the comments, and the display names of the people who wrote them, saved play states, muted findings, and published releases. The profile content leaves all of it out. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope export:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Exports share a rate limit of 60 an hour for each IP address, 30 for each account, and 30 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.
+   */
+  downloadAuthoringExport: {
+    input: {
+      path: {
+        /** The export's ID */
+        export_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+    };
+    responses: {
+      200: Blob;
     };
   };
   /**
@@ -4565,6 +4654,24 @@ export interface Operations {
       200: Blob;
       302: undefined;
       304: undefined;
+    };
+  };
+  /**
+   * Read an authoring export
+   *
+   * Returns the export: where its build is, and, once it is ready, the archive's size, whether it is larger than the instance's import limit, and its name. Only the user who asked for an export reads it, and an export of anyone else, or one that has expired, is answered with 404 not_found. **A full export contains personal data**: the comments, and the display names of the people who wrote them, saved play states, muted findings, and published releases. The profile content leaves all of it out. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope export:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getAuthoringExport: {
+    input: {
+      path: {
+        /** The export's ID */
+        export_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+    };
+    responses: {
+      200: AuthoringExportBody;
     };
   };
   /**
@@ -4962,6 +5069,28 @@ export interface Operations {
     };
     responses: {
       201: LinkBody;
+    };
+  };
+  /**
+   * List your authoring exports of a project
+   *
+   * Lists the exports of the project that the user asked for and that have not expired, newest first. Only the user who asked for an export reads it, and an export of anyone else, or one that has expired, is answered with 404 not_found. **A full export contains personal data**: the comments, and the display names of the people who wrote them, saved play states, muted findings, and published releases. The profile content leaves all of it out. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope export:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listAuthoringExports: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageAuthoringExportBody;
     };
   };
   /**
@@ -6325,6 +6454,7 @@ export const routes = {
   copyNodes: { method: "POST", path: "/api/v1/projects/{project_id}/clipboard/copy" },
   countComments: { method: "GET", path: "/api/v1/projects/{project_id}/comments/counts" },
   countUnreadNotifications: { method: "GET", path: "/api/v1/notifications/unread" },
+  createAuthoringExport: { method: "POST", path: "/api/v1/projects/{project_id}/authoring-exports" },
   createInvite: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/invites" },
   createProject: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/projects" },
   createProjectToken: { method: "POST", path: "/api/v1/projects/{project_id}/tokens" },
@@ -6332,6 +6462,7 @@ export const routes = {
   createWorkspaceToken: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/tokens" },
   deleteProject: { method: "DELETE", path: "/api/v1/projects/{project_id}" },
   diffSnapshots: { method: "POST", path: "/api/v1/projects/{project_id}/diff" },
+  downloadAuthoringExport: { method: "GET", path: "/api/v1/projects/{project_id}/authoring-exports/{export_id}/download", blob: true },
   exportDraft: { method: "GET", path: "/api/v1/projects/{project_id}/draft/export", blob: true },
   exportDraftText: { method: "GET", path: "/api/v1/projects/{project_id}/draft/text-export", blob: true },
   exportSnapshot: { method: "GET", path: "/api/v1/projects/{project_id}/snapshots/{snapshot_id}/export", blob: true },
@@ -6340,6 +6471,7 @@ export const routes = {
   getAsset: { method: "GET", path: "/api/v1/projects/{project_id}/assets/{asset_id}" },
   getAssetContent: { method: "GET", path: "/api/v1/projects/{project_id}/assets/{asset_id}/content", blob: true },
   getAssetThumbnail: { method: "GET", path: "/api/v1/projects/{project_id}/assets/{asset_id}/thumbnail", blob: true },
+  getAuthoringExport: { method: "GET", path: "/api/v1/projects/{project_id}/authoring-exports/{export_id}" },
   getBoard: { method: "GET", path: "/api/v1/projects/{project_id}/boards/{board_id}" },
   getComponent: { method: "GET", path: "/api/v1/projects/{project_id}/components/{component_id}" },
   getComponentType: { method: "GET", path: "/api/v1/projects/{project_id}/component-types/{component_type_id}" },
@@ -6365,6 +6497,7 @@ export const routes = {
   getWorkspaceUsage: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/usage" },
   issuePasswordResetLink: { method: "POST", path: "/api/v1/admin/password-reset-links" },
   issueVerificationLink: { method: "POST", path: "/api/v1/admin/verification-links" },
+  listAuthoringExports: { method: "GET", path: "/api/v1/projects/{project_id}/authoring-exports" },
   listBoardConnections: { method: "GET", path: "/api/v1/projects/{project_id}/boards/{board_id}/connections" },
   listBoardNodes: { method: "GET", path: "/api/v1/projects/{project_id}/boards/{board_id}/nodes" },
   listBoardReferrers: { method: "GET", path: "/api/v1/projects/{project_id}/boards/{board_id}/referenced-by" },

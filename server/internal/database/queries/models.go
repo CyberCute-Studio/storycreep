@@ -43,6 +43,24 @@ type AttributeDef struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+type AuthoringExport struct {
+	ID              pgtype.UUID
+	WorkspaceID     pgtype.UUID
+	ProjectID       pgtype.UUID
+	RequestedBy     pgtype.UUID
+	SnapshotID      pgtype.UUID
+	Profile         string
+	IncludeAssets   bool
+	IncludeReleases bool
+	Status          string
+	StorageKey      string
+	SizeBytes       pgtype.Int8
+	FileName        pgtype.Text
+	CreatedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	ExpiresAt       pgtype.Timestamptz
+}
+
 type Board struct {
 	ID          pgtype.UUID
 	WorkspaceID pgtype.UUID

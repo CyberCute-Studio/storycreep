@@ -78,6 +78,8 @@
   "error.signup_closed": "Registration is closed on this server.",
   "error.slug_invalid": "The slug must be lowercase letters and digits joined by single hyphens, and not a reserved word.",
   "error.slug_taken": "This slug is taken already.",
+  "error.export_in_progress": "You already have an export of this project on its way. Wait for it to finish before you start another.",
+  "error.export_not_ready": "This export has no file to download: it is still being built, or its build failed.",
   "error.snapshot_not_ready": "This release is not ready: it is still being built, or its build failed, so it has no files to download or compare.",
   "error.storage_limit_exceeded": "This file would take the workspace past its storage limit.",
   "error.storage_limit_exceeded.limit": "This file would take the workspace past its storage limit of {limit, plural, one {# byte} other {# bytes}}.",
