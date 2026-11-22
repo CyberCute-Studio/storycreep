@@ -84,6 +84,9 @@ func marshal(v any) ([]byte, error) {
 // returns errProjectGone for a project in the trash.
 func (s *Service) read(ctx context.Context, row queries.AuthoringExport) (*content, error) {
 	c := &content{}
+	// Before the snapshot, so that the archive holds whatever was committed
+	// by the time that the manifest names, however long the reads then take.
+	exportedAt := time.Now().UTC()
 	err := s.db.InSnapshot(ctx, database.Scope{WorkspaceID: row.WorkspaceID.Bytes}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
 		project, err := q.AuthoringProject(ctx, queries.AuthoringProjectParams{WorkspaceID: row.WorkspaceID,
@@ -147,7 +150,7 @@ func (s *Service) read(ctx context.Context, row queries.AuthoringExport) (*conte
 		}
 		c.manifest = Manifest{Format: Format, FormatVersion: Version,
 			PublishedSchemaVersion: published.SchemaVersion, Generator: serializer.Generator(),
-			ExportedAt: time.Now().UTC(), Project: ManifestProject{ID: ids.Encode(ids.Project, row.ProjectID.Bytes),
+			ExportedAt: exportedAt, Project: ManifestProject{ID: ids.Encode(ids.Project, row.ProjectID.Bytes),
 				Name: project.Name, Slug: project.Slug},
 			Source: source, Profile: Profile(row.Profile), PersonalData: Profile(row.Profile) == ProfileFull,
 			IncludesAssets: row.IncludeAssets, IncludesReleases: row.IncludeReleases, Sections: entries,

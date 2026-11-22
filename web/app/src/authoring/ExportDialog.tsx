@@ -165,13 +165,11 @@ function ExportForm({ projectId }: { projectId: string }) {
     },
     onError: (error) => {
       // The one on its way is what the user is after, which the dialog then
-      // shows, rather than a refusal of another.
+      // shows, rather than a refusal of another, or an earlier one of it.
       const existing = inProgressId(error);
       if (existing !== undefined) {
         setFollowed(existing);
-        void client.invalidateQueries({
-          queryKey: newestExportQuery(projectId).queryKey,
-        });
+        void client.invalidateQueries({ queryKey: exportsKey(projectId) });
       }
     },
   });
@@ -250,7 +248,7 @@ function ExportForm({ projectId }: { projectId: string }) {
           projectId={projectId}
           item={shown}
           releases={ready}
-          onExpired={() => void current.refetch()}
+          onDownload={() => void current.refetch()}
         />
       )}
       <FormButtons
@@ -280,13 +278,13 @@ function ExportResult({
   projectId,
   item,
   releases,
-  onExpired,
+  onDownload,
 }: {
   projectId: string;
   item: AuthoringExportBody;
   releases: readonly Snapshot[];
   /** Reads the export again, whose refusal the form then shows. */
-  onExpired: () => void;
+  onDownload: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const version = releases.find((r) => r.id === item.snapshot_id)?.version;
@@ -332,19 +330,15 @@ function ExportResult({
       )}
       {item.status === "ready" && (
         // A link rather than a read into memory, as an archive may have
-        // gigabytes, which the browser then saves as it arrives.
+        // gigabytes, which the browser then saves as it arrives. The browser
+        // reports a refusal as a failed download, which says nothing of why,
+        // so the click also asks the server, rather than this device's clock,
+        // whether the export still stands.
         <a
           href={`/api/v1/projects/${projectId}/authoring-exports/${item.id}/download`}
           download={item.file_name}
           className={buttonClass()}
-          onClick={(event) => {
-            // The browser would report the refusal of an archive past its
-            // time as a failed download, which says nothing of why.
-            if (Date.now() >= new Date(item.expires_at).getTime()) {
-              event.preventDefault();
-              onExpired();
-            }
-          }}
+          onClick={onDownload}
         >
           {t("authoring_export.download")}
         </a>

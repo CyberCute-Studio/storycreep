@@ -84,6 +84,23 @@ async function open() {
   );
 }
 
+/**
+ * Keeps the next click from navigating, which the test environment cannot do,
+ * and records whether the dialog had cancelled that navigation itself.
+ */
+function holdNavigation() {
+  const seen = { cancelled: false };
+  document.addEventListener(
+    "click",
+    (event) => {
+      seen.cancelled = event.defaultPrevented;
+      event.preventDefault();
+    },
+    { once: true },
+  );
+  return seen;
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -158,13 +175,12 @@ describe("the authoring export's dialog", () => {
     );
   });
 
-  it("says that an archive past its time is gone, rather than start a download that fails", async () => {
+  it("says that an archive past its time is gone once its download is tried", async () => {
     const ready = {
       ...base,
       status: "ready" as const,
       size_bytes: 4096,
       file_name: "harbour-draft-authoring.zip",
-      expires_at: "2020-01-01T00:00:00Z",
     };
     const call = serve(ready);
     const answer = call.getMockImplementation();
@@ -178,13 +194,58 @@ describe("the authoring export's dialog", () => {
     await open();
     const link = await screen.findByRole("link", { name: "Download archive" });
     expired = true;
+    holdNavigation();
     await userEvent.click(link);
     await waitFor(() =>
       expect(
         screen.queryByRole("link", { name: "Download archive" }),
       ).toBeNull(),
     );
-    expect(screen.getByRole("alert")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).not.toBe("");
+  });
+
+  it("leaves the download to the link when this device's clock is past the export's time", async () => {
+    const call = serve({
+      ...base,
+      status: "ready",
+      size_bytes: 4096,
+      file_name: "harbour-draft-authoring.zip",
+      expires_at: "2020-01-01T00:00:00Z",
+    });
+    await open();
+    const link = await screen.findByRole("link", { name: "Download archive" });
+    const reads = () =>
+      call.mock.calls.filter(([op]) => op === "getAuthoringExport").length;
+    const before = reads();
+    const navigation = holdNavigation();
+    await userEvent.click(link);
+    expect(navigation.cancelled).toBe(false);
+    await waitFor(() => expect(reads()).toBeGreaterThan(before));
+    expect(screen.getByRole("link", { name: "Download archive" })).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toBe("");
+  });
+
+  it("reads again an export that it was refused, when the server names it as on its way", async () => {
+    const refusal = refused(409, {
+      code: "export_in_progress",
+      message: "on its way",
+      details: { export_id: "job_a" },
+    });
+    const call = serve({ ...base, status: "building" }, refusal);
+    const answer = call.getMockImplementation();
+    let readable = false;
+    call.mockImplementation((async (op: string, ...rest: unknown[]) => {
+      if (op === "getAuthoringExport" && !readable) {
+        throw refused(404, { code: "not_found", message: "no such export" });
+      }
+      return (answer as (...args: unknown[]) => unknown)(op, ...rest);
+    }) as never);
+    await open();
+    await screen.findByRole("alert");
+    readable = true;
+    await userEvent.click(screen.getByRole("button", { name: "Start export" }));
+    await screen.findByText(/Building/);
+    expect(screen.getByRole("alert").textContent).toBe("");
   });
 
   it("follows the export on its way when the server refuses another", async () => {
@@ -259,7 +320,7 @@ describe("the authoring export's dialog", () => {
       ).toBe(false),
     );
     expect(screen.queryByText(/Building/)).toBeNull();
-    expect(screen.getByRole("alert")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).not.toBe("");
   });
 
   it("keeps reading an export on its way whose first read failed, until it has ended", async () => {

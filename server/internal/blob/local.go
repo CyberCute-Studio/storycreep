@@ -229,9 +229,12 @@ func (l *Local) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// staleTemp is how long after it was last written a file that Put was
-// writing is left behind, as when the process died while it wrote, which no
-// Put still writes: Put writes a file of 50 MB at most, in moments.
+// staleTemp is how long after it was last written a file that Put or a Writer
+// was writing is left behind, as when the process died while it wrote. Nothing
+// still writes it by then: Put writes a file of 50 MB at most, in moments, and
+// a Writer, which may stream gigabytes, must write again or finish within this
+// time, as the job that holds one does, whose timeout is under an hour
+// (jobs.Timeout).
 const staleTemp = time.Hour
 
 // List walks the directory of prefix, and each of its directories, in the
