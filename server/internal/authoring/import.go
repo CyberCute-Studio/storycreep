@@ -49,6 +49,9 @@ const ChunkBytes = 8 << 20
 // with what is left of its upload, after which its job deletes it.
 const ImportRetention = 7 * 24 * time.Hour
 
+// maxImportFileName is the longest file name of an import, in characters.
+const maxImportFileName = 255
+
 // importTimeout is how long each attempt of an import has: as for an export,
 // within the hour after which River's rescuer would take the job for stuck.
 const importTimeout = 50 * time.Minute
@@ -229,6 +232,10 @@ func (s *Service) CreateImport(ctx context.Context, actor commands.Actor, worksp
 	req ImportRequest) (Import, error) {
 	if err := s.projects.CheckCreate(ctx, actor.UserID, workspaceID); err != nil {
 		return Import{}, err
+	}
+	req.FileName = strings.TrimSpace(req.FileName)
+	if msg := input.CheckName(req.FileName, maxImportFileName); msg != "" {
+		return Import{}, input.FieldErrors{{Field: "file_name", Message: msg}}
 	}
 	if req.SizeBytes > s.importMaxBytes {
 		return Import{}, &ImportTooLargeError{Size: req.SizeBytes, Max: s.importMaxBytes}
@@ -755,6 +762,81 @@ func (s *Service) RunImport(ctx context.Context, ws, id ids.UUID) error {
 	}
 	s.deleteChunks(ctx, ws, id)
 	return nil
+}
+
+// ImportFile imports the archive r of size bytes, for the command line, which
+// has the file at hand and uploads nothing: it records an import as a request
+// does, and runs it here rather than in a job. It returns CreateImport's errors
+// for what comes before the archive is read, and the ended import, whose
+// Failure says why an archive was refused.
+func (s *Service) ImportFile(ctx context.Context, actor commands.Actor, workspaceID ids.UUID, name string,
+	r io.ReaderAt, size int64, remap bool) (Import, error) {
+	i, err := s.CreateImport(ctx, actor, workspaceID, ImportRequest{FileName: name, SizeBytes: size, Remap: remap})
+	if err != nil {
+		return Import{}, err
+	}
+	id, err := ids.Decode(ids.Job, i.ID)
+	if err != nil {
+		return Import{}, err
+	}
+	err = s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
+		q := queries.New(tx)
+		if _, err := q.QueueProjectImport(ctx, queries.QueueProjectImportParams{WorkspaceID: uuid(workspaceID),
+			RequestedBy: uuid(actor.UserID), ID: uuid(id)}); err != nil {
+			return err
+		}
+		_, err := q.StartProjectImport(ctx, queries.StartProjectImportParams{WorkspaceID: uuid(workspaceID),
+			ID: uuid(id)})
+		return err
+	})
+	if err != nil {
+		return Import{}, fmt.Errorf("authoring: start the import: %w", err)
+	}
+	run := importRun{workspace: workspaceID, importID: id, user: actor.UserID, remap: remap,
+		client: actor}
+	if err := s.importArchive(ctx, run, r, size); err != nil {
+		refused, ok := isRefusal(err)
+		if !ok {
+			refused = &ImportError{Code: FailInternal, Detail: "the import failed"}
+		}
+		_ = s.failImport(ctx, workspaceID, id, refused)
+		if !ok {
+			return Import{}, err
+		}
+	}
+	return s.GetImport(ctx, actor, workspaceID, id)
+}
+
+// ExportFile builds an export of the project for the command line, here rather
+// than in a job, and writes its archive to w. It returns the errors of Create,
+// and of the build.
+func (s *Service) ExportFile(ctx context.Context, actor commands.Actor, projectID ids.UUID, req Request,
+	w io.Writer) (Export, error) {
+	e, err := s.Create(ctx, actor, projectID, req)
+	if err != nil {
+		return Export{}, err
+	}
+	id, err := ids.Decode(ids.Job, e.ID)
+	if err != nil {
+		return Export{}, err
+	}
+	ws, err := s.projects.ActorWorkspace(ctx, actor, projectID)
+	if err != nil {
+		return Export{}, err
+	}
+	if err := s.Build(ctx, ws, id); err != nil {
+		_ = s.fail(ctx, ws, id, err)
+		return Export{}, err
+	}
+	d, err := s.Open(ctx, actor, projectID, id)
+	if err != nil {
+		return Export{}, err
+	}
+	defer func() { _ = d.Body.Close() }()
+	if _, err := io.Copy(w, d.Body); err != nil {
+		return Export{}, fmt.Errorf("authoring: write the archive: %w", err)
+	}
+	return s.Get(ctx, actor, projectID, id)
 }
 
 // deleteChunks deletes what is left of a finished import's upload.

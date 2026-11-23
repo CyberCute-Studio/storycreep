@@ -3,6 +3,8 @@ package httpserver
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -14,7 +16,9 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/authoring"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
 	"github.com/CyberCute-Studio/storycreep/server/internal/maintenance"
 )
 
@@ -52,6 +56,25 @@ func (r *maintenanceRef) close() {
 		r.db.Close()
 		r.db = nil
 	}
+}
+
+// AuthoringTools returns the authoring service over db for the command line's
+// export and import, which build and import in the process, and a function
+// that closes what it opened. It enqueues jobs, as an import's expiry, for the
+// instance's workers, and runs none.
+func AuthoringTools(ctx context.Context, cfg *config.Config, log *slog.Logger, db *database.DB) (*authoring.Service,
+	func(), error) {
+	s := newServer(cfg, log)
+	s.ready.db.Store(db)
+	queue, err := jobs.Open(ctx, db, cfg.DatabaseURL, jobs.Options{Registry: s.serverJobs(), Log: log})
+	if err != nil {
+		return nil, nil, fmt.Errorf("open the job queue: %w", err)
+	}
+	s.queue.queue.Store(queue)
+	return s.authoring, func() {
+		s.maintenance.close()
+		queue.Close()
+	}, nil
 }
 
 // importDoc says who reads an import, in each route's description.
