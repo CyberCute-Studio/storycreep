@@ -15,6 +15,7 @@ import { bodyField } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
 import { VerifyNotice } from "../auth/VerifyNotice";
+import { ImportButton } from "../authoring/ImportDialog";
 import { found } from "../shell/found";
 import { Button, MoreButton } from "../ui/Button";
 import { closesUnlessPending, DialogFrame, FormButtons } from "../ui/Dialog";
@@ -68,7 +69,12 @@ function Projects() {
       width="wide"
     >
       <VerifyNotice account={account} instance={instance} />
-      {manages && <NewProject workspace={workspace} />}
+      {manages && (
+        <div className="flex flex-wrap items-center gap-4">
+          <NewProject workspace={workspace} />
+          <ImportButton workspaceId={workspace.id} />
+        </div>
+      )}
       {projects.length === 0 ? (
         <p className="text-fg-muted">
           {workspace.role === "guest"
@@ -169,41 +175,39 @@ function NewProject({ workspace }: { workspace: Workspace }) {
     });
   };
   return (
-    <div className="flex flex-wrap items-center gap-4">
-      <Dialog.Root open={open} onOpenChange={onOpenChange}>
-        <Dialog.Trigger asChild>
-          <Button variant="primary" aria-haspopup="dialog">
-            {t("projects.create")}
-          </Button>
-        </Dialog.Trigger>
-        <DialogFrame
-          title={t("projects.create_title", { workspace: workspace.name })}
-        >
-          <form ref={form} className="space-y-4" onSubmit={submit} noValidate>
-            <LimitNote usage={usage.data} limit="projects" />
-            <RefusalAlert refusal={refusal} />
-            <TextField
-              label={t("projects.name")}
-              name="name"
-              autoComplete="off"
-              required
-              maxLength={100}
-              error={refusal?.fields.name}
-            />
-            <TextAreaField
-              label={t("projects.description")}
-              name="description"
-              maxLength={2000}
-              error={refusal?.fields.description}
-            />
-            <FormButtons
-              cancel={t("projects.cancel")}
-              submit={t("projects.create_submit")}
-              pending={create.isPending}
-            />
-          </form>
-        </DialogFrame>
-      </Dialog.Root>
-    </div>
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Trigger asChild>
+        <Button variant="primary" aria-haspopup="dialog">
+          {t("projects.create")}
+        </Button>
+      </Dialog.Trigger>
+      <DialogFrame
+        title={t("projects.create_title", { workspace: workspace.name })}
+      >
+        <form ref={form} className="space-y-4" onSubmit={submit} noValidate>
+          <LimitNote usage={usage.data} limit="projects" />
+          <RefusalAlert refusal={refusal} />
+          <TextField
+            label={t("projects.name")}
+            name="name"
+            autoComplete="off"
+            required
+            maxLength={100}
+            error={refusal?.fields.name}
+          />
+          <TextAreaField
+            label={t("projects.description")}
+            name="description"
+            maxLength={2000}
+            error={refusal?.fields.description}
+          />
+          <FormButtons
+            cancel={t("projects.cancel")}
+            submit={t("projects.create_submit")}
+            pending={create.isPending}
+          />
+        </form>
+      </DialogFrame>
+    </Dialog.Root>
   );
 }

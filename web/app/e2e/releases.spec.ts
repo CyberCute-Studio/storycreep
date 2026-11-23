@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import type { Locator, Page } from "@playwright/test";
 import { newId } from "@storycreep/shared/ids";
 import { makeProject, test } from "./boards.ts";
@@ -398,6 +399,68 @@ test.describe("a project's releases", () => {
     expect((await downloading).suggestedFilename()).toMatch(
       /-draft-authoring\.zip$/,
     );
+  });
+
+  test("imports an exported archive from the workspace's dialog, into a new project", async ({
+    page,
+  }) => {
+    const story = await makeStory(page, "Importer");
+    await publishByApi(page, story, "1.3.0");
+    await openReleases(page, story);
+    await press(
+      page.getByRole("button", { name: en["authoring_export.open"] }),
+    );
+    const exporting = page.getByRole("dialog", {
+      name: en["authoring_export.title"],
+    });
+    await press(
+      exporting.getByRole("button", { name: en["authoring_export.submit"] }),
+    );
+    const link = exporting.getByRole("link", {
+      name: en["authoring_export.download"],
+    });
+    await expect(link).toBeVisible({ timeout: 30_000 });
+    const downloading = page.waitForEvent("download");
+    await press(link);
+    const archive = await readFile(await (await downloading).path());
+
+    await page.goto("/app/projects");
+    await expect(
+      page.getByRole("heading", { level: 1, name: en["projects.title"] }),
+    ).toBeVisible();
+    await press(page.getByRole("button", { name: en["project_import.open"] }));
+    const dialog = page.getByRole("dialog", {
+      name: en["project_import.title"],
+    });
+    const field = dialog.getByLabel(en["project_import.file_label"]);
+    await expect(field).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+    expect(await smallTargets(page)).toEqual([]);
+
+    await field.setInputFiles({
+      name: "lighthouse.zip",
+      mimeType: "application/zip",
+      buffer: archive,
+    });
+    await press(
+      dialog.getByRole("button", { name: en["project_import.submit"] }),
+    );
+    const opened = dialog.getByRole("link", {
+      name: en["project_import.open_project"],
+    });
+    await expect(opened).toBeVisible({ timeout: 60_000 });
+    // The archive's IDs are the project's that it was exported from, which
+    // is on this instance, so the import gives everything fresh ones.
+    await expect(
+      dialog.getByText(en["project_import.policy_remap_auto"]),
+    ).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+    expect(await smallTargets(page)).toEqual([]);
+
+    await press(opened);
+    await expect(dialog).toBeHidden();
+    await expect(page).toHaveURL(/\/app\/projects\/prj_/);
+    expect(page.url()).not.toContain(story.projectId);
   });
 
   test("does not publish a draft with an error", async ({ page }) => {
