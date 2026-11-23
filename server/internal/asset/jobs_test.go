@@ -687,6 +687,47 @@ func TestKeepSession(t *testing.T) {
 	}
 }
 
+// TestKeepLongStatements checks that a transaction that asks for it outlasts
+// the statement and lock timeouts that the database sets, and that its
+// connection has them again once it ends.
+func TestKeepLongStatements(t *testing.T) {
+	ctx := context.Background()
+	d := dbtest.New(t)
+	conn := d.Admin(t)
+	if _, err := conn.Exec(ctx, "SET statement_timeout = '100ms'; SET lock_timeout = '100ms'"); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.New(tx).KeepLongStatements(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, "SELECT pg_sleep(0.3)"); err != nil {
+		t.Errorf("a statement longer than the timeout: %v", err)
+	}
+	var inTx string
+	if err := tx.QueryRow(ctx, "SHOW lock_timeout").Scan(&inTx); err != nil {
+		t.Fatal(err)
+	}
+	if inTx != "0" {
+		t.Errorf("in the transaction, lock_timeout is %s, want 0", inTx)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"statement_timeout", "lock_timeout"} {
+		var after string
+		if err := conn.QueryRow(ctx, "SHOW "+name).Scan(&after); err != nil {
+			t.Fatal(err)
+		}
+		if after != "100ms" {
+			t.Errorf("after the transaction, %s is %s, want 100ms", name, after)
+		}
+	}
+}
+
 // TestListWorkspace checks that a workspace's listing lists each of its blobs
 // once, and no other workspace's, which it holds in their order, and covers
 // every key once it is done: in one request from the first, for a workspace

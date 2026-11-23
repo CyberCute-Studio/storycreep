@@ -211,6 +211,21 @@ func (q *Queries) InsertAsset(ctx context.Context, arg InsertAssetParams) (pgtyp
 	return created_at, err
 }
 
+const keepLongStatements = `-- name: KeepLongStatements :exec
+SELECT set_config(name, '0', true)
+FROM pg_catalog.pg_settings
+WHERE name IN ('statement_timeout', 'lock_timeout')
+`
+
+// KeepLongStatements switches off, until the transaction ends, the timeouts
+// that the server, the database, or the login may set on one statement and on
+// a wait for a lock, for a transaction whose statements may take as long as
+// they need, as an import's of a large release's files.
+func (q *Queries) KeepLongStatements(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, keepLongStatements)
+	return err
+}
+
 const keepSession = `-- name: KeepSession :exec
 SELECT set_config(name, CASE name WHEN 'idle_in_transaction_session_timeout' THEN $1::text ELSE '0' END,
     true)

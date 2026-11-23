@@ -34,6 +34,15 @@ SELECT set_config(name, CASE name WHEN 'idle_in_transaction_session_timeout' THE
 FROM pg_catalog.pg_settings
 WHERE name IN ('idle_in_transaction_session_timeout', 'transaction_timeout');
 
+-- name: KeepLongStatements :exec
+-- KeepLongStatements switches off, until the transaction ends, the timeouts
+-- that the server, the database, or the login may set on one statement and on
+-- a wait for a lock, for a transaction whose statements may take as long as
+-- they need, as an import's of a large release's files.
+SELECT set_config(name, '0', true)
+FROM pg_catalog.pg_settings
+WHERE name IN ('statement_timeout', 'lock_timeout');
+
 -- name: ProjectAsset :one
 -- ProjectAsset returns the project's asset of the content sha256, if it has
 -- one.

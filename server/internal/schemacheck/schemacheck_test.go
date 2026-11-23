@@ -139,3 +139,63 @@ func TestCheckDepth(t *testing.T) {
 		t.Error("past the bound: no error")
 	}
 }
+
+// TestCheckKeys checks that a key that an object holds twice is refused,
+// however it is spelled and wherever it is, and that one key in two objects,
+// or a colon in a string, is not.
+//
+// Verifies: NFR-SEC-13
+func TestCheckKeys(t *testing.T) {
+	t.Parallel()
+	escaped := `"` + `\` + `u0061"`
+	for in, refused := range map[string]bool{
+		`1`:                         false,
+		`{"a":1,"b":{"a":2}}`:       false,
+		`[{"a":1},{"a":2}]`:         false,
+		`{"a:b":"c:d","e\":":1}`:    false,
+		`{"a":1,"A":2}`:             false,
+		`{"a":1,"a":2}`:             true,
+		`{"a":{"b":1,"b":1}}`:       true,
+		`[{"a":[{"b":1,"b":2}]}]`:   true,
+		`{"a":1,` + escaped + `:2}`: true,
+	} {
+		tree, err := jsonschema.UnmarshalJSON(strings.NewReader(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := CheckKeys([]byte(in), tree); (err != nil) != refused {
+			t.Errorf("CheckKeys(%s) = %v, want refused %v", in, err, refused)
+		}
+	}
+}
+
+// TestFailFastLeavesPrefixItems checks that items, rewritten, holds only the
+// elements past those of prefixItems.
+//
+// Verifies: NFR-SEC-13
+func TestFailFastLeavesPrefixItems(t *testing.T) {
+	t.Parallel()
+	doc, err := jsonschema.UnmarshalJSON(strings.NewReader(`{"$schema":"https://json-schema.org/draft/2020-12/schema",
+		"type":"array","prefixItems":[{"type":"string"}],"items":{"type":"number"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := jsonschema.NewCompiler()
+	if err := c.AddResource("mem://prefix.json", doc); err != nil {
+		t.Fatal(err)
+	}
+	s, err := c.Compile("mem://prefix.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	FailFast("", s)
+	for in, valid := range map[string]bool{`[]`: true, `["a"]`: true, `["a",1,2]`: true, `[1]`: false, `["a","b"]`: false} {
+		v, err := jsonschema.UnmarshalJSON(strings.NewReader(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := s.Validate(v) == nil; got != valid {
+			t.Errorf("%s: valid %v, want %v", in, got, valid)
+		}
+	}
+}

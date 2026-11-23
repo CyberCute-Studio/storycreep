@@ -1328,7 +1328,7 @@ func (s *Service) importArchive(ctx context.Context, run importRun, r io.ReaderA
 	}
 	missing := c.dropMissingAssets()
 	files := make([]asset.ImportedFile, len(c.assets))
-	var adding int64
+	var adding asset.ImportAdding
 	for i, as := range c.assets {
 		s.progress(ctx, run, "assets", int64(i), int64(len(c.assets)))
 		if files[i], err = s.storeAsset(ctx, a, run.workspace, as, &adding); err != nil {
@@ -1376,7 +1376,7 @@ func idTaken(err error) bool {
 // storeAsset reads an asset's file from the archive, checks that it is what
 // the index says, and stores it as an upload's is checked and stored. adding
 // counts what the import's assets add to the workspace's storage.
-func (s *Service) storeAsset(ctx context.Context, a *archive, ws ids.UUID, as Asset, adding *int64) (
+func (s *Service) storeAsset(ctx context.Context, a *archive, ws ids.UUID, as Asset, adding *asset.ImportAdding) (
 	asset.ImportedFile, error) {
 	fail := func(check, detail string) *ImportError {
 		return &ImportError{Code: FailAssetInvalid, Section: "assets", Check: check,
@@ -1478,6 +1478,9 @@ func (s *Service) writeImport(ctx context.Context, run importRun, a *archive, c 
 		// operator set would end it for.
 		if err := q.KeepSession(ctx, strconv.FormatInt(importKeepIdle.Milliseconds(), 10)); err != nil {
 			return fmt.Errorf("authoring: set the timeouts of the session: %w", err)
+		}
+		if err := q.KeepLongStatements(ctx); err != nil {
+			return fmt.Errorf("authoring: set the timeouts of the statements: %w", err)
 		}
 		if _, err := s.projects.CreateImported(ctx, tx, run.user, run.workspace, in); err != nil {
 			return err

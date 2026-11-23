@@ -71,6 +71,25 @@ func Depth(data []byte) int {
 	return depth
 }
 
+// Keys counts the members of the document's objects: outside a string, a colon
+// is a member's and nothing else's.
+func Keys(data []byte) int {
+	n := 0
+	for i := 0; i < len(data); i++ {
+		switch data[i] {
+		case '"':
+			for i++; i < len(data) && data[i] != '"'; i++ {
+				if data[i] == '\\' {
+					i++
+				}
+			}
+		case ':':
+			n++
+		}
+	}
+	return n
+}
+
 // SkipSpace returns the offset of the first byte of data from i that is not
 // JSON's white space.
 func SkipSpace(data []byte, i int) int {

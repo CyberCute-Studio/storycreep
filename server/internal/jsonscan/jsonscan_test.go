@@ -50,6 +50,24 @@ func TestHasNullAndDepth(t *testing.T) {
 	}
 }
 
+// TestKeys checks that a member is counted by its colon, outside of strings.
+func TestKeys(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]int{
+		`1`:                  0,
+		`"a:b"`:              0,
+		`{}`:                 0,
+		`{"a":1}`:            1,
+		`{"a:":"b:","c":[]}`: 2,
+		`[{"a":{"b":1}},{}]`: 2,
+		`{"a\":":1,"b\\":2}`: 2,
+	} {
+		if got := Keys([]byte(in)); got != want {
+			t.Errorf("Keys(%s) = %d, want %d", in, got, want)
+		}
+	}
+}
+
 // TestMembersAndElements checks that a walk finds what a parser finds, of each
 // kind of value, with and without white space.
 func TestMembersAndElements(t *testing.T) {

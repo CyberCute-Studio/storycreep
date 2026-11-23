@@ -36,6 +36,35 @@ func CheckDepth(data []byte) error {
 	return nil
 }
 
+// CheckKeys refuses a document, which json.Valid has accepted and CheckDepth
+// has held, that has a key twice in one object, however it spells it. tree is
+// what a parser built of data, which holds the last of the two, where a decoder
+// into a struct, a map, or a slice also keeps what the first has and the last
+// lacks, so that what is validated would not be what is then decoded.
+func CheckKeys(data []byte, tree any) error {
+	if jsonscan.Keys(data) != keysOf(tree) {
+		return errors.New("an object holds a key twice")
+	}
+	return nil
+}
+
+// keysOf counts the members of the objects of the tree.
+func keysOf(v any) int {
+	n := 0
+	switch x := v.(type) {
+	case map[string]any:
+		n = len(x)
+		for _, e := range x {
+			n += keysOf(e)
+		}
+	case []any:
+		for _, e := range x {
+			n += keysOf(e)
+		}
+	}
+	return n
+}
+
 // FailFast rewrites the schemas of roots, and every schema that they reach, to
 // stop at the first failing member of an object or an array. A reference to the
 // definition named anyValue, if it is not "", is dropped: that definition takes
@@ -86,7 +115,7 @@ func (r *rewriter) walk(s *jsonschema.Schema) {
 	// What the two keywords below evaluate, the others read, so that a schema
 	// that has one of those keeps them as they are.
 	if s.UnevaluatedItems == nil && s.Items2020 != nil {
-		s.Extensions = append(s.Extensions, &elements{item: s.Items2020})
+		s.Extensions = append(s.Extensions, &elements{item: s.Items2020, from: len(s.PrefixItems)})
 		s.Items2020 = nil
 	}
 	if s.UnevaluatedProperties == nil && len(s.PatternProperties) == 0 &&
@@ -97,9 +126,11 @@ func (r *rewriter) walk(s *jsonschema.Schema) {
 	}
 }
 
-// elements is the keyword items, which stops at the first element that fails.
+// elements is the keyword items, which stops at the first element that fails,
+// of those from the index from, as prefixItems holds those before it.
 type elements struct {
 	item *jsonschema.Schema
+	from int
 }
 
 // Validate implements jsonschema.SchemaExt.
@@ -109,6 +140,9 @@ func (e *elements) Validate(ctx *jsonschema.ValidatorContext, v any) {
 		return
 	}
 	for i, item := range array {
+		if i < e.from {
+			continue
+		}
 		if err := ctx.Validate(e.item, item, []string{strconv.Itoa(i)}); err != nil {
 			ctx.AddErr(err)
 			return

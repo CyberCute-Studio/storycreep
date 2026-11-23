@@ -37,6 +37,7 @@ A release holds only what a game needs, so an archive of one has no folders, no 
 - refuses a zip with a member outside the archive, a link, an encrypted member, a path twice, or more than the guards allow (PRD NFR-SEC-13), and any member that no section of the manifest accounts for;
 - refuses an archive of more than 4,000 assets, as its one transaction holds a database lock for each, and a release that holds an asset's file, which no build writes;
 - refuses a format or a schema version newer than the server reads, and any section that it cannot import, naming it, as a non-empty `annotations` section until FR-EDIT-12;
+- refuses a section or manifest whose object holds one key twice, as what was validated would not be what is read;
 - checks each file against its SHA-256 and the schema above, and verifies every release: its files' hashes, its content hash, its schema, its references, and its ASTs, naming the release's version and the check that failed;
 - keeps the archive's IDs unless one is in use on the instance, or fresh IDs are asked for, and then writes every reference to them anew;
 - compiles every expression from its source, as the archive holds no AST of the draft's;

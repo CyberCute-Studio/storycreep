@@ -39,17 +39,25 @@ func (f ImportedFile) Sum() []byte { return f.sum }
 // Size returns the size of the file as it is stored.
 func (f ImportedFile) Size() int64 { return f.size }
 
+// ImportAdding is what an import has stored so far that is new to the
+// workspace, each blob once: an archive that holds one file twice is refused
+// for that (ErrDuplicateContent), rather than for room that it does not take.
+type ImportAdding struct {
+	bytes int64
+	keys  map[string]bool
+}
+
 // StoreImported checks data, an imported asset's file, as an upload's is: it
 // tells its type from its content, refuses what is not an image that the
 // server takes, sanitizes an SVG (FR-ASSET-01), checks that the workspace has
 // room for it, as an upload does before it stores anything, and stores it as a
-// blob of the workspace, outside any transaction. adding is how many bytes the
-// import has stored so far that are new to the workspace, which this adds to.
+// blob of the workspace, outside any transaction. adding is what the import
+// has stored so far that is new to the workspace, which this adds to.
 // AddImported then adds its asset, under the blob's lock, and the orphan
 // reconciliation deletes the blob if none ever does. It returns an
 // *entitlements.LimitError for a workspace without the room.
-func (s *Service) StoreImported(ctx context.Context, workspaceID ids.UUID, data []byte, adding *int64) (ImportedFile,
-	error) {
+func (s *Service) StoreImported(ctx context.Context, workspaceID ids.UUID, data []byte, adding *ImportAdding) (
+	ImportedFile, error) {
 	img, err := Sniff(data, int(s.maxBytes))
 	if err != nil {
 		return ImportedFile{}, err
@@ -67,13 +75,17 @@ func (s *Service) StoreImported(ctx context.Context, workspaceID ids.UUID, data 
 		if err != nil {
 			return fmt.Errorf("asset: read the assets of the blob: %w", err)
 		}
-		if len(refs) > 0 {
+		if len(refs) > 0 || adding.keys[key] {
 			return nil
 		}
-		if err := s.ent.Check(ctx, tx, workspaceID, entitlements.StorageBytes, *adding+size); err != nil {
+		if err := s.ent.Check(ctx, tx, workspaceID, entitlements.StorageBytes, adding.bytes+size); err != nil {
 			return err
 		}
-		*adding += size
+		if adding.keys == nil {
+			adding.keys = map[string]bool{}
+		}
+		adding.bytes += size
+		adding.keys[key] = true
 		return nil
 	})
 	if err != nil {

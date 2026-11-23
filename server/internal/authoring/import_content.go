@@ -139,6 +139,9 @@ func checkSchema(path, section string, data []byte) error {
 	if err := schemacheck.CheckDepth(data); err != nil {
 		return &ImportError{Code: FailArchiveInvalid, Section: section, Check: "json_depth", Detail: err.Error()}
 	}
+	if err := schemacheck.CheckKeys(data, inst); err != nil {
+		return &ImportError{Code: FailSchemaInvalid, Section: section, Check: "duplicate_key", Detail: err.Error()}
+	}
 	if err := sch.Validate(inst); err != nil {
 		return &ImportError{Code: FailSchemaInvalid, Section: section, Check: "schema", Detail: schemaDetail(err)}
 	}
@@ -191,6 +194,9 @@ func checkItems(item *jsonschema.Schema, section string, data []byte) error {
 			inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(one))
 			if err != nil {
 				return fail("json", "item %d: %v", n, err)
+			}
+			if err := schemacheck.CheckKeys(one, inst); err != nil {
+				return fail("duplicate_key", "item %d: %v", n, err)
 			}
 			if err := item.Validate(inst); err != nil {
 				return fail("schema", "item %d: %s", n, schemaDetail(err))
