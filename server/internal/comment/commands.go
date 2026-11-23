@@ -443,35 +443,54 @@ func checkCreate(p createPayload) input.FieldErrors {
 }
 
 // CheckImported returns what is wrong with data, the body of a comment of an
-// imported archive, which is held to what a comment's commands hold a body to.
-// The body is read as a stored document, in its canonical form.
+// imported archive: what a reader of the stored body needs, that it parses, in
+// its canonical form, and holds no node that a comment does not hold, and the
+// bounds of a body (bodyBounds). A stored body may break the rule that a body
+// shows something, which is newer than some of them, and is kept as it is, as
+// the step of an inverse writes it back (commands.Spec.CheckNew).
 func CheckImported(data []byte) (input.FieldErrors, error) {
 	doc, err := richtext.Parse(data)
 	if err != nil {
 		return nil, err
 	}
-	return checkBody(*doc), nil
+	errs, _, _ := bodyBounds(*doc)
+	return errs, nil
 }
 
 // checkBody returns the problems of body, the body of a comment that a
 // command writes, which a stored body that the step of an inverse writes
-// back may break: a value reference or a mention of a component, at its
-// location in the document, of which a comment holds none, so that it names
-// nothing that the story reads, and @ is left to the mentions of members
-// (PRD FR-COMMENT-02); mentions of more than MaxMentions members, at the
-// first mention of the first member past them; and, of a body without them,
-// more than MaxBodyLength characters of text, or none that is printed, as
-// one of white space alone, or of a list whose items are empty, both counted
-// as the characters of its texts, which CharacterCount counts, without the
-// bullets and the numbers that its lists show, which its author did not
-// type, and without its mentions of members, which are no text of it
-// (richtext.Member), unless it mentions one, which is all that a comment of
-// @Tomas alone says. The location of a node is in the document's canonical
-// form (richtext.Parse), whose neighbouring texts with the same marks are
-// one, as an editor writes them. It reads nothing but body.
+// back may break: what bodyBounds finds, and, of a body within them, none
+// that is printed, as one of white space alone, or of a list whose items are
+// empty, counted as the characters of its texts, without the bullets and the
+// numbers that its lists show, which its author did not type, and without its
+// mentions of members, which are no text of it (richtext.Member), unless it
+// mentions one, which is all that a comment of @Tomas alone says. It reads
+// nothing but body.
 func checkBody(body richtext.Doc) input.FieldErrors {
-	if errs := foreign(body.Blocks, "body"); len(errs) > 0 {
+	errs, segs, members := bodyBounds(body)
+	if len(errs) > 0 {
 		return errs
+	}
+	if !printed(segs) && members == 0 {
+		return field("body", "is empty: a comment holds at least one character that is not blank, as white space and U+200B "+
+			"ZERO WIDTH SPACE are, or a mention of a member")
+	}
+	return nil
+}
+
+// bodyBounds returns the problems of body that hold of a stored body too: a
+// value reference or a mention of a component, at its location in the
+// document, of which a comment holds none, so that it names nothing that the
+// story reads, and @ is left to the mentions of members (PRD FR-COMMENT-02);
+// mentions of more than MaxMentions members, at the first mention of the first
+// member past them; and more than MaxBodyLength characters of text, which
+// CharacterCount counts. The location of a node is in the document's canonical
+// form (richtext.Parse), whose neighbouring texts with the same marks are one,
+// as an editor writes them. It also returns the body's segments and how many
+// members it mentions, and reads nothing but body.
+func bodyBounds(body richtext.Doc) (input.FieldErrors, []richtext.Segment, int) {
+	if errs := foreign(body.Blocks, "body"); len(errs) > 0 {
+		return errs, nil, 0
 	}
 	members := map[string]bool{}
 	for loc, m := range body.Members() {
@@ -480,20 +499,16 @@ func checkBody(body richtext.Doc) input.FieldErrors {
 		}
 		if len(members) == MaxMentions {
 			return field("body"+loc, fmt.Sprintf("mentions a member past the %d whom a comment may mention",
-				MaxMentions))
+				MaxMentions)), nil, 0
 		}
 		members[m.User] = true
 	}
 	segs := body.Segments(richtext.NoNames{})
 	if n := richtext.CharacterCount(segs); n > MaxBodyLength {
 		return field("body", fmt.Sprintf("holds %d characters of text, more than the %d that a comment may hold",
-			n, MaxBodyLength))
+			n, MaxBodyLength)), nil, 0
 	}
-	if !printed(segs) && len(members) == 0 {
-		return field("body", "is empty: a comment holds at least one character that is not blank, as white space and U+200B "+
-			"ZERO WIDTH SPACE are, or a mention of a member")
-	}
-	return nil
+	return nil, segs, len(members)
 }
 
 // printed reports whether a character of the texts of segs, the segments of

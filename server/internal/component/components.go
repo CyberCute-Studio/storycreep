@@ -444,10 +444,11 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p CreatePayload) error {
 		return err
 	}
 	// An import gives a component its stored values, whose characters the text
-	// rules may refuse (commands.Spec.CheckNew).
+	// rules may refuse (commands.Spec.CheckNew), and whose lengths a snapshot's
+	// load still holds to their types'.
 	checks := value.All
 	if tx.Populating() {
-		checks = value.Checks{Length: true}
+		checks = value.Stored
 	}
 	vals, err := createValues(ctx, q, t, p.Attributes, checks)
 	if err != nil {

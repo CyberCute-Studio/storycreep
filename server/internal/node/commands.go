@@ -822,6 +822,13 @@ func checkTitle(title string) string {
 
 // applyCreate is Create's Apply.
 func applyCreate(ctx context.Context, tx *commands.Tx, p CreatePayload) error {
+	// An import's values skip CheckNew, but a snapshot's load holds a node's
+	// tags to being distinct, whatever their characters.
+	if tx.Populating() {
+		if errs := checkDistinctTags("tags", p.Tags); len(errs) > 0 {
+			return commands.Refuse(errs[0].Field, errs[0].Message, nil)
+		}
+	}
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	id := decoded(ids.Node, p.ID)

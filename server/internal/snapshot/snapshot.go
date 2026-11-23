@@ -384,7 +384,11 @@ func checkRequest(r Request) (Version, error) {
 		fields = append(fields, input.FieldError{Field: "version", Message: fmt.Sprintf(
 			"is not a version MAJOR.MINOR.PATCH, each a number from 0 to %d without a leading zero", MaxVersionNumber)})
 	}
-	if msg := CheckNote(r.Note); msg != "" {
+	if strings.IndexFunc(r.Note, input.Printed) < 0 {
+		// A note of blank characters alone, as U+200B ZERO WIDTH SPACE, is
+		// empty, as a mute's reason is (package validation).
+		fields = append(fields, input.FieldError{Field: "note", Message: "is empty"})
+	} else if msg := input.CheckTrimmedText(r.Note, MaxNoteLength); msg != "" {
 		fields = append(fields, input.FieldError{Field: "note", Message: msg})
 	}
 	if r.AcknowledgedSeq < 0 {
@@ -396,15 +400,12 @@ func checkRequest(r Request) (Version, error) {
 	return v, nil
 }
 
-// CheckNote says what is wrong with a release's note, or returns "", as
-// publishing one and importing one hold it. A note of blank characters alone,
-// as U+200B ZERO WIDTH SPACE, is empty, as a mute's reason is (package
-// validation).
-func CheckNote(note string) string {
-	if strings.IndexFunc(note, input.Printed) < 0 {
-		return "is empty"
-	}
-	return input.CheckTrimmedText(note, MaxNoteLength)
+// CheckImportedNote says what is wrong with the note of a release of an
+// imported archive, or returns "": a note of the length that the database
+// holds. A stored note may break the text rules of a new one (checkRequest),
+// and is kept as it is.
+func CheckImportedNote(note string) string {
+	return input.CheckStoredLength(note, 1, MaxNoteLength)
 }
 
 // authorise returns nil if the actor may publish a snapshot of the project

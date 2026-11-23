@@ -409,13 +409,17 @@ func checkState(name string, st published.SaveState) input.FieldErrors {
 
 // CheckImported returns what is wrong with a play state of an imported
 // archive for the project projectID, by its name, its state, and the names of
-// its values, which are held to what the commands hold a new play state to. It
+// its values. The state is held to what the commands hold one to, and to being
+// of the project, the names to naming values that it holds, and each text to
+// the lengths that the database and the readers take: a stored text may break
+// the text rules of a new one (checkName, checkNameTexts), and is kept as it
+// is, as the step of an inverse writes it back (commands.Spec.CheckNew). It
 // also returns the state and the names as a command stores them, which are what
 // it checked: jsonb sorts a document's keys, so that of two spellings of a key,
 // a read of the bytes as the archive holds them could take the other one.
 func CheckImported(projectID ids.UUID, name string, state, names []byte) (stateData, namesData []byte,
 	errs input.FieldErrors) {
-	if msg := checkName(name); msg != "" {
+	if msg := input.CheckStoredLength(name, 1, MaxNameLength); msg != "" {
 		errs = append(errs, input.FieldError{Field: "name", Message: msg})
 	}
 	var st published.SaveState
@@ -432,7 +436,7 @@ func CheckImported(projectID ids.UUID, name string, state, names []byte) (stateD
 		return nil, nil, append(errs, input.FieldError{Field: "names", Message: "are no names: " + err.Error()})
 	}
 	errs = append(errs, checkNames(st, ns)...)
-	errs = append(errs, checkNameTexts(ns)...)
+	errs = append(errs, checkStoredNames(ns)...)
 	if len(errs) > 0 {
 		return nil, nil, errs
 	}
@@ -444,6 +448,26 @@ func CheckImported(projectID ids.UUID, name string, state, names []byte) (stateD
 		return nil, nil, input.FieldErrors{{Field: "names", Message: "are no names: " + err.Error()}}
 	}
 	return stateData, namesData, nil
+}
+
+// checkStoredNames returns the problems of names that are kept as they are
+// stored: each within MaxValueNameLength characters, and no other rule.
+func checkStoredNames(names PlayStateNames) input.FieldErrors {
+	var errs input.FieldErrors
+	check := func(at, name string) {
+		if msg := input.CheckStoredLength(name, 0, MaxValueNameLength); msg != "" {
+			errs = append(errs, input.FieldError{Field: at, Message: msg})
+		}
+	}
+	for _, v := range slices.Sorted(maps.Keys(names.Variables)) {
+		check("names.variables."+v, names.Variables[v])
+	}
+	for _, c := range slices.Sorted(maps.Keys(names.Attributes)) {
+		for _, a := range slices.Sorted(maps.Keys(names.Attributes[c])) {
+			check("names.attributes."+c+"."+a, names.Attributes[c][a])
+		}
+	}
+	return errs
 }
 
 // checkName says what is wrong with a play state's name, or returns "".

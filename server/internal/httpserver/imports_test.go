@@ -16,13 +16,17 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/authoring"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/comment"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/maintenance"
+	"github.com/CyberCute-Studio/storycreep/server/internal/playstate"
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/schemaversion"
 	"github.com/CyberCute-Studio/storycreep/server/internal/snapshot"
 	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
+	"github.com/CyberCute-Studio/storycreep/server/internal/value"
 )
 
 func importsPath(ws string) string { return "/api/v1/workspaces/" + ws + "/project-imports" }
@@ -873,48 +877,162 @@ func TestImportMapsAnEscapedMention(t *testing.T) {
 }
 
 // TestImportHoldsDirectRowsToTheirChecks checks that what an import writes
-// without a command is held to its package's checks: a play state of another
-// project, a mute whose reason a command would refuse, and a release's note
-// that publishing would refuse are each the archive's failure.
+// without a command is held to what a reader of its row needs, its package's
+// structural checks and its bounds: a play state of another project, or that
+// names a value it does not hold, a comment's body that does not parse or that
+// holds what no comment holds, and a text past its length, or empty where the
+// database refuses that, are each the archive's failure.
+// TestImportKeepsStoredRowTexts checks what is no longer refused.
 //
 // Verifies: FR-DATA-01/AC1
 func TestImportHoldsDirectRowsToTheirChecks(t *testing.T) {
 	t.Parallel()
 	f := newAuthoringFixture(t)
 	openMaintenance(t, f.s, f.d)
+	// Each case begins an import, which counts in the export bucket.
+	policy := ratelimit.DefaultPolicy()
+	policy.Rates[ratelimit.Export].Limits[ratelimit.User] = 1000
+	policy.Rates[ratelimit.Export].Limits[ratelimit.IP] = 1000
+	f.s.limits = ratelimit.New(readyDB{f.s.ready}, policy)
 	exported := exportedArchive(t, f)
-	for name, c := range map[string]struct {
-		forge             func(files map[string][]byte)
-		code, section, at string
-	}{
-		"a play state of another project": {func(files map[string][]byte) {
+	playState := func(edit func(p *authoring.PlayState)) func(map[string][]byte) {
+		return func(files map[string][]byte) {
 			list := items[authoring.PlayState](t, files, "play_states.json")
-			list[0].State = bytes.ReplaceAll(list[0].State, []byte(f.project),
-				[]byte(ids.Encode(ids.Project, ids.New())))
+			edit(&list[0])
 			data, err := json.Marshal(authoring.Items[authoring.PlayState]{Items: list})
 			if err != nil {
 				t.Fatal(err)
 			}
 			resealSection(t, files, "play_states.json", data, len(list))
-		}, authoring.FailContentInvalid, "play_states", "state.projectId"},
-		"a mute's reason": {func(files map[string][]byte) {
+		}
+	}
+	mute := func(reason string) func(map[string][]byte) {
+		return func(files map[string][]byte) {
 			list := []authoring.ValidationMute{{OwnerType: "node", OwnerID: f.node,
-				Code: string(validation.Mutable(ids.Node)[0]), Reason: "muted" + string(rune(0x202e))}}
+				Code: string(validation.Mutable(ids.Node)[0]), Reason: reason}}
 			data, err := json.Marshal(authoring.Items[authoring.ValidationMute]{Items: list})
 			if err != nil {
 				t.Fatal(err)
 			}
 			resealSection(t, files, "draft/validation_mutes.json", data, len(list))
-		}, authoring.FailContentInvalid, "validation_mutes", "reason"},
-		"a release's note": {func(files map[string][]byte) {
+		}
+	}
+	commentBody := func(body string) func(map[string][]byte) {
+		return func(files map[string][]byte) {
+			list := items[authoring.Comment](t, files, "comments.json")
+			list[0].Body = authoring.Text(body)
+			data, err := json.Marshal(authoring.Items[authoring.Comment]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "comments.json", data, len(list))
+		}
+	}
+	note := func(text string) func(map[string][]byte) {
+		return func(files map[string][]byte) {
 			list := items[authoring.Release](t, files, "releases/index.json")
-			list[0].Note = " padded "
+			list[0].Note = text
 			data, err := json.Marshal(authoring.Items[authoring.Release]{Items: list})
 			if err != nil {
 				t.Fatal(err)
 			}
 			resealSection(t, files, "releases/index.json", data, len(list))
-		}, authoring.FailReleaseInvalid, "", "note"},
+		}
+	}
+	valueRef := `{"type":"doc","content":[{"type":"paragraph","content":[` +
+		valueInline(ids.Encode(ids.Variable, ids.New())) + `]}]}`
+	stateWith := func(project string) authoring.Value {
+		state := emptyState(project)
+		state["variables"] = map[string]any{ids.Encode(ids.Variable, ids.New()): 1}
+		data, err := json.Marshal(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return authoring.Value(data)
+	}
+	for name, c := range map[string]struct {
+		forge             func(files map[string][]byte)
+		code, section, at string
+	}{
+		"a play state of another project": {playState(func(p *authoring.PlayState) {
+			p.State = bytes.ReplaceAll(p.State, []byte(f.project), []byte(ids.Encode(ids.Project, ids.New())))
+		}), authoring.FailContentInvalid, "play_states", "state.projectId"},
+		"a play state's name past its length": {playState(func(p *authoring.PlayState) {
+			p.Name = strings.Repeat("a", playstate.MaxNameLength+1)
+		}), authoring.FailContentInvalid, "play_states", "name"},
+		"a play state without a name": {playState(func(p *authoring.PlayState) { p.Name = "" }),
+			authoring.FailContentInvalid, "play_states", "name"},
+		"a name of a value that the state does not hold": {playState(func(p *authoring.PlayState) {
+			p.Names = authoring.Value(`{"variables":{"` + ids.Encode(ids.Variable, ids.New()) + `":"gold"}}`)
+		}), authoring.FailContentInvalid, "play_states", "names.variables."},
+		"a value's name past its length": {playState(func(p *authoring.PlayState) {
+			p.State = stateWith(f.project)
+			var st struct {
+				Variables map[string]any `json:"variables"`
+			}
+			if err := json.Unmarshal(p.State, &st); err != nil {
+				t.Fatal(err)
+			}
+			for v := range st.Variables {
+				p.Names = authoring.Value(`{"variables":{"` + v + `":"` +
+					strings.Repeat("a", playstate.MaxValueNameLength+1) + `"}}`)
+			}
+		}), authoring.FailContentInvalid, "play_states", "names.variables."},
+		"a mute's reason past its length": {mute(strings.Repeat("a", validation.MaxReasonLength+1)),
+			authoring.FailContentInvalid, "validation_mutes", "reason"},
+		"a mute without a reason": {mute(""), authoring.FailContentInvalid, "validation_mutes", "reason"},
+		"a comment's body that does not parse": {commentBody(string(paragraph("reversed" + string(rune(0x202e))))),
+			authoring.FailContentInvalid, "comments", "body"},
+		"a comment's body with a value reference": {commentBody(valueRef),
+			authoring.FailContentInvalid, "comments", "body"},
+		"a comment's body past its length": {commentBody(string(paragraph(
+			strings.Repeat("a", comment.MaxBodyLength+1)))), authoring.FailContentInvalid, "comments", "body"},
+		"a release's note past its length": {note(strings.Repeat("a", snapshot.MaxNoteLength+1)),
+			authoring.FailReleaseInvalid, "", "note"},
+		"a release without a note": {note(""), authoring.FailReleaseInvalid, "", "note"},
+		"a project without a name": {func(files map[string][]byte) {
+			var p authoring.Project
+			if err := json.Unmarshal(files["draft/project.json"], &p); err != nil {
+				t.Fatal(err)
+			}
+			p.Name = ""
+			data, err := json.Marshal(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "draft/project.json", data, 1)
+		}, authoring.FailContentInvalid, "project", "name"},
+		"two tags the same but for their case": {func(files map[string][]byte) {
+			list := items[authoring.Node](t, files, "draft/nodes.json")
+			list[0].Tags = []string{"Quest", "quest"}
+			data, err := json.Marshal(authoring.Items[authoring.Node]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "draft/nodes.json", data, len(list))
+		}, authoring.FailContentInvalid, "nodes", "tags[1]"},
+		"a component's string past its type's length": {func(files map[string][]byte) {
+			components := items[authoring.Component](t, files, "draft/components.json")
+			types := items[authoring.ComponentType](t, files, "draft/component_types.json")
+			def := ids.Encode(ids.AttributeDef, ids.New())
+			types[0].Attributes = append(types[0].Attributes, authoring.AttributeDef{ID: def,
+				Order: components[0].Order, Key: "motto", Name: "Motto", Type: value.String,
+				Default: authoring.Value(`""`)})
+			long, err := json.Marshal(strings.Repeat("a", value.MaxStringLength+1))
+			if err != nil {
+				t.Fatal(err)
+			}
+			components[0].Values = map[string]authoring.Value{def: authoring.Value(long)}
+			data, err := json.Marshal(authoring.Items[authoring.ComponentType]{Items: types})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "draft/component_types.json", data, len(types))
+			if data, err = json.Marshal(authoring.Items[authoring.Component]{Items: components}); err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "draft/components.json", data, len(components))
+		}, authoring.FailContentInvalid, "components", "attributes."},
 		"a release's report that the API cannot read": {func(files map[string][]byte) {
 			list := items[authoring.Release](t, files, "releases/index.json")
 			list[0].ValidationReport = authoring.Value(`{"findings": "none"}`)
@@ -958,10 +1076,50 @@ func TestImportHoldsDirectRowsToTheirChecks(t *testing.T) {
 			files := maps.Clone(exported)
 			c.forge(files)
 			failure := failedImport(t, f.s, f.owner, f.ws, zipOf(t, files))
-			if failure.Code != c.code || failure.Section != c.section || failure.Check != c.at {
+			// A check that ends in a dot is of a field whose name goes on with
+			// an ID that the case makes.
+			at := failure.Check == c.at || strings.HasSuffix(c.at, ".") && strings.HasPrefix(failure.Check, c.at)
+			if failure.Code != c.code || failure.Section != c.section || !at {
 				t.Errorf("the failure is %+v, want %s at %s, %s", *failure, c.code, c.section, c.at)
 			}
 		})
+	}
+}
+
+// TestImportTakesCountsFromTheRelease checks that a release's row counts what
+// its verified files hold, whatever the index of the archive says, and that the
+// report names the project as it is stored.
+//
+// Verifies: FR-DATA-01/AC1
+func TestImportTakesCountsFromTheRelease(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	files := exportedArchive(t, f)
+	releases := items[authoring.Release](t, files, "releases/index.json")
+	want := releases[0].Counts
+	releases[0].Counts = authoring.Value(`{"boards":0,"components":0,"connections":0,"nodes":0,"variables":0}`)
+	data, err := json.Marshal(authoring.Items[authoring.Release]{Items: releases})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resealSection(t, files, "releases/index.json", data, len(releases))
+	var p authoring.Project
+	if err := json.Unmarshal(files["draft/project.json"], &p); err != nil {
+		t.Fatal(err)
+	}
+	p.Name = " Harbour "
+	if data, err = json.Marshal(p); err != nil {
+		t.Fatal(err)
+	}
+	resealSection(t, files, "draft/project.json", data, 1)
+	got := mustImport(t, f.s, f.owner, f.ws, zipOf(t, files), authoring.PolicyRemap)
+	if got.Report.ProjectName != p.Name {
+		t.Errorf("the report names the project %q, want %q", got.Report.ProjectName, p.Name)
+	}
+	stored := items[authoring.Release](t, exportOf(t, f.s, f.owner, got.ProjectID), "releases/index.json")
+	if len(stored) != 1 || !sameJSON(t, stored[0].Counts, want) {
+		t.Errorf("the release's counts are %s, want %s", stored[0].Counts, want)
 	}
 }
 

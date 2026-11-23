@@ -139,11 +139,14 @@ func checkMute(entity, code string) input.FieldErrors {
 	return nil
 }
 
-// CheckImported returns what is wrong with a mute of an imported archive, of
-// the owner entity, the code, and the reason, which are held to what the
-// commands hold a mute to.
+// CheckImported returns what is wrong with a mute of an imported archive: an
+// owner and a code that a mute may have, and a reason of the length that the
+// database holds. A stored reason may break the text rules of a new one
+// (checkReason), and is kept as it is, as the step of an inverse writes it back
+// (commands.Spec.CheckNew).
 func CheckImported(entity, code, reason string) input.FieldErrors {
-	return append(checkMute(entity, code), field("reason", checkReason(reason))...)
+	return append(checkMute(entity, code),
+		field("reason", input.CheckStoredLength(reason, 1, MaxReasonLength))...)
 }
 
 // checkReason says what is wrong with a mute's reason, or returns "": one

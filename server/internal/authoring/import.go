@@ -1183,6 +1183,18 @@ func manifestFacts(files schemaversion.Files) (map[string]string, string, error)
 	return hashes, hash, nil
 }
 
+// manifestCounts returns the entity counts of a release's verified manifest, as
+// its build stores them, so that its row cannot say other than its files.
+func manifestCounts(files schemaversion.Files) ([]byte, error) {
+	var m struct {
+		Counts json.RawMessage `json:"counts"`
+	}
+	if err := json.Unmarshal(files[published.ManifestPath], &m); err != nil {
+		return nil, fmt.Errorf("its manifest: %w", err)
+	}
+	return storedCounts(m.Counts)
+}
+
 // atTypesVersion returns the files at the version of package published's
 // types, from which a draft is built. A release of the history logs its own
 // migration when it is written (importWriter.release).
@@ -1444,7 +1456,7 @@ func (s *Service) writeImport(ctx context.Context, run importRun, a *archive, c 
 		}
 	}
 	report := ImportReport{Policy: policy, ProjectID: ids.Encode(ids.Project, projectID),
-		ProjectName: strings.TrimSpace(c.project.Name), Boards: len(c.boards), Nodes: len(c.nodes),
+		ProjectName: c.project.Name, Boards: len(c.boards), Nodes: len(c.nodes),
 		Variables: len(c.variables), Components: len(c.components), Comments: live,
 		PlayStates: len(c.playStates), Releases: len(c.releases), Assets: len(c.assets), MissingAssets: missing}
 	err = s.db.InTx(ctx, database.Scope{WorkspaceID: run.workspace, UserID: run.user}, func(tx pgx.Tx) error {
@@ -1897,7 +1909,8 @@ var emptyBody = func() []byte {
 }()
 
 // comments adds the archive's threads, each root before its replies, with who
-// wrote each and when, after holding each body to the commands' rules.
+// wrote each and when, after holding each body to what a reader of a stored
+// body needs and to a body's bounds (comment.CheckImported).
 func (w importWriter) comments(ctx context.Context, list []Comment) error {
 	roots := make(map[string]Comment, len(list))
 	for _, x := range list {
@@ -1987,7 +2000,7 @@ func (w importWriter) comments(ctx context.Context, list []Comment) error {
 }
 
 // playStates adds the archive's play states as they were saved, each held to
-// what a saved play state is held to.
+// what a reader of a stored one needs (playstate.CheckImported).
 func (w importWriter) playStates(ctx context.Context, list []PlayState) error {
 	for _, x := range list {
 		id, err := ids.Decode(ids.PlayState, x.ID)
@@ -2036,7 +2049,7 @@ func (w importWriter) release(ctx context.Context, tx pgx.Tx, rel Release, files
 	if err != nil {
 		return nil, fail("manifest", err)
 	}
-	if msg := snapshot.CheckNote(rel.Note); msg != "" {
+	if msg := snapshot.CheckImportedNote(rel.Note); msg != "" {
 		return nil, fail("note", fmt.Errorf("its note %s", msg))
 	}
 	report, err := rewriteReport(rel.ValidationReport, w.users)
@@ -2047,7 +2060,7 @@ func (w importWriter) release(ctx context.Context, tx pgx.Tx, rel Release, files
 	if err != nil {
 		return nil, fail("acknowledged_warnings", err)
 	}
-	counts, err := storedCounts(rel.Counts)
+	counts, err := manifestCounts(files)
 	if err != nil {
 		return nil, fail("counts", err)
 	}

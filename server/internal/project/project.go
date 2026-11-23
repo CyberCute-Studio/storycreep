@@ -39,7 +39,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -459,13 +458,14 @@ func (s *Service) create(ctx context.Context, tx pgx.Tx, userID, workspaceID ids
 
 // check returns the settings of a project created with in, whose default
 // locale is locale unless in names one, or input.FieldErrors if a field of
-// in is not valid. A stored name or description is held to its length alone.
+// in is not valid. A stored name or description is held to its length alone,
+// of at least one character for a name, which every project has.
 func check(in Settings, locale string, stored bool) (settings, error) {
 	var errs input.FieldErrors
 	nameProblem, descriptionProblem := checkName(in.Name), checkDescription(in.Description)
 	if stored {
-		nameProblem, descriptionProblem = storedLength(in.Name, MaxNameLength),
-			storedLength(in.Description, MaxDescriptionLength)
+		nameProblem, descriptionProblem = input.CheckStoredLength(in.Name, 1, MaxNameLength),
+			input.CheckStoredLength(in.Description, 0, MaxDescriptionLength)
 	}
 	if nameProblem != "" {
 		errs = append(errs, input.FieldError{Field: "name", Message: nameProblem})
@@ -512,15 +512,6 @@ func workspaceLocale(doc []byte) string {
 		return locale
 	}
 	return fallbackLocale
-}
-
-// storedLength says that a stored text is longer than maxChars characters, or
-// returns "".
-func storedLength(text string, maxChars int) string {
-	if utf8.RuneCountInString(text) > maxChars {
-		return fmt.Sprintf("is longer than %d characters", maxChars)
-	}
-	return ""
 }
 
 // checkName says what is wrong with a project's name, or returns "".

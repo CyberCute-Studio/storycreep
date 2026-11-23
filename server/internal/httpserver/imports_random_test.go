@@ -17,7 +17,9 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/authoring"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/playstate"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
+	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
 )
 
 // importRandomSeeds is how many random projects TestImportRoundTripRandom
@@ -75,7 +77,8 @@ func TestImportRoundTripRandom(t *testing.T) {
 // else older than its branch's conditional outputs.
 func importRoundTripOf(t *testing.T, seed uint64) bool {
 	r := randomProject(t, seed)
-	return elseBeforeConditions(t, wantImportRoundTrip(t, r))
+	before, _ := wantImportRoundTrip(t, r)
+	return elseBeforeConditions(t, before)
 }
 
 // TestImportKeepsStoredTexts checks that a project whose stored texts break
@@ -120,13 +123,130 @@ func TestImportKeepsStoredTexts(t *testing.T) {
 			t.Errorf("the seed's project has no row for %s", sql)
 		}
 	}
-	before := wantImportRoundTrip(t, r)
+	before, _ := wantImportRoundTrip(t, r)
 	var held authoring.Project
 	if err := json.Unmarshal(before["draft/project.json"], &held); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasSuffix(held.Name, mark) {
 		t.Errorf("the export holds the project's name as %q", held.Name)
+	}
+}
+
+// TestImportKeepsStoredRowTexts checks that a project whose mute, play state,
+// comment, or release holds a stored text that the rules of its commands now
+// refuse still imports from its export, with the text as it is, and that what
+// the import wrote reads back. TestImportHoldsDirectRowsToTheirChecks checks
+// what such a row is still held to.
+//
+// Verifies: FR-DATA-01/AC1
+func TestImportKeepsStoredRowTexts(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipped with -short: needs PostgreSQL, which the tests run in Docker")
+	}
+	t.Parallel()
+	mark, blank := string(rune(0x202e)), string(rune(0x200b))
+	value := ids.Encode(ids.Variable, ids.New())
+	for name, c := range map[string]struct {
+		store []string
+		args  []any
+		read  func(t *testing.T, files map[string][]byte) string
+		want  string
+	}{
+		"a mute's reason": {
+			store: []string{`UPDATE validation_mute SET reason = 'Intended' || $2 WHERE project_id = $1`},
+			args:  []any{mark},
+			read: func(t *testing.T, files map[string][]byte) string {
+				return items[authoring.ValidationMute](t, files, "draft/validation_mutes.json")[0].Reason
+			},
+			want: "Intended" + mark,
+		},
+		"a play state's name": {
+			store: []string{`UPDATE play_state SET name = 'Quay' || $2 WHERE project_id = $1`},
+			args:  []any{mark},
+			read: func(t *testing.T, files map[string][]byte) string {
+				return items[authoring.PlayState](t, files, "play_states.json")[0].Name
+			},
+			want: "Quay" + mark,
+		},
+		"a play state's names": {
+			store: []string{`UPDATE play_state SET state = jsonb_set(state, '{variables}', jsonb_build_object($3::text, 1)),
+				names = jsonb_build_object('variables', jsonb_build_object($3::text, 'gold' || $2)) WHERE project_id = $1`},
+			args: []any{mark, value},
+			read: func(t *testing.T, files map[string][]byte) string {
+				var names playstate.PlayStateNames
+				if err := json.Unmarshal(items[authoring.PlayState](t, files, "play_states.json")[0].Names,
+					&names); err != nil {
+					t.Fatal(err)
+				}
+				return names.Variables[value]
+			},
+			want: "gold" + mark,
+		},
+		"a comment's body": {
+			store: []string{`UPDATE comment SET body = $2::jsonb WHERE project_id = $1`},
+			args:  []any{string(paragraph(blank))},
+			read: func(t *testing.T, files map[string][]byte) string {
+				doc, err := richtext.Parse(items[authoring.Comment](t, files, "comments.json")[0].Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return richtext.PlainText(doc.Segments(richtext.NoNames{}))
+			},
+			want: blank,
+		},
+		"a release's note": {
+			// A release never changes once it is built, but for this test.
+			store: []string{`ALTER TABLE snapshot DISABLE TRIGGER snapshot_stays_built`,
+				`UPDATE snapshot SET note = ' padded' || $2 WHERE project_id = $1`,
+				`ALTER TABLE snapshot ENABLE TRIGGER snapshot_stays_built`},
+			args: []any{mark},
+			read: func(t *testing.T, files map[string][]byte) string {
+				return items[authoring.Release](t, files, "releases/index.json")[0].Note
+			},
+			want: " padded" + mark,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newAuthoringFixture(t)
+			openMaintenance(t, f.s, f.d)
+			sendBatch(t, f.s.main, f.owner, f.project, wireCommand{Type: "validation.mute",
+				Payload: map[string]any{"entity_id": f.node, "code": "dead_end", "reason": "Intended"}})
+			conn := f.d.Admin(t)
+			for _, sql := range c.store {
+				args := []any{}
+				if strings.Contains(sql, "$1") {
+					args = append([]any{decode(t, ids.Project, f.project)}, c.args...)
+				}
+				tag, err := conn.Exec(t.Context(), sql, args...)
+				if err != nil {
+					t.Fatalf("%s: %v", sql, err)
+				}
+				if len(args) > 0 && tag.RowsAffected() == 0 {
+					t.Fatalf("no row for %s", sql)
+				}
+			}
+			before, after := wantImportRoundTrip(t, randomDraft{s: f.s, owner: f.owner, ws: f.ws, id: f.project})
+			if got := c.read(t, before); got != c.want {
+				t.Errorf("the export holds %q, want %q", got, c.want)
+			}
+			if got := c.read(t, after); got != c.want {
+				t.Errorf("the import keeps %q, want %q", got, c.want)
+			}
+			var m authoring.Manifest
+			if err := json.Unmarshal(after[authoring.ManifestPath], &m); err != nil {
+				t.Fatal(err)
+			}
+			state := items[authoring.PlayState](t, after, "play_states.json")[0].ID
+			for _, path := range []string{commentsPath(m.Project.ID), playStatesPath(m.Project.ID),
+				playStatesPath(m.Project.ID) + "/" + state, snapshotsPath(m.Project.ID)} {
+				if res := call(f.s.main, http.MethodGet, path, nil, f.owner.header(false)); res.status != http.StatusOK {
+					t.Errorf("GET %s: %d %.300s", path, res.status, res.body)
+				}
+			}
+			validationReport(t, f.s.main, f.owner, m.Project.ID)
+		})
 	}
 }
 
@@ -228,12 +348,13 @@ func randomProject(t *testing.T, seed uint64) randomDraft {
 }
 
 // wantImportRoundTrip exports the project, imports the archive with fresh IDs,
-// exports the import, compares the two archives, and returns the first.
-func wantImportRoundTrip(t *testing.T, r randomDraft) map[string][]byte {
+// exports the import, compares what the two archives say and which entity each
+// of their references names (sameReferences), and returns them.
+func wantImportRoundTrip(t *testing.T, r randomDraft) (before, after map[string][]byte) {
 	t.Helper()
-	before := exportOf(t, r.s, r.owner, r.id)
+	before = exportOf(t, r.s, r.owner, r.id)
 	got := mustImport(t, r.s, r.owner, r.ws, zipOf(t, before), authoring.PolicyRemap)
-	after := exportOf(t, r.s, r.owner, got.ProjectID)
+	after = exportOf(t, r.s, r.owner, got.ProjectID)
 	var m authoring.Manifest
 	if err := json.Unmarshal(before[authoring.ManifestPath], &m); err != nil {
 		t.Fatal(err)
@@ -256,7 +377,259 @@ func wantImportRoundTrip(t *testing.T, r randomDraft) map[string][]byte {
 			t.Errorf("the two projects share the ID %s", id)
 		}
 	}
-	return before
+	if problems := sameReferences(t, before, after); len(problems) > 0 {
+		t.Errorf("%d references differ, first: %s", len(problems), strings.Join(problems[:min(len(problems), 5)], "; "))
+	}
+	return before, after
+}
+
+// sameReferences compares the ID tokens of two exports of one project, the
+// second imported from the first with fresh IDs, and returns what is wrong
+// with them: each token of every section, and of each release's files, has to
+// be at the place of its counterpart, and together they have to make one
+// bijection from the first export's IDs to the second's, of IDs of one kind,
+// under which an ID that the first archive holds becomes another, and one that
+// it does not hold, of an entity in the trash, stays as it is. A person's ID
+// may stay or become an imported identity's.
+//
+// Fresh IDs keep the order of those they replace, so that items and arrays keep
+// their places. An object keyed by IDs need not: jsonb orders its keys by their
+// bytes, and a fresh ID sorts past the unchanged ID of what is in the trash. So
+// the keys of such an object are matched through the bijection that the places
+// give, rather than by their own places.
+func sameReferences(t *testing.T, before, after map[string][]byte) []string {
+	t.Helper()
+	var m, n authoring.Manifest
+	if err := json.Unmarshal(before[authoring.ManifestPath], &m); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(after[authoring.ManifestPath], &n); err != nil {
+		t.Fatal(err)
+	}
+	b := &idBijection{forward: map[string]string{}, back: map[string]string{}}
+	b.pair("manifest", m.Project.ID, n.Project.ID)
+	read := func(name string, files map[string][]byte) (any, bool) {
+		data, ok := files[name]
+		if !ok {
+			b.fail("%s: the export does not hold the file", name)
+			return nil, false
+		}
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.UseNumber()
+		var doc any
+		if err := dec.Decode(&doc); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return doc, true
+	}
+	compare := func(from, to string) {
+		x, ok := read(from, before)
+		y, ok2 := read(to, after)
+		if ok && ok2 {
+			b.walk(from, x, y)
+		}
+	}
+	for _, sec := range m.Sections {
+		compare(sec.Path, sec.Path)
+	}
+	held := heldIDs(t, before)
+	oldReleases, newReleases := items[authoring.Release](t, before, "releases/index.json"),
+		items[authoring.Release](t, after, "releases/index.json")
+	if len(oldReleases) != len(newReleases) {
+		b.fail("%d releases became %d", len(oldReleases), len(newReleases))
+	} else {
+		for i, rel := range oldReleases {
+			for _, name := range slices.Sorted(maps.Keys(before)) {
+				if !strings.HasPrefix(name, rel.Path) {
+					continue
+				}
+				if strings.HasSuffix(name, ".json") {
+					for _, id := range publicID.FindAllString(string(before[name]), -1) {
+						held[id] = true
+					}
+					compare(name, newReleases[i].Path+strings.TrimPrefix(name, rel.Path))
+				}
+			}
+		}
+	}
+	b.settle()
+	for _, id := range slices.Sorted(maps.Keys(b.forward)) {
+		to := b.forward[id]
+		switch {
+		case strings.HasPrefix(id, "usr_"):
+		case held[id] && id == to:
+			b.fail("%s, which the archive holds, kept its ID", id)
+		case !held[id] && id != to:
+			b.fail("%s, which the archive does not hold, became %s", id, to)
+		}
+	}
+	return b.problems
+}
+
+// idBijection is the mapping that sameReferences builds, with what it found
+// wrong.
+type idBijection struct {
+	forward, back map[string]string
+	// keyed are the objects with IDs for keys, whose keys are matched once the
+	// places of the other tokens have given the mapping.
+	keyed    []idObject
+	problems []string
+}
+
+// idObject is an object with IDs for keys, of the first export and the second.
+type idObject struct {
+	at   string
+	x, y map[string]any
+}
+
+func (b *idBijection) fail(format string, args ...any) {
+	b.problems = append(b.problems, fmt.Sprintf(format, args...))
+}
+
+// pair records that the ID x of the first export is the ID y of the second.
+func (b *idBijection) pair(at, x, y string) {
+	kind := func(id string) string { return id[:strings.IndexByte(id, '_')] }
+	if kind(x) != kind(y) {
+		b.fail("%s: %s became %s, of another kind", at, x, y)
+		return
+	}
+	if to, ok := b.forward[x]; ok && to != y {
+		b.fail("%s: %s is %s here and %s elsewhere", at, x, y, to)
+		return
+	}
+	if from, ok := b.back[y]; ok && from != x {
+		b.fail("%s: %s is what both %s and %s became", at, y, x, from)
+		return
+	}
+	b.forward[x], b.back[y] = y, x
+}
+
+// pairTokens pairs the IDs that x and y spell, by their places.
+func (b *idBijection) pairTokens(at, x, y string) {
+	xs, ys := publicID.FindAllString(x, -1), publicID.FindAllString(y, -1)
+	if len(xs) != len(ys) {
+		b.fail("%s: %d IDs became %d", at, len(xs), len(ys))
+		return
+	}
+	for i := range xs {
+		b.pair(at, xs[i], ys[i])
+	}
+}
+
+// walk pairs the tokens of the JSON values x and y, place by place.
+func (b *idBijection) walk(at string, x, y any) {
+	switch x := x.(type) {
+	case string:
+		other, ok := y.(string)
+		if !ok {
+			b.fail("%s: a string became %T", at, y)
+			return
+		}
+		b.pairTokens(at, x, other)
+	case []any:
+		other, ok := y.([]any)
+		if !ok || len(x) != len(other) {
+			b.fail("%s: an array of %d became %T", at, len(x), y)
+			return
+		}
+		for i := range x {
+			b.walk(fmt.Sprintf("%s[%d]", at, i), x[i], other[i])
+		}
+	case map[string]any:
+		other, ok := y.(map[string]any)
+		if !ok || len(x) != len(other) {
+			b.fail("%s: an object of %d keys became %T", at, len(x), y)
+			return
+		}
+		keyed := false
+		for _, k := range slices.Sorted(maps.Keys(x)) {
+			if publicID.MatchString(k) {
+				keyed = true
+				continue
+			}
+			v, ok := other[k]
+			if !ok {
+				b.fail("%s: the key %s is gone", at, k)
+				continue
+			}
+			b.walk(at+"."+k, x[k], v)
+		}
+		if keyed {
+			b.keyed = append(b.keyed, idObject{at: at, x: x, y: other})
+		}
+	}
+}
+
+// settle matches the keys of the objects keyed by IDs through the mapping, an
+// ID that it does not hold as itself, and walks what they hold.
+func (b *idBijection) settle() {
+	for len(b.keyed) > 0 {
+		o := b.keyed[0]
+		b.keyed = b.keyed[1:]
+		for _, k := range slices.Sorted(maps.Keys(o.x)) {
+			if !publicID.MatchString(k) {
+				continue
+			}
+			to := publicID.ReplaceAllStringFunc(k, func(id string) string {
+				if fresh, ok := b.forward[id]; ok {
+					return fresh
+				}
+				return id
+			})
+			v, ok := o.y[to]
+			if !ok {
+				b.fail("%s: the key %s is not there as %s", o.at, k, to)
+				continue
+			}
+			b.pairTokens(o.at, k, to)
+			b.walk(o.at+"."+k, o.x[k], v)
+		}
+	}
+}
+
+// TestSameReferences checks that the comparison of two exports' IDs sees a
+// reference that names the wrong entity, which a comparison without IDs cannot,
+// and takes an object whose ID keys a remap has reordered.
+func TestSameReferences(t *testing.T) {
+	t.Parallel()
+	id := func(k ids.Kind) string { return ids.Encode(k, ids.New()) }
+	p, q, a, b, c, d, gone := id(ids.Project), id(ids.Project), id(ids.Node), id(ids.Node), id(ids.Node), id(ids.Node),
+		id(ids.Node)
+	archive := func(project string, nodes []string, ref string, visits map[string]int) map[string][]byte {
+		manifest, err := json.Marshal(authoring.Manifest{Project: authoring.ManifestProject{ID: project},
+			Sections: []authoring.ManifestSection{{Name: "nodes", Path: "draft/nodes.json"},
+				{Name: "play_states", Path: "play_states.json"}, {Name: "releases", Path: "releases/index.json"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		list := []map[string]string{}
+		for _, n := range nodes {
+			list = append(list, map[string]string{"id": n})
+		}
+		nodeFile, _ := json.Marshal(map[string]any{"items": list})
+		stateFile, _ := json.Marshal(map[string]any{"items": []any{map[string]any{"ref": ref, "visits": visits}}})
+		return map[string][]byte{authoring.ManifestPath: manifest, "draft/nodes.json": nodeFile,
+			"play_states.json": stateFile, "releases/index.json": []byte(`{"items":[]}`)}
+	}
+	old := archive(p, []string{a, b}, a, map[string]int{a: 1, gone: 1})
+	for name, c := range map[string]struct {
+		after map[string][]byte
+		ok    bool
+	}{
+		"each reference follows its entity": {archive(q, []string{c, d}, c, map[string]int{c: 1, gone: 1}), true},
+		"a reference to the wrong entity":   {archive(q, []string{c, d}, d, map[string]int{c: 1, gone: 1}), false},
+		"a key of the wrong entity":         {archive(q, []string{c, d}, c, map[string]int{d: 1, gone: 1}), false},
+		"two entities made one":             {archive(q, []string{c, c}, c, map[string]int{c: 1, gone: 1}), false},
+		"an ID that the archive holds kept": {archive(q, []string{a, d}, a, map[string]int{a: 1, gone: 1}), false},
+		"an ID in the trash changed":        {archive(q, []string{c, d}, c, map[string]int{c: 1, d: 1}), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if problems := sameReferences(t, old, c.after); (len(problems) == 0) != c.ok {
+				t.Errorf("the problems are %v, want ok %v", problems, c.ok)
+			}
+		})
+	}
 }
 
 // elseBeforeConditions says whether a branch of the archive has an else with

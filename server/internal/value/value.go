@@ -178,6 +178,10 @@ type Checks struct {
 	// Text checks a string's or a text's characters and its length
 	// (input.CheckText).
 	Text bool
+	// Bound checks a string's or a text's length alone, of a stored value
+	// whose characters a newer rule may refuse, and which its readers still
+	// hold to its type's length.
+	Bound bool
 	// Length checks that a number is written with at most MaxNumberLength
 	// characters (formProblem).
 	Length bool
@@ -185,6 +189,11 @@ type Checks struct {
 
 // All checks everything of a value, as of one that a command sets.
 var All = Checks{Text: true, Length: true}
+
+// Stored checks what the readers of a value need of one that is kept as it is
+// stored, as an import keeps what a backup holds: its lengths, and not its
+// characters.
+var Stored = Checks{Bound: true, Length: true}
 
 // Of returns v as a value of the type typ, whose options are options for an
 // enum, in its canonical form, which is what is stored and shown, or says
@@ -244,9 +253,9 @@ func (v Value) Read(typ string, c Checks, options ...string) (Value, string) {
 	case typ == Bool && kind == "boolean":
 		return Value{raw: json.RawMessage(raw)}, ""
 	case typ == String && kind == "string":
-		return text(v.raw, c.Text, MaxStringLength)
+		return text(v.raw, c, MaxStringLength)
 	case typ == Text && kind == "string":
-		return text(v.raw, c.Text, MaxTextLength)
+		return text(v.raw, c, MaxTextLength)
 	case typ == Enum && kind == "string":
 		return option(v.raw, options)
 	}
@@ -420,15 +429,19 @@ func integer(raw string) (int64, string) {
 // text returns raw, a JSON string, as a value of the type string or text, of
 // at most maxChars characters, as Of does, or as Read does without
 // input.CheckText unless checked is set.
-func text(raw json.RawMessage, checked bool, maxChars int) (Value, string) {
+func text(raw json.RawMessage, c Checks, maxChars int) (Value, string) {
 	s, problem := decodeString(raw)
 	if problem != "" {
 		return Value{}, problem
 	}
-	if checked {
-		if problem := input.CheckText(s, maxChars); problem != "" {
-			return Value{}, problem
-		}
+	switch {
+	case c.Text:
+		problem = input.CheckText(s, maxChars)
+	case c.Bound:
+		problem = input.CheckStoredLength(s, 0, maxChars)
+	}
+	if problem != "" {
+		return Value{}, problem
 	}
 	return stringValue(s), ""
 }
