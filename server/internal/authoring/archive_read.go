@@ -89,6 +89,13 @@ const (
 	// may name. Each takes an account, in a table of the whole instance, and
 	// a project's comments have far fewer authors.
 	maxImportPeople = 10_000
+	// maxImportedSeq is the greatest operation sequence that a release of an
+	// archive may name, from which the project's own sequence then goes on. A
+	// client reads a seq as a JavaScript number, exact up to 2^53 - 1, and each
+	// batch takes the next, so that a project imported at that limit would pass
+	// it within two edits, after which its editors could no longer tell its
+	// operations apart. This leaves half of that range to the project.
+	maxImportedSeq = 1 << 52
 )
 
 // errDirectoryTooLarge stops the zip reader at maxDirectoryBytes.

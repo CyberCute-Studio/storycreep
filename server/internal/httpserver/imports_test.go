@@ -1131,6 +1131,24 @@ func TestImportHoldsDirectRowsToTheirChecks(t *testing.T) {
 			}
 			resealSection(t, files, "releases/index.json", data, len(list))
 		}, authoring.FailSchemaInvalid, "releases", "schema"},
+		"a release's source sequence that leaves the project no room": {func(files map[string][]byte) {
+			list := items[authoring.Release](t, files, "releases/index.json")
+			list[0].SourceSeq = 1<<53 - 1
+			data, err := json.Marshal(authoring.Items[authoring.Release]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "releases/index.json", data, len(list))
+		}, authoring.FailReleaseInvalid, "", "sequence"},
+		"a release's acknowledged sequence that leaves the project no room": {func(files map[string][]byte) {
+			list := items[authoring.Release](t, files, "releases/index.json")
+			list[0].AcknowledgedSeq = 1<<52 + 1
+			data, err := json.Marshal(authoring.Items[authoring.Release]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "releases/index.json", data, len(list))
+		}, authoring.FailReleaseInvalid, "", "sequence"},
 		"a release listed twice": {func(files map[string][]byte) {
 			list := items[authoring.Release](t, files, "releases/index.json")
 			list = append(list, list[0])

@@ -350,6 +350,11 @@ func readArchived(a *archive) (*archived, error) {
 				Version: rel.Version, Detail: fmt.Sprintf("the index lists %s or %q twice", rel.ID, rel.Path)}
 		}
 		releaseIDs[id], releasePaths[rel.Path] = true, true
+		if seq := max(rel.SourceSeq, rel.AcknowledgedSeq); seq > maxImportedSeq {
+			return nil, &ImportError{Code: FailReleaseInvalid, Version: rel.Version, Check: "sequence",
+				Detail: fmt.Sprintf("its operation sequence %d is past the %d that an import takes", seq,
+					int64(maxImportedSeq))}
+		}
 		if _, err := storedReport(rel.ValidationReport); err != nil {
 			return nil, &ImportError{Code: FailReleaseInvalid, Version: rel.Version, Check: "validation_report",
 				Detail: firstLine(err.Error())}

@@ -243,14 +243,6 @@ function useProjectImport(workspaceId: string, open: boolean) {
         headers: csrfHeaders(session),
       });
     },
-    onSuccess: () => reset(),
-    onError: (error) => {
-      if (notFoundBy(error)) {
-        reset();
-      } else {
-        void current.refetch();
-      }
-    },
   });
 
   // An upload is not left running once the page that shows it has gone.
@@ -279,11 +271,24 @@ function useProjectImport(workspaceId: string, open: boolean) {
     start,
     cancel,
     /**
-     * Cancels the import. Only this call's callback says so, as closing the
-     * dialog resets the mutation, and a response after that announces nothing.
+     * Cancels the import. Only this call's callbacks act on its answer, as
+     * closing the dialog resets the mutation, so that a response after that
+     * neither announces anything nor forgets an upload begun since.
      */
     cancelImport: (importId: string) =>
-      cancel.mutate(importId, { onSuccess: () => setCanceled(true) }),
+      cancel.mutate(importId, {
+        onSuccess: () => {
+          reset();
+          setCanceled(true);
+        },
+        onError: (error) => {
+          if (notFoundBy(error)) {
+            reset();
+          } else {
+            void current.refetch();
+          }
+        },
+      }),
     readError: gone ? current.error : null,
     uploading: start.isPending,
     setRemap,
@@ -296,9 +301,12 @@ function useProjectImport(workspaceId: string, open: boolean) {
     /** Stops the upload, which stays to be resumed, as the dialog closes. */
     closed: () => {
       running.current?.abort();
+      // A cancel still on its way no longer reports back, so the import that
+      // it was of is forgotten here, and read anew as the dialog opens.
+      const canceling = cancel.isPending;
       cancel.reset();
       setCanceled(false);
-      if (item?.status === "ready" || item?.status === "failed") {
+      if (canceling || item?.status === "ready" || item?.status === "failed") {
         reset();
         return;
       }

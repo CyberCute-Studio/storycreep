@@ -434,6 +434,90 @@ describe("the project import's dialog", () => {
     expect(within(again).queryByText(/The import was canceled/)).toBeNull();
   });
 
+  // Verifies: FR-DATA-01/AC4
+  it("leaves an upload begun since alone when a cancel answers late", async () => {
+    let answerCancel: () => void = () => {};
+    const cancelHeld = new Promise<void>((resolve) => {
+      answerCancel = resolve;
+    });
+    let answerChunk: () => void = () => {};
+    const chunkHeld = new Promise<void>((resolve) => {
+      answerChunk = resolve;
+    });
+    const other = importOf(99, [], { file_name: "other.zip" });
+    const begun = importOf(10, [], { id: "job_n" });
+    let creates = 0;
+    let canceled = false;
+    const { call, count } = serve({
+      createProjectImport: () => {
+        creates++;
+        if (creates === 1) {
+          throw refused(409, {
+            code: "import_in_progress",
+            details: { import_id: "job_i" },
+          });
+        }
+        return begun;
+      },
+      getProjectImport: ({ path }) => {
+        if (path?.import_id === "job_n") {
+          return begun;
+        }
+        if (canceled) {
+          throw refused(404, { code: "not_found" });
+        }
+        return other;
+      },
+      cancelProjectImport: async () => {
+        canceled = true;
+        await cancelHeld;
+        return undefined;
+      },
+      putProjectImportChunk: async () => {
+        await chunkHeld;
+        return undefined;
+      },
+      completeProjectImport: () =>
+        importOf(10, [], { id: "job_n", status: "queued", phase: "queued" }),
+    });
+    const dialog = await open();
+    pick(dialog, archive());
+    await startImport(dialog);
+    await within(dialog).findByText(/An upload of other\.zip/);
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Cancel import" }),
+    );
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith(
+        "cancelProjectImport",
+        expect.anything(),
+      ),
+    );
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Close" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // Opened again, it holds no import, and a new upload begins while the
+    // cancel's response is still to come.
+    await userEvent.click(
+      screen.getByRole("button", { name: "Import project" }),
+    );
+    const again = await screen.findByRole("dialog");
+    pick(again, archive());
+    await startImport(again);
+    await waitFor(() => expect(count("putProjectImportChunk")).toBe(1));
+
+    answerCancel();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(within(again).queryByText(/The import was canceled/)).toBeNull();
+    expect(within(again).getByText("Uploading…")).toBeTruthy();
+    expect(
+      within(again).queryByRole("button", { name: "Start import" }),
+    ).toBeNull();
+    answerChunk();
+  });
+
   it("compares a file's name as the server keeps it", () => {
     const mark = String.fromCodePoint(0x200e);
     const nextLine = String.fromCodePoint(0x85);
