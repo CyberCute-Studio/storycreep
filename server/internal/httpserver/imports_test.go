@@ -1137,6 +1137,52 @@ func TestImportTakesCountsFromTheRelease(t *testing.T) {
 	}
 }
 
+// TestImportKeepsThePublishRole checks that a project whose publishing is
+// raised to admin keeps that through an import, which is not a change of its
+// policy, so that the audit log records none.
+//
+// Verifies: FR-DATA-01/AC1, FR-SNAP-01/AC6
+func TestImportKeepsThePublishRole(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	files := exportedArchive(t, f)
+	var p authoring.Project
+	if err := json.Unmarshal(files["draft/project.json"], &p); err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(p.Settings, &settings); err != nil {
+		t.Fatal(err)
+	}
+	settings["publish_min_role"] = "admin"
+	raised, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Settings = authoring.Value(raised)
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resealSection(t, files, "draft/project.json", data, 1)
+	got := mustImport(t, f.s, f.owner, f.ws, zipOf(t, files), authoring.PolicyRemap)
+	imported := projectFrom(t, call(f.s.main, http.MethodGet, projectPath(got.ProjectID), nil, f.owner.header(false)),
+		http.StatusOK)
+	if imported.PublishMinRole != "admin" {
+		t.Errorf("the imported project's publish_min_role is %q, want admin", imported.PublishMinRole)
+	}
+	var changes int
+	if err := f.d.Admin(t).QueryRow(context.Background(), `SELECT count(*) FROM audit_entry
+		WHERE action = 'project.publish_policy_change' AND subject_id = $1`,
+		decode(t, ids.Project, got.ProjectID)).Scan(&changes); err != nil {
+		t.Fatal(err)
+	}
+	if changes != 0 {
+		t.Errorf("the import recorded %d changes of the publish policy", changes)
+	}
+}
+
 // TestImportHoldsRowsToTheirReaders checks that what the API could not read
 // back is the archive's failure: a time past JSON's years in UTC, a report's
 // number past a float64, values of the wrong type, and more assets than the

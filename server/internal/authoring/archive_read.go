@@ -54,7 +54,11 @@ const (
 	// fixture has 2.1 million.
 	maxJSONValues = 16_000_000
 	// maxJSONTotal is the most that the JSON files held in memory at once may
-	// take together: the sections of an archive, or the files of a release.
+	// take together: the manifest and the sections of an archive, which stay
+	// for the whole import, the release that an archive of a release is, and
+	// the files of the one release being read. The large fixture with 30
+	// releases holds 115 MiB of them. It counts the files' bytes: decoding and
+	// checking files at these limits takes the heap to some 3 GiB.
 	maxJSONTotal = 768 << 20
 	// maxRemapIDs is the most IDs that an import takes, of its rows and of what
 	// its releases' files spell, which the collision check asks about and a
@@ -370,8 +374,10 @@ func (a *archive) reserve(held *int64, name, what string) error {
 		return nil
 	}
 	// Against what is left, as a size that the header claims near 2^64 would
-	// wrap a sum back to a small one.
-	if f.UncompressedSize64 > uint64(maxJSONTotal-*held) {
+	// wrap a sum back to a small one. A release that its migration made larger
+	// can have left nothing.
+	left := int64(maxJSONTotal) - *held
+	if left < 0 || f.UncompressedSize64 > uint64(left) {
 		return invalidArchive("size", "%s hold more than the %d bytes that an import reads", what, maxJSONTotal)
 	}
 	*held += int64(f.UncompressedSize64)

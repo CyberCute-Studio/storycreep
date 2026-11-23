@@ -1302,7 +1302,7 @@
   "project_import.failure.schema_invalid": "The archive does not match its format's schema.",
   "project_import.failure.section_unsupported": "The archive holds a section that this server cannot import.",
   "project_import.failure.unknown": "The import failed.",
-  "project_import.failure.workspace_limit": "The workspace has as many projects as it may have.",
+  "project_import.failure.workspace_limit": "The workspace has no room for this project under its limit of projects or of storage.",
   "project_import.failure_check": "The check that failed: {check}.",
   "project_import.failure_detail": "Details for a support request: {detail}",
   "project_import.failure_release": "Release {version} failed {check, select, hashes {the check of its file hashes} content_hash {the check of its content hash} schema {the check against its schema} references_and_asts {the check of its references and expressions} ast_version {the check of its expressions' version} other {the check {check}}}.",

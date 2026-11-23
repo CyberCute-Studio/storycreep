@@ -54,6 +54,10 @@ type archived struct {
 	// releasePaths are the directories of the releases' files in the archive,
 	// by the releases' places in the index, which a remap leaves as they are.
 	releasePaths []string
+	// held is the bytes of the JSON files that stay in memory for the whole
+	// import, the manifest, the sections, and sourceFiles, which the files of a
+	// release being read count on top of, within maxJSONTotal.
+	held int64
 }
 
 // fileSchemas are the compiled schemas of the format's JSON files, by their
@@ -146,13 +150,12 @@ func readArchived(a *archive) (*archived, error) {
 	if err := checkSchema(ManifestPath, "manifest", data); err != nil {
 		return nil, err
 	}
-	c := &archived{raw: map[string][]byte{}}
+	c := &archived{raw: map[string][]byte{}, held: int64(len(data))}
 	if err := json.Unmarshal(data, &c.manifest); err != nil {
 		return nil, &ImportError{Code: FailSchemaInvalid, Section: "manifest", Check: "json", Detail: err.Error()}
 	}
 	known := map[string]bool{ManifestPath: true, ReadmePath: true}
 	seen := map[string]bool{}
-	held := int64(len(data))
 	for _, entry := range c.manifest.Sections {
 		if seen[entry.Name] {
 			return nil, &ImportError{Code: FailSchemaInvalid, Section: entry.Name, Check: "duplicate"}
@@ -175,7 +178,7 @@ func readArchived(a *archive) (*archived, error) {
 			return nil, &ImportError{Code: FailSchemaInvalid, Section: entry.Name, Check: "source",
 				Detail: "only an archive of a draft holds the section"}
 		}
-		if err := a.reserve(&held, sec.Path, "its sections"); err != nil {
+		if err := a.reserve(&c.held, sec.Path, "its sections"); err != nil {
 			return nil, err
 		}
 		file, err := a.readJSON(sec.Path)
@@ -671,7 +674,7 @@ func (c *archived) remap(table map[ids.UUID]ids.UUID) error {
 	}
 	c.manifest.Project.ID = ids.Encode(ids.Project, table[project])
 	raw := c.raw
-	fresh := &archived{manifest: c.manifest, raw: map[string][]byte{}, releasePaths: c.releasePaths}
+	fresh := &archived{manifest: c.manifest, raw: map[string][]byte{}, releasePaths: c.releasePaths, held: c.held}
 	for name, data := range raw {
 		sec, ok := sectionNamed(name)
 		if !ok || sec.store == nil {

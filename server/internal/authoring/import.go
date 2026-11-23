@@ -1011,12 +1011,12 @@ func (s *Service) progress(ctx context.Context, run importRun, phase string, don
 }
 
 // releaseFiles returns the files of the archive under dir, by their paths
-// below it, which are held in memory together, within maxJSONTotal.
-func releaseFiles(a *archive, dir string) (schemaversion.Files, error) {
+// below it, which are held in memory together, and on top of the held bytes
+// that the import holds already, within maxJSONTotal.
+func releaseFiles(a *archive, dir string, held int64) (schemaversion.Files, error) {
 	names := a.under(dir)
 	files := make(schemaversion.Files, len(names))
-	what := fmt.Sprintf("the files of %q", dir)
-	var held int64
+	what := fmt.Sprintf("its sections and the files of %q", dir)
 	for _, name := range names {
 		path := strings.TrimPrefix(name, dir)
 		if err := a.reserve(&held, name, what); err != nil {
@@ -1239,7 +1239,7 @@ func (s *Service) importArchive(ctx context.Context, run importRun, r io.ReaderA
 				c.manifest.PublishedSchemaVersion, supported.Max)}
 	}
 	if c.manifest.Source.Kind == "release" {
-		files, err := releaseFiles(a, "release/")
+		files, err := releaseFiles(a, "release/", c.held)
 		if err != nil {
 			return err
 		}
@@ -1256,6 +1256,9 @@ func (s *Service) importArchive(ctx context.Context, run importRun, r io.ReaderA
 			return err
 		}
 		c.sourceFiles = current
+		for _, data := range current {
+			c.held += int64(len(data))
+		}
 		if err := c.buildFromRelease(current); err != nil {
 			return err
 		}
@@ -1269,7 +1272,7 @@ func (s *Service) importArchive(ctx context.Context, run importRun, r io.ReaderA
 	total := int64(len(c.releases))
 	for i, rel := range c.releases {
 		s.progress(ctx, run, "verifying", int64(i), total)
-		files, err := releaseFiles(a, c.releasePaths[i])
+		files, err := releaseFiles(a, c.releasePaths[i], c.held)
 		if err != nil {
 			return err
 		}
@@ -1526,7 +1529,7 @@ func (s *Service) writeImport(ctx context.Context, run importRun, a *archive, c 
 		}
 		maxSeq := int64(0)
 		for i, rel := range c.releases {
-			stored, err := releaseFiles(a, c.releasePaths[i])
+			stored, err := releaseFiles(a, c.releasePaths[i], c.held)
 			if err != nil {
 				return err
 			}

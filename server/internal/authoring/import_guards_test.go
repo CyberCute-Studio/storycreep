@@ -142,10 +142,25 @@ func TestJSONTotalHoldsBeforeARead(t *testing.T) {
 		}
 		return out
 	}
-	_, err := releaseFiles(archiveOf("", "releases/one/manifest.json", maxJSONTotal+1), "releases/one/")
+	_, err := releaseFiles(archiveOf("", "releases/one/manifest.json", maxJSONTotal+1), "releases/one/", 0)
 	wantRefused(t, err, "size")
 	if err == nil || !strings.Contains(err.Error(), "the files of") {
 		t.Errorf("the error is %v, want the refusal of the release's files by their total", err)
+	}
+	// The sections stay in memory as a release is read, so that the two share
+	// the limit, and what a migration added can have used all of it.
+	_, err = releaseFiles(archiveOf("", "releases/one/manifest.json", maxJSONTotal-maxJSONMember+1), "releases/one/",
+		maxJSONMember)
+	wantRefused(t, err, "size")
+	over := int64(maxJSONTotal + 1)
+	wantRefused(t, a.reserve(&over, "c.json", "its files"), "size")
+	small := zipped(t, [2]string{"releases/one/manifest.json", "{}"})
+	fits, err := openArchive(bytes.NewReader(small), int64(len(small)), 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := releaseFiles(fits, "releases/one/", maxJSONTotal-2); err != nil {
+		t.Errorf("a release that just fits beside the sections: %v", err)
 	}
 	entry := ManifestSection{Name: "project", Path: "draft/project.json", Items: 1, SHA256: sha256Hex([]byte("{}"))}
 	_, err = readArchived(archiveOf(manifestOf(t, entry), entry.Path, maxJSONTotal))
@@ -192,6 +207,23 @@ func TestFreshIDsKeepTheirOrder(t *testing.T) {
 	}
 }
 
+// TestRemapKeepsWhatIsHeld checks that a remap keeps the count of the JSON files
+// that the import holds, which a release read after it counts on top of.
+//
+// Verifies: NFR-SEC-13
+func TestRemapKeepsWhatIsHeld(t *testing.T) {
+	t.Parallel()
+	from, to := ids.New(), ids.New()
+	c := &archived{manifest: Manifest{Project: ManifestProject{ID: ids.Encode(ids.Project, from)}},
+		raw: map[string][]byte{"folders": []byte(`{"items":[]}`)}, held: 7}
+	if err := c.remap(map[ids.UUID]ids.UUID{from: to}); err != nil {
+		t.Fatal(err)
+	}
+	if c.held != 7 {
+		t.Errorf("after a remap %d bytes are held, want 7", c.held)
+	}
+}
+
 // TestRemapHoldsWhatOnlyAReleaseHolds checks that an ID that a release's files
 // hold and the draft no longer does takes a fresh ID too, or it would sort
 // apart from the fresh IDs around it.
@@ -206,7 +238,7 @@ func TestRemapHoldsWhatOnlyAReleaseHolds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files, err := releaseFiles(a, "releases/one/")
+	files, err := releaseFiles(a, "releases/one/", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

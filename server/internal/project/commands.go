@@ -471,7 +471,9 @@ func applySettings(ctx context.Context, tx *commands.Tx, p SettingsPayload) erro
 		ID: nullUUID(tx.ProjectID())})); err != nil {
 		return err
 	}
-	if set.PublishMinRole == previous.PublishMinRole {
+	// An import gives a new project the role that its archive holds, which is
+	// no change of its policy: its audit entry is project.import.
+	if set.PublishMinRole == previous.PublishMinRole || tx.Populating() {
 		return nil
 	}
 	return tx.Audit(ctx, audit.Entry{Action: audit.ActionProjectPublishPolicyChange, SubjectID: tx.ProjectID(),
