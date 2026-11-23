@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/asset"
+	"github.com/CyberCute-Studio/storycreep/server/internal/audit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/comment"
@@ -33,6 +35,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
+	"github.com/CyberCute-Studio/storycreep/server/internal/logging"
 	"github.com/CyberCute-Studio/storycreep/server/internal/playstate"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
@@ -541,7 +544,12 @@ func (s *Service) CompleteImport(ctx context.Context, actor commands.Actor, work
 			}
 			return &ImportStateError{Status: now.Status}
 		}
-		args := importArgs{WorkspaceID: workspaceID.String(), ImportID: id.String()}
+		args := importArgs{WorkspaceID: workspaceID.String(), ImportID: id.String(),
+			UserAgent: audit.ClientText(actor.Client.UserAgent, audit.MaxUserAgentBytes),
+			RequestID: audit.ClientText(logging.RequestID(ctx), 0)}
+		if actor.Client.IP.IsValid() {
+			args.IP = actor.Client.IP.WithZone("").String()
+		}
 		if _, err := s.queue.Enqueue(ctx, tx, importRunJob(args), &jobs.EnqueueOptions{
 			MaxAttempts: buildAttempts + failAttempts}); err != nil {
 			return fmt.Errorf("authoring: enqueue the import: %w", err)
@@ -621,6 +629,22 @@ func (s *Service) dropChunks(ctx context.Context, keys []string) {
 type importArgs struct {
 	WorkspaceID string `json:"workspace_id"`
 	ImportID    string `json:"import_id"`
+	// IP, UserAgent, and RequestID are of the request that handed the upload
+	// to the job, which the import's audit entry records (FR-TEN-07), as the
+	// job that writes that entry has no request.
+	IP        string `json:"ip,omitempty"`
+	UserAgent string `json:"user_agent,omitempty"`
+	RequestID string `json:"request_id,omitempty"`
+}
+
+// client returns the client of the request that the arguments record, whose
+// address is the zero one if they hold none.
+func (a importArgs) client() audit.Client {
+	addr, err := netip.ParseAddr(a.IP)
+	if err != nil {
+		addr = netip.Addr{}
+	}
+	return audit.Client{IP: addr, UserAgent: a.UserAgent}
 }
 
 // importRunJob imports an uploaded archive (FR-JOBS-01). Its jobs run one at a
@@ -659,7 +683,8 @@ func (s *Service) registerImportJobs(r *jobs.Registry) {
 			}
 			return svc.failImport(ctx, ws, id, why)
 		}
-		err = svc.RunImport(ctx, ws, id)
+		args := importArgs(job.Args)
+		err = svc.RunImport(logging.WithRequestID(ctx, args.RequestID), ws, id, args.client())
 		if refused, ok := isRefusal(err); ok {
 			return svc.failImport(ctx, ws, id, refused)
 		}
@@ -791,11 +816,12 @@ func (s *Service) ExpireImport(ctx context.Context, ws, id ids.UUID) error {
 }
 
 // RunImport imports the uploaded archive of the import id, unless it has
-// ended. It is safe to repeat: everything that it writes of the project, and
-// the import's end, commit in one transaction, so that an attempt that a crash
-// cut off leaves nothing, and one that follows a commit finds the import ended.
-// An archive that is refused returns an *ImportError, which the job records.
-func (s *Service) RunImport(ctx context.Context, ws, id ids.UUID) error {
+// ended, for the client that asked for it, whom its audit entry names. It is
+// safe to repeat: everything that it writes of the project, and the import's
+// end, commit in one transaction, so that an attempt that a crash cut off
+// leaves nothing, and one that follows a commit finds the import ended. An
+// archive that is refused returns an *ImportError, which the job records.
+func (s *Service) RunImport(ctx context.Context, ws, id ids.UUID, client audit.Client) error {
 	var row queries.ProjectImport
 	var chunks []queries.ProjectImportChunksRow
 	started := false
@@ -843,7 +869,8 @@ func (s *Service) RunImport(ctx context.Context, ws, id ids.UUID) error {
 		keys[i] = c.StorageKey
 	}
 	r := newChunkReader(ctx, store, keys, int64(row.ChunkBytes), row.SizeBytes)
-	run := importRun{workspace: ws, importID: id, user: row.RequestedBy.Bytes, remap: row.IDPolicy == PolicyRemap}
+	run := importRun{workspace: ws, importID: id, user: row.RequestedBy.Bytes, remap: row.IDPolicy == PolicyRemap,
+		client: commands.Actor{Client: client}}
 	if err := s.importArchive(ctx, run, r, row.SizeBytes); err != nil {
 		return err
 	}

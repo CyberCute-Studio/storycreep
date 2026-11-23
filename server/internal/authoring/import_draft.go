@@ -401,13 +401,21 @@ func applyDraft(ctx context.Context, t *commands.Tx, c *archived) error {
 			return err
 		}
 	}
-	for _, o := range c.outputs {
-		payload := node.CreateOutputPayload{ID: o.ID, NodeID: o.NodeID, Else: o.Kind == "else", Order: o.Order}
-		if !payload.Else {
-			payload.Condition = take(o.ID, expression.Condition)
-		}
-		if err := p.apply("branch_outputs", o.ID, node.CreateOutput, payload); err != nil {
-			return err
+	// Each else after the conditional outputs, which it needs one of: an
+	// archive lists outputs by ID, and an else can be older than all that its
+	// branch has left.
+	for _, elses := range []bool{false, true} {
+		for _, o := range c.outputs {
+			if (o.Kind == node.OutputElse) != elses {
+				continue
+			}
+			payload := node.CreateOutputPayload{ID: o.ID, NodeID: o.NodeID, Else: elses, Order: o.Order}
+			if !elses {
+				payload.Condition = take(o.ID, expression.Condition)
+			}
+			if err := p.apply("branch_outputs", o.ID, node.CreateOutput, payload); err != nil {
+				return err
+			}
 		}
 	}
 	for _, cn := range c.connections {

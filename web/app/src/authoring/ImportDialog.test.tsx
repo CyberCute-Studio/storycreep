@@ -531,6 +531,39 @@ describe("the project import's dialog", () => {
     await within(again).findByRole("button", { name: "Resume upload" });
   });
 
+  // Verifies: FR-DATA-01/AC4
+  it("keeps the failure of a job that it picked up, once it opens again", async () => {
+    const importing = importOf(10, [], {
+      status: "importing",
+      phase: "checking",
+    });
+    const failed = importOf(10, [], {
+      status: "failed",
+      phase: "done",
+      failure: { code: "section_unsupported", section: "annotations" },
+    });
+    let ended = false;
+    serve({
+      listProjectImports: () => ({
+        items: [ended ? failed : importing],
+        next_cursor: null,
+      }),
+      getProjectImport: () => (ended ? failed : importing),
+    });
+    const dialog = await open();
+    await within(dialog).findByText(/harbour\.zip/);
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Close" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    ended = true;
+    await userEvent.click(
+      screen.getByRole("button", { name: "Import project" }),
+    );
+    const again = await screen.findByRole("dialog");
+    await within(again).findByText(/annotations/, undefined, { timeout: 3000 });
+  });
+
   it("says when it is too late to cancel, and follows the import on", async () => {
     let reads = 0;
     const { call } = serve({

@@ -1398,3 +1398,73 @@ func TestImportTakesNoAccountForADeletedAuthor(t *testing.T) {
 		t.Errorf("the deleted comment's author took %d imported identities", named)
 	}
 }
+
+// TestImportAuditsItsClient checks that the audit entry of an import that a job
+// writes names the client, and the request, that handed the upload to the job.
+//
+// Verifies: FR-TEN-07/AC2
+func TestImportAuditsItsClient(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	data := zipOf(t, exportedArchive(t, f))
+	i := beginImport(t, f.s.main, f.owner, f.ws, len(data), "")
+	putChunks(t, f.s.main, f.owner, f.ws, i, data)
+	res := send(f.s.main, http.MethodPost, importsPath(f.ws)+"/"+i.ID+"/complete", nil, "", with(f.owner.header(true),
+		http.Header{"User-Agent": {"Importer/1.0"}, http.CanonicalHeaderKey(requestIDHeader): {"import-audit"}}))
+	if res.status != http.StatusAccepted {
+		t.Fatalf("complete the import: %d %s", res.status, res.body)
+	}
+	var got ProjectImportBody
+	for deadline := time.Now().Add(60 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		got = readImport(t, f.s.main, f.owner, f.ws, i.ID)
+		if got.Status == authoring.ImportReady {
+			break
+		}
+		if got.Status == authoring.ImportFailed || time.Now().After(deadline) {
+			t.Fatalf("the import ended as %+v", got)
+		}
+	}
+	var ok bool
+	if err := f.d.Admin(t).QueryRow(t.Context(), `
+		SELECT host(ip) = '192.0.2.1' AND user_agent = 'Importer/1.0' AND request_id = 'import-audit'
+		FROM audit_entry WHERE action = 'project.import' AND subject_id = $1`,
+		decode(t, ids.Project, got.ProjectID)).Scan(&ok); err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Error("the import's audit entry does not name the client that asked for it")
+	}
+}
+
+// TestImportTakesAnElseOlderThanItsOutputs checks a branch whose else has a
+// lower ID than every conditional output that it has left, as one has once the
+// output that its else was added after is deleted. An archive lists outputs by
+// ID, and an else needs a conditional output to come after.
+//
+// Verifies: FR-DATA-01/AC1
+func TestImportTakesAnElseOlderThanItsOutputs(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	branch := createNode(t, f.s.main, f.owner, f.project, f.board, "branch", nil)
+	made := []ids.UUID{ids.New(), ids.New(), ids.New()}
+	slices.SortFunc(made, func(a, b ids.UUID) int { return bytes.Compare(a[:], b[:]) })
+	first, otherwise, second := ids.Encode(ids.BranchOutput, made[0]), ids.Encode(ids.BranchOutput, made[1]),
+		ids.Encode(ids.BranchOutput, made[2])
+	sendBatch(t, f.s.main, f.owner, f.project,
+		wireCommand{Type: "branch_output.create", Payload: map[string]any{"id": first, "node_id": branch,
+			"condition": "true", "order": "T"}},
+		wireCommand{Type: "branch_output.create", Payload: map[string]any{"id": otherwise, "node_id": branch,
+			"else": true}},
+		wireCommand{Type: "branch_output.create", Payload: map[string]any{"id": second, "node_id": branch,
+			"condition": "false", "order": "U"}},
+		wireCommand{Type: "branch_output.delete", Payload: map[string]any{"id": first}})
+	before := exportedArchive(t, f)
+	got := mustImport(t, f.s, f.owner, f.ws, zipOf(t, before), "")
+	after := exportOf(t, f.s, f.owner, got.ProjectID)
+	const path = "draft/branch_outputs.json"
+	if a, b := semantics(t, before[path]), semantics(t, after[path]); !slices.Equal(a, b) {
+		t.Errorf("the branch's outputs changed:\nbefore %v\nafter  %v", a, b)
+	}
+}

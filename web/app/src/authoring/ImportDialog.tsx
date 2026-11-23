@@ -144,6 +144,16 @@ function useProjectImport(workspaceId: string, open: boolean) {
     newest.data !== null && onItsWay(newest.data) ? newest.data : undefined;
   const id = followed ?? newestOnItsWay?.id;
 
+  // An import with its job is followed to its end from here on: the newest
+  // import, read again as the dialog opens, is then no longer on its way, and
+  // would leave the form without its report or its failure.
+  const pickedUp = withJob(newestOnItsWay) ? newestOnItsWay?.id : undefined;
+  useEffect(() => {
+    if (pickedUp !== undefined) {
+      setFollowed((now) => now ?? pickedUp);
+    }
+  }, [pickedUp]);
+
   const start = useMutation({
     mutationFn: async ({
       chosen,
