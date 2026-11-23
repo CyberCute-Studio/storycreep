@@ -1505,9 +1505,6 @@ func (w importWriter) comments(ctx context.Context, list []Comment) error {
 				p.VariableID = target
 			}
 		}
-		if p.ThreadID, err = optional(ids.Comment, x.ThreadID); err != nil {
-			return fail(x.ID, "thread", err.Error())
-		}
 		p.ThreadAt = pgtype.Timestamptz{Time: root.CreatedAt, Valid: true}
 		if x.Deleted {
 			p.Body = emptyBody

@@ -227,10 +227,10 @@ func (q *Queries) InsertImportedAccount(ctx context.Context, arg InsertImportedA
 }
 
 const insertImportedComment = `-- name: InsertImportedComment :exec
-INSERT INTO comment (id, workspace_id, project_id, parent_id, thread_id, thread_at, node_id, connection_id, board_id,
+INSERT INTO comment (id, workspace_id, project_id, parent_id, thread_at, node_id, connection_id, board_id,
     variable_id, body, resolved_at, resolved_by, edited_at, deleted_at, created_by, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
-    $10, $11, $12, $13, $14, $15, $16, $17, $17)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+    $9, $10, $11, $12, $13, $14, $15, $16, $16)
 `
 
 type InsertImportedCommentParams struct {
@@ -238,7 +238,6 @@ type InsertImportedCommentParams struct {
 	WorkspaceID  pgtype.UUID
 	ProjectID    pgtype.UUID
 	ParentID     pgtype.UUID
-	ThreadID     pgtype.UUID
 	ThreadAt     pgtype.Timestamptz
 	NodeID       pgtype.UUID
 	ConnectionID pgtype.UUID
@@ -261,7 +260,6 @@ func (q *Queries) InsertImportedComment(ctx context.Context, arg InsertImportedC
 		arg.WorkspaceID,
 		arg.ProjectID,
 		arg.ParentID,
-		arg.ThreadID,
 		arg.ThreadAt,
 		arg.NodeID,
 		arg.ConnectionID,

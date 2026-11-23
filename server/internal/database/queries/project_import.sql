@@ -130,9 +130,9 @@ VALUES (@workspace_id, @source_user_id, @display_name, @user_id);
 -- name: InsertImportedComment :exec
 -- InsertImportedComment adds a comment of an imported archive as it was, with
 -- who wrote it and when. Its thread's first comment comes first.
-INSERT INTO comment (id, workspace_id, project_id, parent_id, thread_id, thread_at, node_id, connection_id, board_id,
+INSERT INTO comment (id, workspace_id, project_id, parent_id, thread_at, node_id, connection_id, board_id,
     variable_id, body, resolved_at, resolved_by, edited_at, deleted_at, created_by, created_at, updated_at)
-VALUES (@id, @workspace_id, @project_id, @parent_id, @thread_id, @thread_at, @node_id, @connection_id, @board_id,
+VALUES (@id, @workspace_id, @project_id, @parent_id, @thread_at, @node_id, @connection_id, @board_id,
     @variable_id, @body, @resolved_at, @resolved_by, @edited_at, @deleted_at, @created_by, @created_at, @created_at);
 
 -- name: InsertImportedPlayState :exec
