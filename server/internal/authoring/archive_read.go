@@ -15,6 +15,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/blob"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/jsonscan"
 )
 
 // The guards of reading an archive (PRD NFR-SEC-13), which hold whatever its
@@ -46,21 +47,31 @@ const (
 	// maxJSONMember is the largest JSON file of an archive, which is read into
 	// memory whole. The largest is the index of the releases, which holds each
 	// one's validation report: 89 MB for the large fixture with 30 releases,
-	// so that this takes some 85 releases of a project of that size. An archive
+	// so that this takes some 65 releases of a project of that size. An archive
 	// past it can leave the release history out, which the export offers.
-	maxJSONMember = 256 << 20
-	// maxJSONValues is the most values that a JSON file may hold, past which
-	// the tree that checking it against its schema builds would take many
-	// times the file's size, at some 31 bytes a value. That index of the large
-	// fixture has 2.1 million.
-	maxJSONValues = 8_000_000
+	maxJSONMember = 192 << 20
+	// maxJSONValues is the most values that a JSON file may hold, each of which
+	// decoding it takes memory for. That index of the large fixture has 2.1
+	// million.
+	maxJSONValues = 5_000_000
 	// maxJSONTotal is the most that the JSON files held in memory at once may
 	// take together: the manifest and the sections of an archive, which stay
 	// for the whole import, the release that an archive of a release is, and
 	// the files of the one release being read. The large fixture with 30
-	// releases holds 115 MiB of them. It counts the files' bytes: decoding and
-	// checking files at these limits takes the heap to some 3 GiB.
-	maxJSONTotal = 384 << 20
+	// releases holds 115 MiB of them. It counts the files' bytes: at these
+	// limits the heap measured at most 1.4 GiB above what it held before, for a
+	// valid archive of the most IDs as it is remapped, and less for one that
+	// fails its schema, whose check stops at the first failure.
+	maxJSONTotal = 256 << 20
+	// maxItemBytes and maxItemValues hold one item of a section, before its
+	// tree is built (checkItems). The largest item of the large fixture, a
+	// release of the index, has 3 MB and 70,000 values.
+	maxItemBytes  = 32 << 20
+	maxItemValues = 1_000_000
+	// maxPlainJSON is the most that the manifest or the project may take, the
+	// two files that are not lists and so are validated whole, which
+	// maxItemValues holds too.
+	maxPlainJSON = 16 << 20
 	// maxRemapIDs is the most IDs that an import takes, of its rows and of what
 	// its releases' files spell, which the collision check asks about and a
 	// remap gives fresh ones, each of which its tables hold, at some 100 bytes
@@ -385,47 +396,19 @@ func (a *archive) reserve(held *int64, name, what string) error {
 	return nil
 }
 
-// readJSON returns the JSON file of the path, whole, once it is within the
-// guards of a JSON file, so that the tree that a parser builds of it is bounded
+// readJSON returns the JSON file of the path, whole, once it is within limit
+// bytes and values JSON values, so that what a parser builds of it is bounded
 // whatever the file's size says of it.
-func (a *archive) readJSON(name string) ([]byte, error) {
-	data, err := a.read(name, maxJSONMember)
+func (a *archive) readJSON(name string, limit int64, values int) ([]byte, error) {
+	data, err := a.read(name, limit)
 	if err != nil {
 		return nil, err
 	}
-	if n := jsonValues(data); n > maxJSONValues {
+	if n := jsonscan.Values(data); n > values {
 		return nil, invalidArchive("json_values", "the member %q holds %d JSON values, more than the %d that it may",
-			name, n, maxJSONValues)
+			name, n, values)
 	}
 	return data, nil
-}
-
-// jsonValues counts the values that a parser would hold of the JSON document
-// data: the document, each object and array, and each item after a comma. It
-// allocates nothing, and reads a document that is not valid as far as it can,
-// which the parser then refuses.
-func jsonValues(data []byte) int {
-	n := 1
-	inString := false
-	for i := 0; i < len(data); i++ {
-		c := data[i]
-		if inString {
-			switch c {
-			case '\\':
-				i++
-			case '"':
-				inString = false
-			}
-			continue
-		}
-		switch c {
-		case '"':
-			inString = true
-		case '{', '[', ',':
-			n++
-		}
-	}
-	return n
 }
 
 // memberError is the failure of reading a member: the store's own error, as a

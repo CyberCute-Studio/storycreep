@@ -52,6 +52,9 @@ type Section struct {
 	// section that this server declares and cannot import, whose presence in
 	// an archive refuses it, naming the section (FR-DATA-01 AC12).
 	store func(*archived, []byte) error
+	// list says that its file is an Items[T], which an import validates one
+	// item at a time (checkItems).
+	list bool
 }
 
 // holds says whether an archive of the export row holds the section.
@@ -64,6 +67,7 @@ func (s Section) holds(row queries.AuthoringExport) bool {
 func section[T any](s Section, read func(context.Context, *reading) ([]T, error),
 	store func(*archived, []T) error) Section {
 	s.root = reflect.TypeFor[Items[T]]()
+	s.list = true
 	s.store = func(c *archived, data []byte) error {
 		var f Items[T]
 		if err := json.Unmarshal(data, &f); err != nil {

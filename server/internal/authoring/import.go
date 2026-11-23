@@ -1025,7 +1025,7 @@ func releaseFiles(a *archive, dir string, held int64) (schemaversion.Files, erro
 		var data []byte
 		var err error
 		if schemaversion.IsJSON(path) {
-			data, err = a.readJSON(name)
+			data, err = a.readJSON(name, maxJSONMember, maxJSONValues)
 		} else {
 			data, err = a.read(name, maxJSONMember)
 		}
@@ -1186,13 +1186,22 @@ func manifestFacts(files schemaversion.Files) (map[string]string, string, error)
 // manifestCounts returns the entity counts of a release's verified manifest, as
 // its build stores them, so that its row cannot say other than its files.
 func manifestCounts(files schemaversion.Files) ([]byte, error) {
-	var m struct {
-		Counts json.RawMessage `json:"counts"`
-	}
+	// By their exact keys, as the schema and the runtime read them: a struct
+	// would also take COUNTS, which they ignore as a key they do not know.
+	var m map[string]json.RawMessage
 	if err := json.Unmarshal(files[published.ManifestPath], &m); err != nil {
 		return nil, fmt.Errorf("its manifest: %w", err)
 	}
-	return storedCounts(m.Counts)
+	var counts map[string]json.RawMessage
+	if err := json.Unmarshal(m["counts"], &counts); err != nil {
+		return nil, fmt.Errorf("its manifest's counts: %w", err)
+	}
+	maps.DeleteFunc(counts, func(key string, _ json.RawMessage) bool { return key != strings.ToLower(key) })
+	exact, err := json.Marshal(counts)
+	if err != nil {
+		return nil, fmt.Errorf("its manifest's counts: %w", err)
+	}
+	return storedCounts(exact)
 }
 
 // atTypesVersion returns the files at the version of package published's

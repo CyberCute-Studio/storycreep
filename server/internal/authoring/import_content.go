@@ -18,7 +18,9 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/jsonscan"
 	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
+	"github.com/CyberCute-Studio/storycreep/server/internal/schemacheck"
 	"github.com/CyberCute-Studio/storycreep/server/internal/schemaversion"
 	"github.com/CyberCute-Studio/storycreep/server/internal/snapshot"
 	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
@@ -60,9 +62,19 @@ type archived struct {
 	held int64
 }
 
-// fileSchemas are the compiled schemas of the format's JSON files, by their
+// archiveSchemas are the compiled schemas of the format's JSON files, by their
 // paths in an archive.
-var fileSchemas = sync.OnceValues(func() (map[string]*jsonschema.Schema, error) {
+type archiveSchemas struct {
+	// whole are the schemas of the files that are not lists of items, the
+	// manifest and the project, which are validated whole.
+	whole map[string]*jsonschema.Schema
+	// items are the schemas of one item of each section that is a list, as
+	// its file is validated an item at a time (checkItems).
+	items map[string]*jsonschema.Schema
+}
+
+// fileSchemas compiles the schemas of the format's JSON files once.
+var fileSchemas = sync.OnceValues(func() (*archiveSchemas, error) {
 	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(Schema()))
 	if err != nil {
 		return nil, fmt.Errorf("authoring: read the format's schema: %w", err)
@@ -72,29 +84,51 @@ var fileSchemas = sync.OnceValues(func() (map[string]*jsonschema.Schema, error) 
 	if err := c.AddResource(SchemaID, doc); err != nil {
 		return nil, fmt.Errorf("authoring: load the format's schema: %w", err)
 	}
-	out := map[string]*jsonschema.Schema{}
-	paths := []string{ManifestPath}
-	for _, s := range sections {
-		paths = append(paths, s.Path)
-	}
-	for _, p := range paths {
+	compile := func(p string) (*jsonschema.Schema, error) {
 		sch, err := c.Compile(SchemaID + "#/properties/" + strings.ReplaceAll(p, "/", "~1"))
 		if err != nil {
 			return nil, fmt.Errorf("authoring: compile the schema of %s: %w", p, err)
 		}
-		out[p] = sch
+		return sch, nil
 	}
+	out := &archiveSchemas{whole: map[string]*jsonschema.Schema{}, items: map[string]*jsonschema.Schema{}}
+	if out.whole[ManifestPath], err = compile(ManifestPath); err != nil {
+		return nil, err
+	}
+	for _, s := range sections {
+		sch, err := compile(s.Path)
+		if err != nil {
+			return nil, err
+		}
+		if !s.list {
+			out.whole[s.Path] = sch
+			continue
+		}
+		// The file's schema is a reference to its Items[T], whose one property
+		// is the array of the items.
+		if sch.Ref == nil || sch.Ref.Properties["items"] == nil || sch.Ref.Properties["items"].Items2020 == nil {
+			return nil, fmt.Errorf("authoring: the schema of %s is not of a list of items", s.Path)
+		}
+		out.items[s.Path] = sch.Ref.Properties["items"].Items2020
+	}
+	schemacheck.FailFast("", slices.Concat(slices.Collect(maps.Values(out.whole)),
+		slices.Collect(maps.Values(out.items)))...)
 	return out, nil
 })
 
 // checkSchema validates a JSON file of the archive against its schema
-// (NFR-SEC-13), before anything of it is read.
+// (NFR-SEC-13), before anything of it is read: a section that is a list an
+// item at a time (checkItems), and any other file whole, which its read has
+// held to maxPlainJSON and maxItemValues.
 func checkSchema(path, section string, data []byte) error {
 	schemas, err := fileSchemas()
 	if err != nil {
 		return err
 	}
-	sch, ok := schemas[path]
+	if item, ok := schemas.items[path]; ok {
+		return checkItems(item, section, data)
+	}
+	sch, ok := schemas.whole[path]
 	if !ok {
 		return &ImportError{Code: FailSectionUnsupported, Section: section}
 	}
@@ -102,10 +136,81 @@ func checkSchema(path, section string, data []byte) error {
 	if err != nil {
 		return &ImportError{Code: FailSchemaInvalid, Section: section, Check: "json", Detail: err.Error()}
 	}
+	if err := schemacheck.CheckDepth(data); err != nil {
+		return &ImportError{Code: FailArchiveInvalid, Section: section, Check: "json_depth", Detail: err.Error()}
+	}
 	if err := sch.Validate(inst); err != nil {
-		return &ImportError{Code: FailSchemaInvalid, Section: section, Check: "schema", Detail: firstLine(err.Error())}
+		return &ImportError{Code: FailSchemaInvalid, Section: section, Check: "schema", Detail: schemaDetail(err)}
 	}
 	return nil
+}
+
+// checkItems validates the file of a section that is a list, which is an
+// object of the one key "items", an array, against item, the schema of one of
+// them, so that no tree of the whole file is built. Each item's tree lasts as
+// long as its check, is held to maxItemBytes and maxItemValues before it is
+// built, and the first item that fails ends the check.
+func checkItems(item *jsonschema.Schema, section string, data []byte) error {
+	fail := func(check, format string, args ...any) error {
+		return &ImportError{Code: FailSchemaInvalid, Section: section, Check: check,
+			Detail: fmt.Sprintf(format, args...)}
+	}
+	// What follows walks the document by its punctuation, which is sound only
+	// of valid JSON.
+	if !json.Valid(data) {
+		return fail("json", "%v", json.Unmarshal(data, &struct{}{}))
+	}
+	if err := schemacheck.CheckDepth(data); err != nil {
+		return &ImportError{Code: FailArchiveInvalid, Section: section, Check: "json_depth", Detail: err.Error()}
+	}
+	if data[jsonscan.SkipSpace(data, 0)] != '{' {
+		return fail("schema", "the file is not an object")
+	}
+	found := false
+	err := jsonscan.Members(data, func(key, value []byte) error {
+		// Spelled exactly, as a decoder would also take another case of the
+		// key, or an escape of it, and the last of two.
+		if string(key) != `"items"` || found {
+			return fail("schema", `the file's one key is "items"`)
+		}
+		found = true
+		if value[0] != '[' {
+			return fail("schema", `"items" is not an array`)
+		}
+		return jsonscan.Elements(value, func(n int, one []byte) error {
+			if len(one) > maxItemBytes {
+				return &ImportError{Code: FailArchiveInvalid, Section: section, Check: "item_size",
+					Detail: fmt.Sprintf("item %d has %d bytes, more than the %d that an item may", n, len(one),
+						maxItemBytes)}
+			}
+			if values := jsonscan.Values(one); values > maxItemValues {
+				return &ImportError{Code: FailArchiveInvalid, Section: section, Check: "item_values",
+					Detail: fmt.Sprintf("item %d holds %d JSON values, more than the %d that an item may", n, values,
+						maxItemValues)}
+			}
+			inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(one))
+			if err != nil {
+				return fail("json", "item %d: %v", n, err)
+			}
+			if err := item.Validate(inst); err != nil {
+				return fail("schema", "item %d: %s", n, schemaDetail(err))
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fail("schema", `the file has no "items"`)
+	}
+	return nil
+}
+
+// schemaDetail says where the first failure of a validation is, without the
+// message of the whole error, which lists every value that failed.
+func schemaDetail(err error) string {
+	return firstLine(schemacheck.Failure(err))
 }
 
 // firstLine returns the first lines of a validator's message, which can list
@@ -127,7 +232,7 @@ func firstLine(s string) string {
 // import, a file whose hash is not the manifest's or that its schema refuses,
 // and a member that nothing accounts for, all before any row is written.
 func readArchived(a *archive) (*archived, error) {
-	data, err := a.readJSON(ManifestPath)
+	data, err := a.readJSON(ManifestPath, maxPlainJSON, maxItemValues)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +286,12 @@ func readArchived(a *archive) (*archived, error) {
 		if err := a.reserve(&c.held, sec.Path, "its sections"); err != nil {
 			return nil, err
 		}
-		file, err := a.readJSON(sec.Path)
+		// A list is validated an item at a time, and any other file whole.
+		limit, values := int64(maxJSONMember), maxJSONValues
+		if !sec.list {
+			limit, values = maxPlainJSON, maxItemValues
+		}
+		file, err := a.readJSON(sec.Path, limit, values)
 		if err != nil {
 			return nil, err
 		}
@@ -673,14 +783,20 @@ func (c *archived) remap(table map[ids.UUID]ids.UUID) error {
 		return &ImportError{Code: FailContentInvalid, Section: "manifest", Check: "id", Detail: c.manifest.Project.ID}
 	}
 	c.manifest.Project.ID = ids.Encode(ids.Project, table[project])
-	raw := c.raw
-	fresh := &archived{manifest: c.manifest, raw: map[string][]byte{}, releasePaths: c.releasePaths, held: c.held}
+	raw, assets, source := c.raw, c.assets, c.sourceFiles
+	fresh := &archived{manifest: c.manifest, raw: make(map[string][]byte, len(raw)), releasePaths: c.releasePaths,
+		held: c.held}
+	// The rows of the old IDs are not read again, and each file of them goes
+	// once it is rewritten, so that a remap holds about one copy of an
+	// archive's JSON rather than two. A failure below ends the import.
+	*c = archived{manifest: c.manifest, releasePaths: c.releasePaths, held: c.held}
 	for name, data := range raw {
 		sec, ok := sectionNamed(name)
 		if !ok || sec.store == nil {
 			return &ImportError{Code: FailSectionUnsupported, Section: name}
 		}
 		rewritten := rewriteIDs(data, table)
+		delete(raw, name)
 		if err := sec.store(fresh, rewritten); err != nil {
 			return err
 		}
@@ -689,10 +805,10 @@ func (c *archived) remap(table map[ids.UUID]ids.UUID) error {
 	// An asset's path is where the archive holds its file, which a remap does
 	// not move, whatever the path spells.
 	for i := range fresh.assets {
-		fresh.assets[i].Path = c.assets[i].Path
+		fresh.assets[i].Path = assets[i].Path
 	}
-	if c.sourceFiles != nil {
-		files, err := rewriteRelease(c.sourceFiles, table)
+	if source != nil {
+		files, err := rewriteRelease(source, table)
 		if err != nil {
 			return err
 		}

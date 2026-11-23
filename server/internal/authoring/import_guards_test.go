@@ -47,25 +47,12 @@ func TestArchiveDirectoryGuard(t *testing.T) {
 	}
 }
 
-// TestJSONValuesGuard checks how a file's values are counted, that what its
-// strings spell is not, and that a small file of too many is refused before it
-// is parsed.
+// TestJSONValuesGuard checks that a small file of too many values is refused
+// before it is parsed.
 //
 // Verifies: NFR-SEC-13
 func TestJSONValuesGuard(t *testing.T) {
 	t.Parallel()
-	for in, want := range map[string]int{
-		`1`:                  1,
-		`[]`:                 2,
-		`[1,2,3]`:            4,
-		`{"a":1,"b":[{}]}`:   5,
-		`"[,{,]"`:            1,
-		`["a\",b",{"c,":1}]`: 4,
-	} {
-		if got := jsonValues([]byte(in)); got != want {
-			t.Errorf("jsonValues(%s) = %d, want %d", in, got, want)
-		}
-	}
 	var b bytes.Buffer
 	w := zip.NewWriter(&b)
 	f, err := w.CreateHeader(&zip.FileHeader{Name: "a.json", Method: zip.Store})
@@ -83,7 +70,7 @@ func TestJSONValuesGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = a.readJSON("a.json")
+	_, err = a.readJSON("a.json", maxJSONMember, maxJSONValues)
 	wantRefused(t, err, "json_values")
 }
 
