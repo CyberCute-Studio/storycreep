@@ -86,6 +86,9 @@ type ImportError struct {
 	Check string `json:"check,omitempty"`
 	// Detail says more, in English, for a log or a support request.
 	Detail string `json:"detail,omitempty"`
+	// unique marks a row that a unique constraint refused, which a row that
+	// came after the collision check may be the reason for.
+	unique bool
 }
 
 func (e *ImportError) Error() string {
@@ -108,6 +111,24 @@ func invalidArchive(check, format string, args ...any) *ImportError {
 // archive is an opened archive, whose members have passed the guards.
 type archive struct {
 	files map[string]*zip.File
+	// source counts what is read of the file, which is what a member's
+	// expansion is measured against, as its header's compressed size is the
+	// archive's own word.
+	source *countingReaderAt
+}
+
+// countingReaderAt counts the bytes read through it. Like chunkReader, it is
+// not safe to call from several goroutines.
+type countingReaderAt struct {
+	r io.ReaderAt
+	n uint64
+}
+
+// ReadAt implements io.ReaderAt.
+func (c *countingReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	n, err := c.r.ReadAt(p, off)
+	c.n += uint64(n)
+	return n, err
 }
 
 // openArchive reads the central directory of the zip r, of size bytes, and
@@ -115,25 +136,22 @@ type archive struct {
 // or deflated without encryption, and expands within the guards, which scale
 // with the instance's import limit.
 func openArchive(r io.ReaderAt, size, importMax int64) (*archive, error) {
-	zr, err := zip.NewReader(r, size)
+	source := &countingReaderAt{r: r}
+	zr, err := zip.NewReader(source, size)
 	switch {
 	case errors.Is(err, zip.ErrInsecurePath):
 		return nil, invalidArchive("path", "a member's path leaves the archive")
-	case errors.Is(err, zip.ErrFormat), errors.Is(err, zip.ErrAlgorithm), errors.Is(err, zip.ErrChecksum):
-		return nil, invalidArchive("zip", "the file is not a zip archive")
-	case err != nil:
-		var pathErr *fs.PathError
-		if errors.As(err, &pathErr) {
-			return nil, err
-		}
+	case err != nil && readFailure(err):
 		return nil, err
+	case err != nil:
+		return nil, invalidArchive("zip", "the file is not a zip archive")
 	}
 	if len(zr.File) > maxArchiveEntries {
 		return nil, invalidArchive("entries", "it has %d members, more than the %d that an import takes", len(zr.File),
 			maxArchiveEntries)
 	}
 	budget := max(importMax*expansionFactor, minExpansion)
-	a := &archive{files: make(map[string]*zip.File, len(zr.File))}
+	a := &archive{files: make(map[string]*zip.File, len(zr.File)), source: source}
 	var total uint64
 	for _, f := range zr.File {
 		if strings.HasSuffix(f.Name, "/") {
@@ -203,8 +221,14 @@ func (a *archive) has(name string) bool {
 	return ok
 }
 
+// maxInitialRead is the most memory that reading a member sets aside on its
+// header's word alone: past it, the buffer grows with what the member holds.
+const maxInitialRead = 16 << 20
+
 // read returns the member of the path, whole, of at most limit bytes, and
-// checks its CRC-32, which a read to its end does.
+// checks its CRC-32, which a read to its end does, and its expansion against
+// the bytes that it took of the file, as a central directory can claim a
+// compressed size that the member does not have.
 func (a *archive) read(name string, limit int64) ([]byte, error) {
 	f, ok := a.files[name]
 	if !ok {
@@ -214,12 +238,13 @@ func (a *archive) read(name string, limit int64) ([]byte, error) {
 		return nil, invalidArchive("size", "the member %q has %d bytes, more than the %d that it may", name,
 			f.UncompressedSize64, limit)
 	}
+	start := a.source.n
 	rc, err := f.Open()
 	if err != nil {
 		return nil, memberError(name, err)
 	}
 	defer func() { _ = rc.Close() }()
-	data := make([]byte, 0, f.UncompressedSize64)
+	data := make([]byte, 0, min(f.UncompressedSize64, maxInitialRead))
 	buf := make([]byte, 64*1024)
 	for {
 		n, err := rc.Read(buf)
@@ -237,17 +262,29 @@ func (a *archive) read(name string, limit int64) ([]byte, error) {
 	if int64(len(data)) != int64(f.UncompressedSize64) {
 		return nil, invalidArchive("size", "the member %q holds less than its header says", name)
 	}
+	if n := uint64(len(data)); n > ratioFreeBytes && n/max(a.source.n-start, 1) > maxCompressionRatio {
+		return nil, invalidArchive("ratio", "the member %q expands more than %d times", name, maxCompressionRatio)
+	}
 	return data, nil
 }
 
 // memberError is the failure of reading a member: the store's own error, as a
 // chunk that it could not read, or a member that is damaged.
 func memberError(name string, err error) error {
-	var store *chunkError
-	if errors.As(err, &store) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if readFailure(err) {
 		return err
 	}
 	return invalidArchive("zip", "the member %q cannot be read: %v", name, err)
+}
+
+// readFailure says whether err is a failure to read the file, of the store or
+// the disk, or the end of the context, which another attempt may get past,
+// rather than something wrong with the archive.
+func readFailure(err error) bool {
+	var store *chunkError
+	var file *fs.PathError
+	return errors.As(err, &store) || errors.As(err, &file) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded)
 }
 
 // under returns the paths of the archive's members below the directory dir,

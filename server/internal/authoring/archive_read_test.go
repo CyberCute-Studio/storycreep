@@ -3,10 +3,13 @@ package authoring
 import (
 	"archive/zip"
 	"bytes"
+	"compress/flate"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"io/fs"
 	"strings"
@@ -307,4 +310,82 @@ func TestReadArchivedRefusesUnknownMember(t *testing.T) {
 	}
 	_, err = readArchived(a)
 	wantRefused(t, err, "unexpected_member")
+}
+
+// TestArchiveRatioHoldsAgainstTheDirectory checks a member whose central
+// directory claims a compressed size that it does not have, which passes the
+// guard of the directory, and is refused by what it took of the file.
+//
+// Verifies: NFR-SEC-13
+func TestArchiveRatioHoldsAgainstTheDirectory(t *testing.T) {
+	t.Parallel()
+	content := bytes.Repeat([]byte{'0'}, 8<<20)
+	var deflated bytes.Buffer
+	fw, err := flate.NewWriter(&deflated, flate.BestCompression)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := fw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var b bytes.Buffer
+	w := zip.NewWriter(&b)
+	raw, err := w.CreateRaw(&zip.FileHeader{Name: "a.json", Method: zip.Deflate, CRC32: crc32.ChecksumIEEE(content),
+		CompressedSize64: uint64(deflated.Len()), UncompressedSize64: uint64(len(content))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Write(deflated.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data := b.Bytes()
+	entry := bytes.LastIndex(data, []byte{'P', 'K', 1, 2})
+	binary.LittleEndian.PutUint32(data[entry+20:], uint32(len(content)))
+	a, err := openArchive(bytes.NewReader(data), int64(len(data)), 1<<30)
+	if err != nil {
+		t.Fatalf("the directory's claim did not pass its own guard: %v", err)
+	}
+	_, err = a.read("a.json", 1<<30)
+	wantRefused(t, err, "ratio")
+}
+
+// TestArchiveRefusesADamagedDirectory checks that a central directory that
+// ends before the entries that it claims is the archive's failure, which is
+// not worth another attempt, rather than the server's.
+//
+// Verifies: NFR-SEC-13
+func TestArchiveRefusesADamagedDirectory(t *testing.T) {
+	t.Parallel()
+	data := zipped(t, [2]string{"a.json", "{}"})
+	end := bytes.LastIndex(data, []byte{'P', 'K', 5, 6})
+	binary.LittleEndian.PutUint16(data[end+8:], 9)
+	binary.LittleEndian.PutUint16(data[end+10:], 9)
+	_, err := openArchive(bytes.NewReader(data), int64(len(data)), 1<<30)
+	wantRefused(t, err, "zip")
+}
+
+// TestPlainIDs checks that an escape of a character of an ID is written as the
+// character, and that nothing else of a document changes, an escaped backslash
+// before the same letters among it.
+func TestPlainIDs(t *testing.T) {
+	t.Parallel()
+	bs := string(rune(0x5c))
+	for in, want := range map[string]string{
+		`{"a":"usr` + bs + `u005fabc"}`:      `{"a":"usr_abc"}`,
+		`{"a":"` + bs + `u0075sr_abc"}`:      `{"a":"usr_abc"}`,
+		`{"a":"usr` + bs + `u005Fabc"}`:      `{"a":"usr_abc"}`,
+		`{"a":"` + bs + bs + `u005f"}`:       `{"a":"` + bs + bs + `u005f"}`,
+		`{"a":"` + bs + `u00e9` + bs + `n"}`: `{"a":"` + bs + `u00e9` + bs + `n"}`,
+		`{"a":"plain"}`:                      `{"a":"plain"}`,
+	} {
+		if got := string(plainIDs([]byte(in))); got != want {
+			t.Errorf("plainIDs(%s) = %s, want %s", in, got, want)
+		}
+	}
 }

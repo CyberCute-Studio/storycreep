@@ -103,6 +103,21 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 	return err
 }
 
+// IndexComments writes, in q's transaction, the documents of the comments of
+// list of the project, for what adds comments outside any command, as an
+// import does, whose comments the derivation does not see.
+func IndexComments(ctx context.Context, q *queries.Queries, workspaceID, projectID ids.UUID, list []ids.UUID) error {
+	if len(list) == 0 {
+		return nil
+	}
+	var sel selection
+	for _, id := range list {
+		sel.add(ids.Comment, id)
+	}
+	_, err := index(ctx, q, workspaceID, projectID, sel)
+	return err
+}
+
 // selection is the entities whose documents index writes: the nodes, the
 // connections, the variables, the components, and the comments, and the
 // components of the types that the definitions are of.

@@ -9,6 +9,7 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -176,6 +177,7 @@ func readArchived(a *archive) (*archived, error) {
 		if err := checkSchema(sec.Path, entry.Name, file); err != nil {
 			return nil, err
 		}
+		file = plainIDs(file)
 		if err := sec.store(c, file); err != nil {
 			return nil, err
 		}
@@ -245,6 +247,40 @@ var idToken = regexp.MustCompile(`(?i)\b(?:prj|fld|bd|nd|bo|cn|var|ct|atr|cmp|cm
 
 // userToken finds a user's public ID.
 var userToken = regexp.MustCompile(`(?i)\busr_[0-9a-z]{26}\b`)
+
+// plainIDs returns the JSON document data with each escape of a character that
+// an ID is written in, a letter, a digit, or an underscore of ASCII, as that
+// character, and anything else as it is. An ID is found by its spelling in the
+// file (idToken, userToken), and a parser reads an escaped underscore as an
+// underscore, so that an ID left escaped would be neither mapped nor rewritten,
+// and would still name its row once the document is read.
+func plainIDs(data []byte) []byte {
+	if !bytes.Contains(data, []byte{'\\', 'u'}) {
+		return data
+	}
+	out := make([]byte, 0, len(data))
+	for i := 0; i < len(data); i++ {
+		if data[i] != '\\' || i+1 == len(data) {
+			out = append(out, data[i])
+			continue
+		}
+		if data[i+1] == 'u' && i+5 < len(data) {
+			if r, err := strconv.ParseUint(string(data[i+2:i+6]), 16, 16); err == nil && idByte(r) {
+				out = append(out, byte(r))
+				i += 5
+				continue
+			}
+		}
+		out = append(out, data[i], data[i+1])
+		i++
+	}
+	return out
+}
+
+// idByte says whether r is a character that an ID is written in.
+func idByte(r uint64) bool {
+	return r == '_' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+}
 
 // rewriteIDs returns data with each ID that table has written as its new ID,
 // in its canonical spelling, and anything else as it is.
@@ -424,7 +460,7 @@ func rewriteRelease(files schemaversion.Files, table map[ids.UUID]ids.UUID) (sch
 	out := make(schemaversion.Files, len(files))
 	for p, data := range files {
 		if schemaversion.IsJSON(p) {
-			out[p] = rewriteIDs(data, table)
+			out[p] = rewriteIDs(plainIDs(data), table)
 		} else {
 			out[p] = data
 		}

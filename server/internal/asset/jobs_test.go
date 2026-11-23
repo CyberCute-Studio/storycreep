@@ -1045,4 +1045,7 @@ func TestWorkspaceKeyOfExport(t *testing.T) {
 	if workspaceKey.MatchString(ws + "/" + sum + ".zip") {
 		t.Error("the reconciliation reads a zip that is no export's")
 	}
+	if !workspaceKey.MatchString(ws + "/" + sum + ".import.part") {
+		t.Error("the reconciliation does not read the key of an import's chunk")
+	}
 }

@@ -171,6 +171,26 @@ func (q *Queries) FinishProjectImport(ctx context.Context, arg FinishProjectImpo
 	return result.RowsAffected(), nil
 }
 
+const importedUserOf = `-- name: ImportedUserOf :one
+SELECT user_id FROM imported_user
+WHERE workspace_id = $1 AND source_user_id = $2 AND display_name = $3
+`
+
+type ImportedUserOfParams struct {
+	WorkspaceID  pgtype.UUID
+	SourceUserID pgtype.UUID
+	DisplayName  string
+}
+
+// ImportedUserOf returns the account of the workspace's imported identity of a
+// source user with a display name.
+func (q *Queries) ImportedUserOf(ctx context.Context, arg ImportedUserOfParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, importedUserOf, arg.WorkspaceID, arg.SourceUserID, arg.DisplayName)
+	var user_id pgtype.UUID
+	err := row.Scan(&user_id)
+	return user_id, err
+}
+
 const importedUsers = `-- name: ImportedUsers :many
 SELECT source_user_id, display_name, user_id FROM imported_user
 WHERE workspace_id = $1 AND source_user_id = ANY($2::uuid[])
@@ -207,6 +227,47 @@ func (q *Queries) ImportedUsers(ctx context.Context, arg ImportedUsersParams) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const insertFinishedProjectImport = `-- name: InsertFinishedProjectImport :exec
+INSERT INTO project_import (id, workspace_id, requested_by, status, file_name, size_bytes, chunk_bytes, id_policy,
+    applied_policy, created_project_id, phase, report, finished_at, expires_at)
+VALUES ($1, $2, $3, 'ready', $4, $5, $6, $7,
+    $8, $9, 'done', $10, now(), $11)
+`
+
+type InsertFinishedProjectImportParams struct {
+	ID               pgtype.UUID
+	WorkspaceID      pgtype.UUID
+	RequestedBy      pgtype.UUID
+	FileName         string
+	SizeBytes        int64
+	ChunkBytes       int32
+	IDPolicy         string
+	AppliedPolicy    pgtype.Text
+	CreatedProjectID pgtype.UUID
+	Report           []byte
+	ExpiresAt        pgtype.Timestamptz
+}
+
+// InsertFinishedProjectImport records an import that the command line ran, in
+// the transaction that created its project: it holds no row while it runs, so
+// that a process that dies leaves nothing on its way.
+func (q *Queries) InsertFinishedProjectImport(ctx context.Context, arg InsertFinishedProjectImportParams) error {
+	_, err := q.db.Exec(ctx, insertFinishedProjectImport,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.RequestedBy,
+		arg.FileName,
+		arg.SizeBytes,
+		arg.ChunkBytes,
+		arg.IDPolicy,
+		arg.AppliedPolicy,
+		arg.CreatedProjectID,
+		arg.Report,
+		arg.ExpiresAt,
+	)
+	return err
 }
 
 const insertImportedAccount = `-- name: InsertImportedAccount :exec
@@ -389,9 +450,11 @@ func (q *Queries) InsertImportedSnapshot(ctx context.Context, arg InsertImported
 	return err
 }
 
-const insertImportedUser = `-- name: InsertImportedUser :exec
+const insertImportedUser = `-- name: InsertImportedUser :one
 INSERT INTO imported_user (workspace_id, source_user_id, display_name, user_id)
 VALUES ($1, $2, $3, $4)
+ON CONFLICT (workspace_id, source_user_id, display_name) DO NOTHING
+RETURNING user_id
 `
 
 type InsertImportedUserParams struct {
@@ -401,16 +464,19 @@ type InsertImportedUserParams struct {
 	UserID       pgtype.UUID
 }
 
-// InsertImportedUser records the workspace's imported identity of a source
-// user with a display name.
-func (q *Queries) InsertImportedUser(ctx context.Context, arg InsertImportedUserParams) error {
-	_, err := q.db.Exec(ctx, insertImportedUser,
+// InsertImportedUser claims the workspace's imported identity of a source user
+// with a display name for the account user_id, and returns no row if a
+// concurrent import has claimed it, once that import has committed.
+func (q *Queries) InsertImportedUser(ctx context.Context, arg InsertImportedUserParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, insertImportedUser,
 		arg.WorkspaceID,
 		arg.SourceUserID,
 		arg.DisplayName,
 		arg.UserID,
 	)
-	return err
+	var user_id pgtype.UUID
+	err := row.Scan(&user_id)
+	return user_id, err
 }
 
 const insertProjectImport = `-- name: InsertProjectImport :one
@@ -526,6 +592,26 @@ func (q *Queries) ProjectImport(ctx context.Context, arg ProjectImportParams) (P
 		&i.ExpiresAt,
 	)
 	return i, err
+}
+
+const projectImportChunkKey = `-- name: ProjectImportChunkKey :one
+SELECT storage_key FROM project_import_chunk
+WHERE workspace_id = $1 AND import_id = $2 AND chunk_index = $3
+`
+
+type ProjectImportChunkKeyParams struct {
+	WorkspaceID pgtype.UUID
+	ImportID    pgtype.UUID
+	ChunkIndex  int32
+}
+
+// ProjectImportChunkKey returns the key of the blob that the chunk has, if it
+// has been stored.
+func (q *Queries) ProjectImportChunkKey(ctx context.Context, arg ProjectImportChunkKeyParams) (string, error) {
+	row := q.db.QueryRow(ctx, projectImportChunkKey, arg.WorkspaceID, arg.ImportID, arg.ChunkIndex)
+	var storage_key string
+	err := row.Scan(&storage_key)
+	return storage_key, err
 }
 
 const projectImportChunks = `-- name: ProjectImportChunks :many
@@ -753,7 +839,8 @@ func (q *Queries) StartProjectImport(ctx context.Context, arg StartProjectImport
 const upsertProjectImportChunk = `-- name: UpsertProjectImportChunk :exec
 INSERT INTO project_import_chunk (workspace_id, import_id, chunk_index, bytes, storage_key)
 VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (workspace_id, import_id, chunk_index) DO UPDATE SET bytes = excluded.bytes
+ON CONFLICT (workspace_id, import_id, chunk_index)
+DO UPDATE SET bytes = excluded.bytes, storage_key = excluded.storage_key
 `
 
 type UpsertProjectImportChunkParams struct {
@@ -765,7 +852,7 @@ type UpsertProjectImportChunkParams struct {
 }
 
 // UpsertProjectImportChunk records that the chunk is stored, or that it was
-// stored again, as a resumed upload may send it.
+// stored again, under a key of its own, as a resumed upload may send it.
 func (q *Queries) UpsertProjectImportChunk(ctx context.Context, arg UpsertProjectImportChunkParams) error {
 	_, err := q.db.Exec(ctx, upsertProjectImportChunk,
 		arg.WorkspaceID,

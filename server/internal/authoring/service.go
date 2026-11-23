@@ -209,6 +209,13 @@ func storageKey(ws, id ids.UUID) string {
 // one on its way, and, for a release, snapshot.ErrNotFound or a
 // *snapshot.NotReadyError. The token's export:read is the route's to check.
 func (s *Service) Create(ctx context.Context, actor commands.Actor, projectID ids.UUID, req Request) (Export, error) {
+	return s.create(ctx, actor, projectID, req, time.Time{})
+}
+
+// create is Create, whose build job is due at buildAt, or at once for the zero
+// time.
+func (s *Service) create(ctx context.Context, actor commands.Actor, projectID ids.UUID, req Request,
+	buildAt time.Time) (Export, error) {
 	// Outside the transaction, as reading the store's settings takes a
 	// connection of its own, and after the project, so that who may not read
 	// it learns nothing of the instance.
@@ -258,7 +265,7 @@ func (s *Service) Create(ctx context.Context, actor commands.Actor, projectID id
 			return err
 		}
 		args := jobArgs{WorkspaceID: ws.String(), ExportID: id.String()}
-		if _, err := s.queue.Enqueue(ctx, tx, buildJob(args), &jobs.EnqueueOptions{
+		if _, err := s.queue.Enqueue(ctx, tx, buildJob(args), &jobs.EnqueueOptions{At: buildAt,
 			MaxAttempts: buildAttempts + failAttempts}); err != nil {
 			return fmt.Errorf("authoring: enqueue the build: %w", err)
 		}

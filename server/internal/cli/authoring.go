@@ -192,8 +192,8 @@ is larger than STORYCREEP_IMPORT_MAX_BYTES, or if the archive is refused.
 		}
 		defer closeTools()
 		name := filepath.Base(path)
-		if len(name) > 255 {
-			name = name[len(name)-255:]
+		if chars := []rune(name); len(chars) > 255 {
+			name = string(chars[len(chars)-255:])
 		}
 		i, err := service.ImportFile(ctx, cmds.Actor{UserID: userID}, workspaceID, name, io.ReaderAt(f), info.Size(),
 			inv.boolFlag("remap"))

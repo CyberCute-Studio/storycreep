@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/authoring"
+	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/maintenance"
@@ -770,5 +771,165 @@ func TestImportAttribution(t *testing.T) {
 	if err := f.d.Admin(t).QueryRow(t.Context(), `SELECT status FROM "user" WHERE id = $1`,
 		decode(t, ids.User, people[0].ID)).Scan(&status); err != nil || status != "imported" {
 		t.Errorf("the identity's account has the status %q: %v", status, err)
+	}
+}
+
+// TestImportMapsAnEscapedMention checks a comment that mentions an account of
+// the instance with its ID's underscore escaped, which a parser reads as the
+// ID: it takes an imported identity like any other, so that the archive cannot
+// show that account's name.
+func TestImportMapsAnEscapedMention(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	newAccount(t, f.s.main, "elsewhere@example.com")
+	stranger := signIn(t, f.s.main, "elsewhere@example.com").body.UserID
+	files := exportedArchive(t, f)
+	list := items[authoring.Comment](t, files, "comments.json")
+	list[0].Body = authoring.Text(mentioning(stranger))
+	data, err := json.Marshal(authoring.Items[authoring.Comment]{Items: list})
+	if err != nil {
+		t.Fatal(err)
+	}
+	escaped := strings.Replace(stranger, "_", string(rune(0x5c))+"u005f", 1)
+	resealSection(t, files, "comments.json", bytes.ReplaceAll(data, []byte(stranger), []byte(escaped)), len(list))
+	got := mustImport(t, f.s, f.owner, f.ws, zipOf(t, files), "remap")
+	if got.Report.ImportedUsers != 1 {
+		t.Errorf("the report is %+v, want the identity of the one who is mentioned", *got.Report)
+	}
+	var body string
+	if err := f.d.Admin(t).QueryRow(t.Context(), `SELECT body::text FROM comment WHERE project_id = $1`,
+		decode(t, ids.Project, got.ProjectID)).Scan(&body); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(body), strings.ToLower(stranger)) {
+		t.Errorf("the imported comment still names the account: %s", body)
+	}
+}
+
+// TestImportRefusesAReleaseOfAnotherName checks a release whose index entry
+// says a version that its sealed manifest does not.
+//
+// Verifies: FR-DATA-01/AC11
+func TestImportRefusesAReleaseOfAnotherName(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	files := exportedArchive(t, f)
+	list := items[authoring.Release](t, files, "releases/index.json")
+	list[0].Version = "2.0.0"
+	index, err := json.Marshal(authoring.Items[authoring.Release]{Items: list})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resealSection(t, files, "releases/index.json", index, len(list))
+	failure := failedImport(t, f.s, f.owner, f.ws, zipOf(t, files))
+	if failure.Code != authoring.FailReleaseInvalid || failure.Check != "snapshot" || failure.Version != "2.0.0" {
+		t.Errorf("the failure is %+v", *failure)
+	}
+}
+
+// TestImportRefusesBadProjectFields checks that a project's field that a new
+// project is refused for is the archive's failure, which names the section,
+// and not the server's.
+func TestImportRefusesBadProjectFields(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	files := exportedArchive(t, f)
+	var p authoring.Project
+	if err := json.Unmarshal(files["draft/project.json"], &p); err != nil {
+		t.Fatal(err)
+	}
+	p.Settings = authoring.Value(`{"default_locale": "not a locale!"}`)
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resealSection(t, files, "draft/project.json", data, 1)
+	failure := failedImport(t, f.s, f.owner, f.ws, zipOf(t, files))
+	if failure.Code != authoring.FailContentInvalid || failure.Section != "project" {
+		t.Errorf("the failure is %+v", *failure)
+	}
+}
+
+// TestImportFileHoldsNoRow checks that the command line's import leaves no
+// import on its way, so that one that fails, or a process that dies, keeps the
+// user from no other, and that one that succeeds is recorded as ready.
+func TestImportFileHoldsNoRow(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	actor := commands.Actor{UserID: decode(t, ids.User, f.owner.body.UserID)}
+	ws := decode(t, ids.Workspace, f.ws)
+	bad := []byte("not a zip archive")
+	refused, err := f.s.authoring.ImportFile(t.Context(), actor, ws, "bad.zip", bytes.NewReader(bad), int64(len(bad)),
+		false)
+	if err != nil || refused.Failure == nil || refused.Failure.Code != authoring.FailArchiveInvalid {
+		t.Fatalf("the refused import is %+v: %v", refused, err)
+	}
+	var rows int
+	if err := f.d.Admin(t).QueryRow(t.Context(), `SELECT count(*) FROM project_import`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Errorf("a refused import of the command line left %d rows", rows)
+	}
+	data := zipOf(t, exportedArchive(t, f))
+	done, err := f.s.authoring.ImportFile(t.Context(), actor, ws, "harbour.zip", bytes.NewReader(data), int64(len(data)),
+		true)
+	if err != nil || done.Status != authoring.ImportReady || done.Report == nil || done.Report.Policy != authoring.PolicyRemap {
+		t.Fatalf("the import is %+v: %v", done, err)
+	}
+	if got := readImport(t, f.s.main, f.owner, f.ws, done.ID); got.Status != authoring.ImportReady ||
+		got.ProjectID != done.Report.ProjectID {
+		t.Errorf("the recorded import is %+v", got)
+	}
+}
+
+// TestImportFindsItsComments checks that a search finds an imported comment
+// from the import's commit on, without waiting for the job of the index.
+func TestImportFindsItsComments(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	got := mustImport(t, f.s, f.owner, f.ws, zipOf(t, exportedArchive(t, f)), "remap")
+	var documents int
+	if err := f.d.Admin(t).QueryRow(t.Context(),
+		`SELECT count(*) FROM search_entry WHERE project_id = $1 AND kind = 'comment'`,
+		decode(t, ids.Project, got.ProjectID)).Scan(&documents); err != nil {
+		t.Fatal(err)
+	}
+	if documents != got.Report.Comments || documents == 0 {
+		t.Errorf("the index holds %d documents of the %d imported comments", documents, got.Report.Comments)
+	}
+}
+
+// TestImportChunkSentAgainIsANewBlob checks that a chunk sent again is stored
+// under a key of its own, and that the row names it, so that a blob that a row
+// has named never changes, whatever a request that outlives the upload does.
+//
+// Verifies: FR-DATA-01/AC4
+func TestImportChunkSentAgainIsANewBlob(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	data := zipOf(t, exportedArchive(t, f))
+	i := beginImport(t, f.s.main, f.owner, f.ws, len(data), "remap")
+	key := func() string {
+		t.Helper()
+		var k string
+		if err := f.d.Admin(t).QueryRow(t.Context(),
+			`SELECT storage_key FROM project_import_chunk WHERE import_id = $1 AND chunk_index = 0`,
+			decode(t, ids.Job, i.ID)).Scan(&k); err != nil {
+			t.Fatal(err)
+		}
+		return k
+	}
+	putChunks(t, f.s.main, f.owner, f.ws, i, data, 0)
+	first := key()
+	putChunks(t, f.s.main, f.owner, f.ws, i, data, 0)
+	if second := key(); second == first {
+		t.Errorf("the chunk sent again kept the key %s", first)
 	}
 }

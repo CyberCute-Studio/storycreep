@@ -24,7 +24,9 @@ CREATE TABLE imported_user (
 	-- that the workspace can see.
 	source_user_id uuid NOT NULL,
 	display_name text NOT NULL,
-	user_id uuid NOT NULL REFERENCES "user" ON DELETE CASCADE,
+	-- Checked at commit, so that an import claims the identity here first, and
+	-- adds its account only if no concurrent import has claimed it.
+	user_id uuid NOT NULL REFERENCES "user" ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
 	created_at timestamptz NOT NULL DEFAULT now(),
 	PRIMARY KEY (workspace_id, source_user_id, display_name),
 	UNIQUE (workspace_id, user_id)
@@ -118,5 +120,5 @@ CREATE POLICY workspace_isolation ON project_import_chunk TO storycreep_app
 	USING (workspace_id = NULLIF(current_setting('app.workspace_id', true), '')::uuid);
 
 GRANT SELECT, INSERT, DELETE ON project_import_chunk TO storycreep_app;
-GRANT UPDATE (bytes) ON project_import_chunk TO storycreep_app;
+GRANT UPDATE (bytes, storage_key) ON project_import_chunk TO storycreep_app;
 GRANT SELECT ON project_import_chunk TO storycreep_maintenance;

@@ -56,12 +56,19 @@ SELECT status FROM project_import
 WHERE workspace_id = @workspace_id AND requested_by = @requested_by AND id = @id AND expires_at > now()
 FOR UPDATE;
 
+-- name: ProjectImportChunkKey :one
+-- ProjectImportChunkKey returns the key of the blob that the chunk has, if it
+-- has been stored.
+SELECT storage_key FROM project_import_chunk
+WHERE workspace_id = @workspace_id AND import_id = @import_id AND chunk_index = @chunk_index;
+
 -- name: UpsertProjectImportChunk :exec
 -- UpsertProjectImportChunk records that the chunk is stored, or that it was
--- stored again, as a resumed upload may send it.
+-- stored again, under a key of its own, as a resumed upload may send it.
 INSERT INTO project_import_chunk (workspace_id, import_id, chunk_index, bytes, storage_key)
 VALUES (@workspace_id, @import_id, @chunk_index, @bytes, @storage_key)
-ON CONFLICT (workspace_id, import_id, chunk_index) DO UPDATE SET bytes = excluded.bytes;
+ON CONFLICT (workspace_id, import_id, chunk_index)
+DO UPDATE SET bytes = excluded.bytes, storage_key = excluded.storage_key;
 
 -- name: DeleteProjectImportChunks :many
 -- DeleteProjectImportChunks deletes the rows of the import's chunks, and
@@ -94,6 +101,15 @@ SET status = 'ready', phase = 'done', applied_policy = @applied_policy, created_
     report = @report, finished_at = now()
 WHERE workspace_id = @workspace_id AND id = @id AND status = 'importing';
 
+-- name: InsertFinishedProjectImport :exec
+-- InsertFinishedProjectImport records an import that the command line ran, in
+-- the transaction that created its project: it holds no row while it runs, so
+-- that a process that dies leaves nothing on its way.
+INSERT INTO project_import (id, workspace_id, requested_by, status, file_name, size_bytes, chunk_bytes, id_policy,
+    applied_policy, created_project_id, phase, report, finished_at, expires_at)
+VALUES (@id, @workspace_id, @requested_by, 'ready', @file_name, @size_bytes, @chunk_bytes, @id_policy,
+    @applied_policy, @created_project_id, 'done', @report, now(), @expires_at);
+
 -- name: FailProjectImport :execrows
 -- FailProjectImport fails the import, with why, and changes nothing of one
 -- that has ended.
@@ -121,11 +137,20 @@ WHERE workspace_id = @workspace_id AND source_user_id = ANY(@source_ids::uuid[])
 -- can sign in as: it is not active and has no password.
 INSERT INTO "user" (id, email, display_name, status) VALUES (@id, @email, @display_name, 'imported');
 
--- name: InsertImportedUser :exec
--- InsertImportedUser records the workspace's imported identity of a source
--- user with a display name.
+-- name: InsertImportedUser :one
+-- InsertImportedUser claims the workspace's imported identity of a source user
+-- with a display name for the account user_id, and returns no row if a
+-- concurrent import has claimed it, once that import has committed.
 INSERT INTO imported_user (workspace_id, source_user_id, display_name, user_id)
-VALUES (@workspace_id, @source_user_id, @display_name, @user_id);
+VALUES (@workspace_id, @source_user_id, @display_name, @user_id)
+ON CONFLICT (workspace_id, source_user_id, display_name) DO NOTHING
+RETURNING user_id;
+
+-- name: ImportedUserOf :one
+-- ImportedUserOf returns the account of the workspace's imported identity of a
+-- source user with a display name.
+SELECT user_id FROM imported_user
+WHERE workspace_id = @workspace_id AND source_user_id = @source_user_id AND display_name = @display_name;
 
 -- name: InsertImportedComment :exec
 -- InsertImportedComment adds a comment of an imported archive as it was, with
