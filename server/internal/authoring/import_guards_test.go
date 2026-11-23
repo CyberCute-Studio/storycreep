@@ -38,7 +38,11 @@ func TestRewriteIDsFollowsAnEscapedReference(t *testing.T) {
 	underscore := strings.Replace(id, "_", escape+"5f", 1)
 	stranger := strings.Replace(ids.Encode(ids.Node, ids.New()), "_", escape+"5f", 1)
 	doubled := strings.Replace(id, "_", backslash+escape+"5f", 1)
+	person := strings.Replace(ids.Encode(ids.User, old), "_", escape+"5f", 1)
+	inWord := backslash + backslash + "x" + underscore
 	for _, c := range []struct{ name, source, want string }{
+		{"another kind of ID of the same UUID", `"` + person + `"`, `"` + person + `"`},
+		{"the end of a longer word", `"` + inWord + `"`, `"` + inWord + `"`},
 		{"an escaped underscore", `visited(node("` + underscore + `"))`, `visited(node("` + want + `"))`},
 		{"an escaped first letter", `visited(node("` + escape + "6e" + id[1:] + `"))`, `visited(node("` + want + `"))`},
 		{"after a character of two bytes", "é" + underscore, "é" + want},
@@ -56,6 +60,16 @@ func TestRewriteIDsFollowsAnEscapedReference(t *testing.T) {
 		if got["source"] != c.want {
 			t.Errorf("%s: rewritten as %s, want %s", c.name, got["source"], c.want)
 		}
+	}
+	// A JSON file may write the expression's backslash as an escape of its own.
+	quote := backslash + `"`
+	spelled := `{"source":"visited(node(` + quote + strings.Replace(id, "_", backslash+"u005cu005f", 1) + quote + `))"}`
+	var got map[string]string
+	if err := json.Unmarshal(rewriteIDs(plainIDs([]byte(spelled)), table), &got); err != nil {
+		t.Fatal(err)
+	}
+	if want := `visited(node("` + want + `"))`; got["source"] != want {
+		t.Errorf("a backslash that JSON escapes: rewritten as %s, want %s", got["source"], want)
 	}
 }
 

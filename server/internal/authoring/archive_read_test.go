@@ -371,7 +371,8 @@ func TestArchiveRefusesADamagedDirectory(t *testing.T) {
 }
 
 // TestPlainIDs checks that an escape of a character of an ID is written as the
-// character, and that nothing else of a document changes, an escaped backslash
+// character, that a hexadecimal escape of a backslash is written as its short
+// escape, and that nothing else of a document changes, an escaped backslash
 // before the same letters among it.
 func TestPlainIDs(t *testing.T) {
 	t.Parallel()
@@ -381,6 +382,8 @@ func TestPlainIDs(t *testing.T) {
 		`{"a":"` + bs + `u0075sr_abc"}`:      `{"a":"usr_abc"}`,
 		`{"a":"usr` + bs + `u005Fabc"}`:      `{"a":"usr_abc"}`,
 		`{"a":"` + bs + bs + `u005f"}`:       `{"a":"` + bs + bs + `u005f"}`,
+		`{"a":"` + bs + `u005cu005f"}`:       `{"a":"` + bs + bs + `u005f"}`,
+		`{"a":"` + bs + `u005Cn"}`:           `{"a":"` + bs + bs + `n"}`,
 		`{"a":"` + bs + `u00e9` + bs + `n"}`: `{"a":"` + bs + `u00e9` + bs + `n"}`,
 		`{"a":"plain"}`:                      `{"a":"plain"}`,
 	} {

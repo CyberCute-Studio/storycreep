@@ -386,6 +386,54 @@ describe("the project import's dialog", () => {
     expect(dialog.querySelector('input[type="file"]')).not.toBe(input);
   });
 
+  // Verifies: FR-DATA-01/AC4
+  it("announces no cancellation whose response comes after it closed", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const other = importOf(99, [], { file_name: "other.zip" });
+    const { call } = serve({
+      createProjectImport: () => {
+        throw refused(409, {
+          code: "import_in_progress",
+          details: { import_id: "job_i" },
+        });
+      },
+      getProjectImport: () => other,
+      cancelProjectImport: async () => {
+        await held;
+        return undefined;
+      },
+    });
+    const dialog = await open();
+    pick(dialog, archive());
+    await startImport(dialog);
+    await within(dialog).findByText(/An upload of other\.zip/);
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Cancel import" }),
+    );
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith(
+        "cancelProjectImport",
+        expect.anything(),
+      ),
+    );
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Close" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Import project" }),
+    );
+    const again = await screen.findByRole("dialog");
+    await within(again).findByRole("button", { name: "Start import" });
+    expect(within(again).queryByText(/The import was canceled/)).toBeNull();
+  });
+
   it("compares a file's name as the server keeps it", () => {
     const mark = String.fromCodePoint(0x200e);
     const nextLine = String.fromCodePoint(0x85);

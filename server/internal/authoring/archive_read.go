@@ -59,9 +59,10 @@ const (
 	// for the whole import, the release that an archive of a release is, and
 	// the files of the one release being read. The large fixture with 30
 	// releases holds 115 MiB of them. It counts the files' bytes: at these
-	// limits the heap measured at most 1.4 GiB above what it held before, for a
-	// valid archive of the most IDs as it is remapped, and less for one that
-	// fails its schema, whose check stops at the first failure.
+	// limits the heap measured up to 1.9 GiB above what it held before, for an
+	// archive of the most IDs whose largest file is as costly as a file can be
+	// to remap, and less for one that fails its schema, whose check stops at
+	// the first failure.
 	maxJSONTotal = 256 << 20
 	// maxItemBytes and maxItemValues hold one item of a section, before its
 	// tree is built (checkItems). The largest item of the large fixture, a

@@ -243,10 +243,7 @@ function useProjectImport(workspaceId: string, open: boolean) {
         headers: csrfHeaders(session),
       });
     },
-    onSuccess: () => {
-      reset();
-      setCanceled(true);
-    },
+    onSuccess: () => reset(),
     onError: (error) => {
       if (notFoundBy(error)) {
         reset();
@@ -281,6 +278,12 @@ function useProjectImport(workspaceId: string, open: boolean) {
     canceled,
     start,
     cancel,
+    /**
+     * Cancels the import. Only this call's callback says so, as closing the
+     * dialog resets the mutation, and a response after that announces nothing.
+     */
+    cancelImport: (importId: string) =>
+      cancel.mutate(importId, { onSuccess: () => setCanceled(true) }),
     readError: gone ? current.error : null,
     uploading: start.isPending,
     setRemap,
@@ -453,7 +456,7 @@ function ImportForm({
         {cancelable && (
           <Button
             disabled={cancel.isPending}
-            onClick={() => cancel.mutate(item.id)}
+            onClick={() => flow.cancelImport(item.id)}
           >
             {t("project_import.cancel")}
           </Button>

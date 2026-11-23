@@ -420,10 +420,12 @@ var idToken = regexp.MustCompile(`(?i)\b(?:prj|fld|bd|nd|bo|cn|var|ct|atr|cmp|cm
 
 // plainIDs returns the JSON document data with each escape of a character that
 // an ID is written in, a letter, a digit, or an underscore of ASCII, as that
-// character, and anything else as it is. An ID is found by its spelling in the
-// file (idToken), and a parser reads an escaped underscore as an underscore, so
-// that an ID left escaped would be neither mapped nor rewritten, and would
-// still name its row once the document is read.
+// character, each hexadecimal escape of a backslash as its two-character
+// escape, which is the one spelling that rewriteEscapedIDs reads, and anything
+// else as it is. An ID is found by its spelling in the file (idToken), and a
+// parser reads an escaped underscore as an underscore, so that an ID left
+// escaped would be neither mapped nor rewritten, and would still name its row
+// once the document is read.
 func plainIDs(data []byte) []byte {
 	if !bytes.Contains(data, []byte{'\\', 'u'}) {
 		return data
@@ -435,8 +437,15 @@ func plainIDs(data []byte) []byte {
 			continue
 		}
 		if data[i+1] == 'u' && i+5 < len(data) {
-			if r, err := strconv.ParseUint(string(data[i+2:i+6]), 16, 16); err == nil && idByte(r) {
+			r, err := strconv.ParseUint(string(data[i+2:i+6]), 16, 16)
+			switch {
+			case err != nil:
+			case idByte(r):
 				out = append(out, byte(r))
+				i += 5
+				continue
+			case r == '\\':
+				out = append(out, '\\', '\\')
 				i += 5
 				continue
 			}
@@ -469,8 +478,13 @@ func rewriteEscapedIDs(data []byte, table map[ids.UUID]ids.UUID) []byte {
 		return data
 	}
 	return escapedToken.ReplaceAllFunc(data, func(match []byte) []byte {
-		// The character before the run, which may take more than a byte.
-		_, before := utf8.DecodeRune(match)
+		// The character before the run, which may take more than a byte. One
+		// that an ID is written in makes the run the end of a longer word,
+		// which is no ID, as idToken's boundary has it.
+		first, before := utf8.DecodeRune(match)
+		if first < utf8.RuneSelf && idByte(uint64(first)) {
+			return match
+		}
 		// As long as the longest that idToken finds, so that a run of any
 		// length takes no memory to read.
 		var plain [30]byte
@@ -495,8 +509,10 @@ func rewriteEscapedIDs(data []byte, table map[ids.UUID]ids.UUID) []byte {
 		if err != nil {
 			return match
 		}
+		// Of the kinds that a remap rewrites, and not a person's ID that spells
+		// the UUID of a row.
 		fresh, ok := table[id]
-		if !ok {
+		if !ok || !idToken.Match(plain[:n]) {
 			return match
 		}
 		return append(slices.Clone(match[:before]), ids.Encode(kind, fresh)...)
