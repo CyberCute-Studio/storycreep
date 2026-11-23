@@ -139,6 +139,13 @@ func checkMute(entity, code string) input.FieldErrors {
 	return nil
 }
 
+// CheckImported returns what is wrong with a mute of an imported archive, of
+// the owner entity, the code, and the reason, which are held to what the
+// commands hold a mute to.
+func CheckImported(entity, code, reason string) input.FieldErrors {
+	return append(checkMute(entity, code), field("reason", checkReason(reason))...)
+}
+
 // checkReason says what is wrong with a mute's reason, or returns "": one
 // that is blank, or that the text rules of package input refuse.
 func checkReason(reason string) string {

@@ -351,11 +351,25 @@ type Imported struct {
 // (PRD FR-DATA-01). It is Create's one site of creating a project (plan note
 // N32), with the same authorisation, checks, and limit, and returns the same
 // errors, but for what the archive holds: it seeds nothing, and the project is
-// recorded in the audit log as imported.
+// recorded in the audit log as imported. The limit is the one thing that it
+// leaves to FinishImported, which the transaction calls last, as the check
+// holds the lock of the workspace's projects until the transaction ends, which
+// every other project's creation in the workspace would wait for.
 func (s *Service) CreateImported(ctx context.Context, tx pgx.Tx, userID, workspaceID ids.UUID, in Imported) (Visible,
 	error) {
 	return s.create(ctx, tx, userID, workspaceID, creation{id: in.ID, in: in.Settings, slug: in.Slug,
-		action: audit.ActionProjectImport, metadata: in.Metadata, client: in.Client})
+		action: audit.ActionProjectImport, metadata: in.Metadata, client: in.Client, limitLater: true})
+}
+
+// FinishImported checks the workspace's projects limit for the project that
+// CreateImported added in tx, and records it in the workspace's usage. It
+// returns the *entitlements.LimitError of a workspace without the room, whose
+// transaction then adds nothing.
+func (s *Service) FinishImported(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID) error {
+	if err := s.ent.Check(ctx, tx, workspaceID, entitlements.Projects, 1); err != nil {
+		return err
+	}
+	return usage.Record(ctx, tx, workspaceID, usage.Projects, 1)
 }
 
 // creation is how create creates a project.
@@ -367,6 +381,8 @@ type creation struct {
 	action   audit.Action
 	metadata map[string]any
 	client   audit.Client
+	// limitLater leaves the projects limit and its usage to FinishImported.
+	limitLater bool
 }
 
 // create creates a project in tx, after every check that creating one takes.
@@ -393,8 +409,10 @@ func (s *Service) create(ctx context.Context, tx pgx.Tx, userID, workspaceID ids
 	if err != nil {
 		return Visible{}, err
 	}
-	if err := s.ent.Check(ctx, tx, workspaceID, entitlements.Projects, 1); err != nil {
-		return Visible{}, err
+	if !c.limitLater {
+		if err := s.ent.Check(ctx, tx, workspaceID, entitlements.Projects, 1); err != nil {
+			return Visible{}, err
+		}
 	}
 	doc, err := json.Marshal(set)
 	if err != nil {
@@ -416,8 +434,10 @@ func (s *Service) create(ctx context.Context, tx pgx.Tx, userID, workspaceID ids
 			return Visible{}, err
 		}
 	}
-	if err := usage.Record(ctx, tx, workspaceID, usage.Projects, 1); err != nil {
-		return Visible{}, err
+	if !c.limitLater {
+		if err := usage.Record(ctx, tx, workspaceID, usage.Projects, 1); err != nil {
+			return Visible{}, err
+		}
 	}
 	if err := audit.Record(ctx, tx, audit.Entry{Action: c.action, WorkspaceID: workspaceID,
 		ActorUserID: userID, SubjectID: c.id, Result: audit.ResultSuccess, IP: c.client.IP,

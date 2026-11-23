@@ -16,6 +16,7 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
 	"github.com/CyberCute-Studio/storycreep/server/internal/schemaversion"
 )
 
@@ -118,7 +119,7 @@ func firstLine(s string) string {
 // import, a file whose hash is not the manifest's or that its schema refuses,
 // and a member that nothing accounts for, all before any row is written.
 func readArchived(a *archive) (*archived, error) {
-	data, err := a.read(ManifestPath, maxJSONMember)
+	data, err := a.readJSON(ManifestPath)
 	if err != nil {
 		return nil, err
 	}
@@ -147,6 +148,7 @@ func readArchived(a *archive) (*archived, error) {
 	}
 	known := map[string]bool{ManifestPath: true, ReadmePath: true}
 	seen := map[string]bool{}
+	held := int64(len(data))
 	for _, entry := range c.manifest.Sections {
 		if seen[entry.Name] {
 			return nil, &ImportError{Code: FailSchemaInvalid, Section: entry.Name, Check: "duplicate"}
@@ -165,9 +167,13 @@ func readArchived(a *archive) (*archived, error) {
 			return nil, &ImportError{Code: FailSchemaInvalid, Section: entry.Name, Check: "source",
 				Detail: "only an archive of a draft holds the section"}
 		}
-		file, err := a.read(sec.Path, maxJSONMember)
+		file, err := a.readJSON(sec.Path)
 		if err != nil {
 			return nil, err
+		}
+		if held += int64(len(file)); held > maxJSONTotal {
+			return nil, invalidArchive("size", "its sections hold more than the %d bytes that an import reads",
+				maxJSONTotal)
 		}
 		sum := sha256.Sum256(file)
 		if hex.EncodeToString(sum[:]) != entry.SHA256 {
@@ -245,15 +251,12 @@ func sectionNamed(name string) (Section, bool) {
 // in. A person's ID is not one, as people are mapped apart (mapPeople).
 var idToken = regexp.MustCompile(`(?i)\b(?:prj|fld|bd|nd|bo|cn|var|ct|atr|cmp|cmt|snp|ast|pst)_[0-9a-z]{26}\b`)
 
-// userToken finds a user's public ID.
-var userToken = regexp.MustCompile(`(?i)\busr_[0-9a-z]{26}\b`)
-
 // plainIDs returns the JSON document data with each escape of a character that
 // an ID is written in, a letter, a digit, or an underscore of ASCII, as that
 // character, and anything else as it is. An ID is found by its spelling in the
-// file (idToken, userToken), and a parser reads an escaped underscore as an
-// underscore, so that an ID left escaped would be neither mapped nor rewritten,
-// and would still name its row once the document is read.
+// file (idToken), and a parser reads an escaped underscore as an underscore, so
+// that an ID left escaped would be neither mapped nor rewritten, and would
+// still name its row once the document is read.
 func plainIDs(data []byte) []byte {
 	if !bytes.Contains(data, []byte{'\\', 'u'}) {
 		return data
@@ -298,31 +301,101 @@ func rewriteIDs(data []byte, table map[ids.UUID]ids.UUID) []byte {
 	})
 }
 
-// rewriteUsers returns data with each user's ID written as table says, or as
-// the ID that fallback gives for one that the table does not have, so that no
-// ID from an archive can name an account of the instance that the workspace
-// cannot see.
-func rewriteUsers(data []byte, table map[ids.UUID]ids.UUID) []byte {
-	return userToken.ReplaceAllFunc(data, func(tok []byte) []byte {
-		id, err := ids.Decode(ids.User, string(tok))
-		if err != nil {
-			return tok
-		}
-		fresh, ok := table[id]
-		if !ok {
-			return tok
-		}
-		return []byte(ids.Encode(ids.User, fresh))
-	})
-}
-
-// usersIn adds to set each user's ID that data holds.
-func usersIn(data []byte, set map[ids.UUID]bool) {
-	for _, tok := range userToken.FindAll(data, -1) {
-		if id, err := ids.Decode(ids.User, string(tok)); err == nil {
+// mentionsIn adds to set the user of each mention of a member that the comment
+// body holds. A body that is not a document adds none, and its comment is
+// refused when it is written.
+func mentionsIn(body []byte, set map[ids.UUID]bool) {
+	doc, err := richtext.Parse(body)
+	if err != nil {
+		return
+	}
+	for _, m := range doc.Members() {
+		if id, err := ids.Decode(ids.User, m.User); err == nil {
 			set[id] = true
 		}
 	}
+}
+
+// rewriteMentions returns the comment body with each mention of a member naming
+// the account that table maps its user to, so that no ID from an archive can
+// name an account of the instance that the workspace cannot see. What the
+// body's text spells is its author's, and names nobody.
+func rewriteMentions(body []byte, table map[ids.UUID]ids.UUID) ([]byte, error) {
+	doc, err := richtext.Parse(body)
+	if err != nil {
+		return nil, err
+	}
+	var failure error
+	doc.MapMembers(func(user string) string {
+		id, err := ids.Decode(ids.User, user)
+		if err != nil {
+			failure = err
+			return user
+		}
+		fresh, ok := table[id]
+		if !ok {
+			failure = fmt.Errorf("the mention of %s is of no one whom the archive names", user)
+			return user
+		}
+		return ids.Encode(ids.User, fresh)
+	})
+	if failure != nil {
+		return nil, failure
+	}
+	return json.Marshal(*doc)
+}
+
+// reportMutes returns the validation report raw as a tree, and the mute of each
+// of its findings that names who muted it. A report that is not an object has
+// none.
+func reportMutes(raw []byte) (map[string]any, []map[string]any) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var doc map[string]any
+	if err := dec.Decode(&doc); err != nil {
+		return nil, nil
+	}
+	findings, _ := doc["findings"].([]any)
+	var mutes []map[string]any
+	for _, f := range findings {
+		finding, _ := f.(map[string]any)
+		mute, _ := finding["mute"].(map[string]any)
+		if _, ok := mute["muted_by"].(string); ok {
+			mutes = append(mutes, mute)
+		}
+	}
+	return doc, mutes
+}
+
+// reportUsersIn adds to set each user who a validation report says muted a
+// finding.
+func reportUsersIn(raw []byte, set map[ids.UUID]bool) {
+	_, mutes := reportMutes(raw)
+	for _, mute := range mutes {
+		if id, err := ids.Decode(ids.User, mute["muted_by"].(string)); err == nil {
+			set[id] = true
+		}
+	}
+}
+
+// rewriteReport returns the validation report raw with each finding's muted_by
+// naming the account that table maps it to, and without one that names no one
+// of the table, which is how the API reads an ID that is no account's.
+func rewriteReport(raw []byte, table map[ids.UUID]ids.UUID) ([]byte, error) {
+	doc, mutes := reportMutes(raw)
+	if len(mutes) == 0 {
+		return raw, nil
+	}
+	for _, mute := range mutes {
+		id, err := ids.Decode(ids.User, mute["muted_by"].(string))
+		fresh, ok := table[id]
+		if err != nil || !ok {
+			delete(mute, "muted_by")
+			continue
+		}
+		mute["muted_by"] = ids.Encode(ids.User, fresh)
+	}
+	return json.Marshal(doc)
 }
 
 // entityIDs returns the ID of every row that the archive would add, each once,
@@ -395,29 +468,54 @@ func (c *archived) entityIDs() ([]ids.UUID, error) {
 	return out, nil
 }
 
-// freshIDs returns a table of a fresh ID for each of list. The releases' IDs
-// are made in the order of their IDs, each after the last, as a project's list
-// of releases is in the order of their IDs (package snapshot).
-func (c *archived) freshIDs(list []ids.UUID) (map[ids.UUID]ids.UUID, error) {
+// freshIDs returns a table of a fresh ID for each of list, which is sorted and
+// holds each once, that keeps their order: a release's files hold their arrays
+// sorted by ID (schema/published/README.md), and a project's list of releases
+// is in the order of their IDs (package snapshot), which rewriting them in
+// place then leaves as they were.
+func freshIDs(list []ids.UUID) map[ids.UUID]ids.UUID {
+	fresh := make([]ids.UUID, len(list))
+	for i := range fresh {
+		fresh[i] = ids.New()
+	}
+	slices.SortFunc(fresh, func(a, b ids.UUID) int { return bytes.Compare(a[:], b[:]) })
 	table := make(map[ids.UUID]ids.UUID, len(list))
+	for i, id := range list {
+		table[id] = fresh[i]
+	}
+	return table
+}
+
+// remapIDs returns list with every ID that the files of the archive's releases
+// spell, sorted, each once. A release can hold what the draft no longer does,
+// which no row has, and which has to take a fresh ID too, or it would sort
+// apart from the fresh IDs around it.
+func (c *archived) remapIDs(a *archive, list []ids.UUID) ([]ids.UUID, error) {
+	set := make(map[ids.UUID]bool, len(list))
 	for _, id := range list {
-		table[id] = ids.New()
+		set[id] = true
 	}
-	order := make([]ids.UUID, 0, len(c.releases))
-	for _, rel := range c.releases {
-		id, err := ids.Decode(ids.Snapshot, rel.ID)
-		if err != nil {
-			return nil, &ImportError{Code: FailContentInvalid, Section: "releases", Check: "id", Detail: rel.ID}
+	add := func(files schemaversion.Files) {
+		for p, data := range files {
+			if !schemaversion.IsJSON(p) {
+				continue
+			}
+			for _, tok := range idToken.FindAll(plainIDs(data), -1) {
+				if _, id, err := ids.DecodeAny(string(tok)); err == nil {
+					set[id] = true
+				}
+			}
 		}
-		order = append(order, id)
 	}
-	slices.SortFunc(order, func(a, b ids.UUID) int { return bytes.Compare(a[:], b[:]) })
-	var last ids.UUID
-	for _, id := range order {
-		last = ids.NewAfter(last)
-		table[id] = last
+	add(c.sourceFiles)
+	for _, dir := range c.releasePaths {
+		files, err := releaseFiles(a, dir)
+		if err != nil {
+			return nil, err
+		}
+		add(files)
 	}
-	return table, nil
+	return slices.SortedFunc(maps.Keys(set), func(a, b ids.UUID) int { return bytes.Compare(a[:], b[:]) }), nil
 }
 
 // remap rewrites every ID that table holds through the archive's sections, and

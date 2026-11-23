@@ -462,7 +462,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p CreatePayload) error {
 	// its ID rather than for the key that its variable has taken; the insert
 	// below refuses the ID of a variable that this transaction does not see.
 	if _, err := q.VariableAny(ctx, queries.VariableAnyParams{WorkspaceID: ws, ProjectID: project, ID: id}); err == nil {
-		return commands.Refuse("id", "is the ID of a variable that exists already", nil)
+		return commands.Refuse("id", "is the ID of a variable that exists already", commands.ErrIDTaken)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("variable: read the variable: %w", err)
 	}
@@ -489,7 +489,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p CreatePayload) error {
 	if database.UniqueViolation(err, "variable_pkey") {
 		// The ID is another workspace's, or another project's, whose rows this
 		// transaction does not see.
-		return commands.Refuse("id", "is the ID of a variable that exists already", nil)
+		return commands.Refuse("id", "is the ID of a variable that exists already", commands.ErrIDTaken)
 	}
 	if err != nil {
 		return fmt.Errorf("variable: add the variable: %w", err)

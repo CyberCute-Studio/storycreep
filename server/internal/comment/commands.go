@@ -413,7 +413,7 @@ func checkMentions(ctx context.Context, tx *commands.Tx, body richtext.Doc, befo
 // refuseTakenID returns the refusal of a create whose ID a comment has
 // already.
 func refuseTakenID() error {
-	return commands.Refuse("id", "is the ID of a comment that exists already", nil)
+	return commands.Refuse("id", "is the ID of a comment that exists already", commands.ErrIDTaken)
 }
 
 // checkCreate returns the problems of a create's payload p that its schema
@@ -442,6 +442,17 @@ func checkCreate(p createPayload) input.FieldErrors {
 	return errs
 }
 
+// CheckImported returns what is wrong with data, the body of a comment of an
+// imported archive, which is held to what a comment's commands hold a body to.
+// The body is read as a stored document, in its canonical form.
+func CheckImported(data []byte) (input.FieldErrors, error) {
+	doc, err := richtext.Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	return checkBody(*doc), nil
+}
+
 // checkBody returns the problems of body, the body of a comment that a
 // command writes, which a stored body that the step of an inverse writes
 // back may break: a value reference or a mention of a component, at its
@@ -458,17 +469,6 @@ func checkCreate(p createPayload) input.FieldErrors {
 // @Tomas alone says. The location of a node is in the document's canonical
 // form (richtext.Parse), whose neighbouring texts with the same marks are
 // one, as an editor writes them. It reads nothing but body.
-// CheckImported returns what is wrong with data, the body of a comment of an
-// imported archive, which is held to what a comment's commands hold a body to.
-// The body is read as a stored document, in its canonical form.
-func CheckImported(data []byte) (input.FieldErrors, error) {
-	doc, err := richtext.Parse(data)
-	if err != nil {
-		return nil, err
-	}
-	return checkBody(*doc), nil
-}
-
 func checkBody(body richtext.Doc) input.FieldErrors {
 	if errs := foreign(body.Blocks, "body"); len(errs) > 0 {
 		return errs

@@ -279,7 +279,8 @@ func (p parts) apply(section, id string, typ commands.Type, payload any) error {
 	}
 	if field, message, ok := commands.PartRefusal(err); ok {
 		return &ImportError{Code: FailContentInvalid, Section: section, Check: field,
-			Detail: fmt.Sprintf("%s: %s %s", id, field, message)}
+			Detail: fmt.Sprintf("%s: %s %s", id, field, message),
+			unique: errors.Is(commands.PartReason(err), commands.ErrIDTaken)}
 	}
 	return fmt.Errorf("authoring: apply %s of the section %s: %w", id, section, err)
 }

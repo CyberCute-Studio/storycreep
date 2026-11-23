@@ -235,7 +235,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	// keep-mine sends it (FR-OFF-04), is refused for its ID; the insert below
 	// refuses the ID of a play state that this transaction does not see.
 	if _, err := q.PlayStateAny(ctx, queries.PlayStateAnyParams{WorkspaceID: ws, ProjectID: project, ID: id}); err == nil {
-		return commands.Refuse("id", "is the ID of a play state that exists already", nil)
+		return commands.Refuse("id", "is the ID of a play state that exists already", commands.ErrIDTaken)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("playstate: read the play state: %w", err)
 	}
@@ -248,7 +248,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	if database.UniqueViolation(err, "play_state_pkey") {
 		// The ID is another project's, or another workspace's, whose rows
 		// this transaction does not see.
-		return commands.Refuse("id", "is the ID of a play state that exists already", nil)
+		return commands.Refuse("id", "is the ID of a play state that exists already", commands.ErrIDTaken)
 	}
 	if err != nil {
 		return fmt.Errorf("playstate: add the play state: %w", err)
@@ -407,11 +407,10 @@ func checkState(name string, st published.SaveState) input.FieldErrors {
 	return nil
 }
 
-// checkName says what is wrong with a play state's name, or returns "".
 // CheckImported returns what is wrong with a play state of an imported
-// archive, by its name, its state, and the names of its values, which are
-// held to what the commands hold a new play state to.
-func CheckImported(name string, state, names []byte) input.FieldErrors {
+// archive for the project projectID, by its name, its state, and the names of
+// its values, which are held to what the commands hold a new play state to.
+func CheckImported(projectID ids.UUID, name string, state, names []byte) input.FieldErrors {
 	var errs input.FieldErrors
 	if msg := checkName(name); msg != "" {
 		errs = append(errs, input.FieldError{Field: "name", Message: msg})
@@ -421,6 +420,10 @@ func CheckImported(name string, state, names []byte) input.FieldErrors {
 		return append(errs, input.FieldError{Field: "state", Message: "is no save state: " + err.Error()})
 	}
 	errs = append(errs, checkState("state", st)...)
+	if st.ProjectID != ids.Encode(ids.Project, projectID) {
+		errs = append(errs, input.FieldError{Field: "state.projectId", Message: "is not the ID of the project that " +
+			"it is imported as, whose play states hold its own states only"})
+	}
 	var ns PlayStateNames
 	if err := json.Unmarshal(names, &ns); err != nil {
 		return append(errs, input.FieldError{Field: "names", Message: "are no names: " + err.Error()})
@@ -429,6 +432,7 @@ func CheckImported(name string, state, names []byte) input.FieldErrors {
 	return append(errs, checkNameTexts(ns)...)
 }
 
+// checkName says what is wrong with a play state's name, or returns "".
 func checkName(name string) string {
 	return input.CheckTrimmedName(name, MaxNameLength)
 }

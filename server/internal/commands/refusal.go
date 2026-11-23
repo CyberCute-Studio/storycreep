@@ -7,6 +7,12 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
 
+// ErrIDTaken is the reason of a refusal of a new entity's ID that an entity has
+// already, which may be another workspace's. The API answers it as any value
+// that the project's state does not take, and an import that kept an archive's
+// IDs takes it for a row that came after its collision check (PRD §5.2).
+var ErrIDTaken = errors.New("commands: the ID is another entity's")
+
 // commandRefusal is a command's refusal of its batch (Refuse).
 type commandRefusal struct {
 	field, message string

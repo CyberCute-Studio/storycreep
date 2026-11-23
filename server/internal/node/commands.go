@@ -958,7 +958,7 @@ func checkNewNode(ctx context.Context, q *queries.Queries, ws, project, id pgtyp
 // with the ID of one that exists already, which may be another workspace's,
 // or another project's, whose rows the transaction does not see.
 func refuseTakenID() error {
-	return commands.Refuse("id", "is the ID of a node that exists already", nil)
+	return commands.Refuse("id", "is the ID of a node that exists already", commands.ErrIDTaken)
 }
 
 // planUpdate returns the node of Update's payload p, as it is, and every

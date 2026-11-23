@@ -233,7 +233,7 @@ func applyCreateFolder(ctx context.Context, tx *commands.Tx, p CreateFolderPaylo
 	// A folder of the project with the ID is refused for its ID before
 	// anything else is checked, as a board's is (applyCreate).
 	if _, err := q.FolderAny(ctx, queries.FolderAnyParams{WorkspaceID: ws, ProjectID: project, ID: id}); err == nil {
-		return commands.Refuse("id", "is the ID of a folder that exists already", nil)
+		return commands.Refuse("id", "is the ID of a folder that exists already", commands.ErrIDTaken)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("board: read the folder: %w", err)
 	}
@@ -248,7 +248,7 @@ func applyCreateFolder(ctx context.Context, tx *commands.Tx, p CreateFolderPaylo
 	err = q.InsertFolder(ctx, queries.InsertFolderParams{ID: id, WorkspaceID: ws, ProjectID: project, Kind: p.Kind,
 		ParentID: parent, Name: p.Name, SortKey: order, CreatedBy: by(tx)})
 	if database.UniqueViolation(err, "folder_pkey") {
-		return commands.Refuse("id", "is the ID of a folder that exists already", nil)
+		return commands.Refuse("id", "is the ID of a folder that exists already", commands.ErrIDTaken)
 	}
 	if err != nil {
 		return fmt.Errorf("board: add the folder: %w", err)

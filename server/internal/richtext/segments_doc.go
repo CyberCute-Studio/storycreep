@@ -95,6 +95,11 @@ func (b *segmentBuilder) paragraph(depth int) error {
 		return fmt.Errorf("a paragraph of depth %d, within %d lists", depth, len(b.lists))
 	}
 	b.lists = b.lists[:depth]
+	// No segment begins the document's first paragraph, so one that comes
+	// before any says that the first is there, and empty.
+	if b.p == nil {
+		b.doc.Blocks = append(b.doc.Blocks, &Paragraph{})
+	}
 	b.p = &Paragraph{}
 	if depth == 0 {
 		b.doc.Blocks = append(b.doc.Blocks, b.p)

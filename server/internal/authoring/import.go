@@ -39,6 +39,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/search"
 	"github.com/CyberCute-Studio/storycreep/server/internal/snapshot"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
+	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
 )
 
 // ChunkBytes is the size of each chunk of an upload but its last, which a
@@ -508,7 +509,16 @@ func (s *Service) CompleteImport(ctx context.Context, actor commands.Actor, work
 			return fmt.Errorf("authoring: queue the import: %w", err)
 		}
 		if n == 0 {
-			return &ImportStateError{Status: row.Status}
+			// Something ended the upload since it was read, as a cancel.
+			now, err := q.ProjectImportOfJob(ctx, queries.ProjectImportOfJobParams{WorkspaceID: uuid(workspaceID),
+				ID: uuid(id)})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			if err != nil {
+				return fmt.Errorf("authoring: read the import: %w", err)
+			}
+			return &ImportStateError{Status: now.Status}
 		}
 		args := importArgs{WorkspaceID: workspaceID.String(), ImportID: id.String()}
 		if _, err := s.queue.Enqueue(ctx, tx, importRunJob(args), &jobs.EnqueueOptions{
@@ -932,29 +942,43 @@ func (s *Service) progress(ctx context.Context, run importRun, phase string, don
 }
 
 // releaseFiles returns the files of the archive under dir, by their paths
-// below it.
+// below it, which are held in memory together, within maxJSONTotal.
 func releaseFiles(a *archive, dir string) (schemaversion.Files, error) {
 	names := a.under(dir)
 	files := make(schemaversion.Files, len(names))
+	var held int64
 	for _, name := range names {
-		data, err := a.read(name, maxJSONMember)
+		path := strings.TrimPrefix(name, dir)
+		var data []byte
+		var err error
+		if schemaversion.IsJSON(path) {
+			data, err = a.readJSON(name)
+		} else {
+			data, err = a.read(name, maxJSONMember)
+		}
 		if err != nil {
 			return nil, err
 		}
-		files[strings.TrimPrefix(name, dir)] = data
+		if held += int64(len(data)); held > maxJSONTotal {
+			return nil, invalidArchive("size", "the files of %q hold more than the %d bytes that an import reads", dir,
+				maxJSONTotal)
+		}
+		files[path] = data
 	}
 	return files, nil
 }
 
-// verifyRelease verifies a release of the archive before it is accepted
-// (FR-DATA-01): that it is of a version that the server reads, each file's
-// hash, the content hash, each file against the schema of its version, and,
-// through the reference runtime, its cross-file references and its ASTs, which
-// must type-check against the declarations of the snapshot and within the
-// sandbox limits, at an astVersion that the server supports, and that its
-// sealed manifest is of the release that the archive's index names, by its ID
-// and its version. A failure names the release's version and the check (AC11).
-func verifyRelease(id, version string, schemaVersion int, contentHash string, files schemaversion.Files) error {
+// verifyRelease verifies a release of the archive of the project projectID
+// before it is accepted (FR-DATA-01): that it is of a version that the server
+// reads, each file's hash, the content hash, each file against the schema of
+// its version, and, through the reference runtime, its cross-file references
+// and its ASTs, which must type-check against the declarations of the snapshot
+// and within the sandbox limits, at an astVersion that the server supports, and
+// that its sealed manifest is of that project and of the release that the
+// archive's index names, by its ID and its version. A failure names the
+// release's version and the check (AC11).
+func verifyRelease(projectID, id, version string, schemaVersion int, contentHash string,
+	files schemaversion.Files) error {
 	fail := func(check string, err error) *ImportError {
 		e := &ImportError{Code: FailReleaseInvalid, Version: version, Check: check}
 		if err != nil {
@@ -992,7 +1016,7 @@ func verifyRelease(id, version string, schemaVersion int, contentHash string, fi
 				contentHash))
 		}
 	}
-	if err := checkReleaseNames(files, id, version); err != nil {
+	if err := checkReleaseNames(files, projectID, id, version); err != nil {
 		return fail("snapshot", err)
 	}
 	if err := schemaversion.Validate(files); err != nil {
@@ -1009,13 +1033,22 @@ func verifyRelease(id, version string, schemaVersion int, contentHash string, fi
 }
 
 // checkReleaseNames checks that the manifest of a release's files is of the
-// release of the ID id and the version version, either of which an archive of
-// a release may leave out of its own manifest, so that a row never says one
-// release while its files say another.
-func checkReleaseNames(files schemaversion.Files, id, version string) error {
+// project projectID, and of the release of the ID id and the version version,
+// either of which an archive of a release may leave out of its own manifest,
+// so that a row never says one release while its files say another.
+func checkReleaseNames(files schemaversion.Files, projectID, id, version string) error {
 	m, err := schemaversion.Object(files, published.ManifestPath)
 	if err != nil {
 		return err
+	}
+	own, err := ids.Decode(ids.Project, projectID)
+	if err != nil {
+		return fmt.Errorf("the archive's project: %w", err)
+	}
+	info, _ := m["project"].(map[string]any)
+	named, _ := info["id"].(string)
+	if of, err := ids.Decode(ids.Project, named); err != nil || of != own {
+		return fmt.Errorf("its manifest is of the project %q, and the archive of %s", named, projectID)
 	}
 	snap, ok := m["snapshot"].(map[string]any)
 	if !ok {
@@ -1074,29 +1107,28 @@ func manifestFacts(files schemaversion.Files) (map[string]string, string, error)
 }
 
 // atTypesVersion returns the files at the version of package published's
-// types, from which a draft is built, and the migration steps that took them
-// there, if there were any.
-func atTypesVersion(version string, files schemaversion.Files) (schemaversion.Files, []schemaversion.Step, error) {
+// types, from which a draft is built. A release of the history logs its own
+// migration when it is written (importWriter.release).
+func atTypesVersion(version string, files schemaversion.Files) (schemaversion.Files, error) {
 	v, err := schemaversion.VersionOf(files)
 	if err != nil {
-		return nil, nil, &ImportError{Code: FailReleaseInvalid, Version: version, Check: "manifest",
+		return nil, &ImportError{Code: FailReleaseInvalid, Version: version, Check: "manifest",
 			Detail: firstLine(err.Error())}
 	}
 	var out schemaversion.Files
-	var steps []schemaversion.Step
 	switch {
 	case v < published.SchemaVersion:
-		out, steps, err = schemaversion.Migrate(files, published.SchemaVersion)
+		out, _, err = schemaversion.Migrate(files, published.SchemaVersion)
 	case v > published.SchemaVersion:
 		out, _, err = schemaversion.Render(files, published.SchemaVersion)
 	default:
-		return files, nil, nil
+		return files, nil
 	}
 	if err != nil {
-		return nil, nil, &ImportError{Code: FailReleaseInvalid, Version: version, Check: "migration",
+		return nil, &ImportError{Code: FailReleaseInvalid, Version: version, Check: "migration",
 			Detail: firstLine(err.Error())}
 	}
-	return out, steps, nil
+	return out, nil
 }
 
 // importArchive reads, checks, and imports the archive r of size bytes. Every
@@ -1117,7 +1149,6 @@ func (s *Service) importArchive(ctx context.Context, run importRun, r io.ReaderA
 			Detail: fmt.Sprintf("the archive was written at schema version %d, and this server reads up to version %d",
 				c.manifest.PublishedSchemaVersion, supported.Max)}
 	}
-	var sourceSteps []schemaversion.Step
 	if c.manifest.Source.Kind == "release" {
 		files, err := releaseFiles(a, "release/")
 		if err != nil {
@@ -1127,15 +1158,14 @@ func (s *Service) importArchive(ctx context.Context, run importRun, r io.ReaderA
 			return &ImportError{Code: FailReleaseInvalid, Version: c.manifest.Source.Version, Check: "missing_file",
 				Detail: "the archive of a release holds no release files"}
 		}
-		if err := verifyRelease(c.manifest.Source.SnapshotID, c.manifest.Source.Version, 0,
+		if err := verifyRelease(c.manifest.Project.ID, c.manifest.Source.SnapshotID, c.manifest.Source.Version, 0,
 			c.manifest.Source.ContentHash, files); err != nil {
 			return err
 		}
-		current, steps, err := atTypesVersion(c.manifest.Source.Version, files)
+		current, err := atTypesVersion(c.manifest.Source.Version, files)
 		if err != nil {
 			return err
 		}
-		sourceSteps = steps
 		c.sourceFiles = current
 		if err := c.buildFromRelease(current); err != nil {
 			return err
@@ -1152,7 +1182,8 @@ func (s *Service) importArchive(ctx context.Context, run importRun, r io.ReaderA
 			return &ImportError{Code: FailReleaseInvalid, Version: rel.Version, Check: "missing_file",
 				Detail: "the archive holds no files of the release"}
 		}
-		if err := verifyRelease(rel.ID, rel.Version, rel.SchemaVersion, rel.ContentHash, files); err != nil {
+		if err := verifyRelease(c.manifest.Project.ID, rel.ID, rel.Version, rel.SchemaVersion, rel.ContentHash,
+			files); err != nil {
 			return err
 		}
 	}
@@ -1177,7 +1208,7 @@ func (s *Service) importArchive(ctx context.Context, run importRun, r io.ReaderA
 	}
 	var table map[ids.UUID]ids.UUID
 	if policy == PolicyRemap {
-		if table, err = c.remapAll(list); err != nil {
+		if table, err = c.remapAll(a, list); err != nil {
 			return err
 		}
 	}
@@ -1190,7 +1221,7 @@ func (s *Service) importArchive(ctx context.Context, run importRun, r io.ReaderA
 		}
 	}
 	s.progress(ctx, run, "writing", 0, 0)
-	err = s.writeImport(ctx, run, a, c, policy, table, files, sourceSteps, missing)
+	err = s.writeImport(ctx, run, a, c, policy, table, files, missing)
 	if policy != PolicyPreserve || !idTaken(err) {
 		return err
 	}
@@ -1198,20 +1229,22 @@ func (s *Service) importArchive(ctx context.Context, run importRun, r io.ReaderA
 	// as a concurrent import of the same archive on another process does. The
 	// transaction wrote nothing, so the import is made again with fresh IDs,
 	// and a unique violation that remains is the archive's own.
-	if table, err = c.remapAll(list); err != nil {
+	if table, err = c.remapAll(a, list); err != nil {
 		return err
 	}
 	missing = c.dropMissingAssets()
-	return s.writeImport(ctx, run, a, c, PolicyRemap, table, files, sourceSteps, missing)
+	return s.writeImport(ctx, run, a, c, PolicyRemap, table, files, missing)
 }
 
-// remapAll gives the archive's IDs of list fresh ones, through its sections and
-// the draft of an archive of a release, and returns the table of them.
-func (c *archived) remapAll(list []ids.UUID) (map[ids.UUID]ids.UUID, error) {
-	table, err := c.freshIDs(list)
+// remapAll gives the archive's IDs of list, and those that only its releases'
+// files hold, fresh ones, through its sections and the draft of an archive of a
+// release, and returns the table of them.
+func (c *archived) remapAll(a *archive, list []ids.UUID) (map[ids.UUID]ids.UUID, error) {
+	all, err := c.remapIDs(a, list)
 	if err != nil {
 		return nil, err
 	}
+	table := freshIDs(all)
 	if err := c.remap(table); err != nil {
 		return nil, err
 	}
@@ -1291,7 +1324,7 @@ func (c *archived) dropMissingAssets() int {
 // writeImport writes the project of the archive in one transaction, which ends
 // the import too, so that it commits whole or not at all (FR-DATA-01).
 func (s *Service) writeImport(ctx context.Context, run importRun, a *archive, c *archived, policy string,
-	table map[ids.UUID]ids.UUID, files []asset.ImportedFile, sourceSteps []schemaversion.Step, missing int) error {
+	table map[ids.UUID]ids.UUID, files []asset.ImportedFile, missing int) error {
 	projectID, err := ids.Decode(ids.Project, c.manifest.Project.ID)
 	if err != nil {
 		return &ImportError{Code: FailContentInvalid, Section: "manifest", Check: "id", Detail: c.manifest.Project.ID}
@@ -1391,11 +1424,6 @@ func (s *Service) writeImport(ctx context.Context, run importRun, a *archive, c 
 			}
 			maxSeq = max(maxSeq, rel.SourceSeq, rel.AcknowledgedSeq)
 		}
-		if len(sourceSteps) > 0 && c.manifest.Source.SnapshotID != "" && len(c.releases) > 0 {
-			if err := recordSourceSteps(ctx, tx, run, projectID, c, table, sourceSteps); err != nil {
-				return err
-			}
-		}
 		// A project's sequence is where its next operation goes, and is at
 		// least that of the draft that each of its releases was built from.
 		if maxSeq > 0 {
@@ -1403,6 +1431,11 @@ func (s *Service) writeImport(ctx context.Context, run importRun, a *archive, c 
 				ID: uuid(projectID), Seq: maxSeq}); err != nil {
 				return fmt.Errorf("authoring: set the project's sequence: %w", err)
 			}
+		}
+		// Last, as its check holds the lock of the workspace's projects until
+		// this transaction ends.
+		if err := s.projects.FinishImported(ctx, tx, run.workspace); err != nil {
+			return err
 		}
 		data, err := json.Marshal(report)
 		if err != nil {
@@ -1449,26 +1482,6 @@ func (s *Service) recordFileImport(ctx context.Context, tx pgx.Tx, run importRun
 	return nil
 }
 
-// recordSourceSteps logs the migration of an archive of a release's files, of
-// the release of the history that it is, if the archive holds that release.
-func recordSourceSteps(ctx context.Context, tx pgx.Tx, run importRun, projectID ids.UUID, c *archived,
-	table map[ids.UUID]ids.UUID, steps []schemaversion.Step) error {
-	id, err := ids.Decode(ids.Snapshot, c.manifest.Source.SnapshotID)
-	if err != nil {
-		return &ImportError{Code: FailContentInvalid, Section: "manifest", Check: "id",
-			Detail: c.manifest.Source.SnapshotID}
-	}
-	if fresh, ok := table[id]; ok {
-		id = fresh
-	}
-	for _, rel := range c.releases {
-		if relID, err := ids.Decode(ids.Snapshot, rel.ID); err == nil && relID == id {
-			return schemaversion.Record(ctx, tx, run.workspace, projectID, id, steps)
-		}
-	}
-	return nil
-}
-
 // uniqueViolation is PostgreSQL's code of a row that a unique constraint
 // refuses.
 const uniqueViolation = "23505"
@@ -1501,7 +1514,8 @@ func importWriteError(err error) error {
 			unique: pg.Code == uniqueViolation}
 	}
 	if field, message, ok := commands.PartRefusal(err); ok {
-		return &ImportError{Code: FailContentInvalid, Check: field, Detail: message}
+		return &ImportError{Code: FailContentInvalid, Check: field, Detail: message,
+			unique: errors.Is(commands.PartReason(err), commands.ErrIDTaken)}
 	}
 	// The project's own fields, which CreateImported holds to a new project's
 	// checks, as a name or a default locale that is not one.
@@ -1533,6 +1547,9 @@ func mapPeople(ctx context.Context, q *queries.Queries, ws ids.UUID, c *archived
 	for _, x := range c.comments {
 		add(x.AuthorID)
 		add(x.ResolvedBy)
+		if !x.Deleted {
+			mentionsIn(x.Body, seen)
+		}
 	}
 	for _, x := range c.playStates {
 		add(x.CreatedBy)
@@ -1542,9 +1559,8 @@ func mapPeople(ctx context.Context, q *queries.Queries, ws ids.UUID, c *archived
 	}
 	for _, x := range c.releases {
 		add(x.PublishedBy)
-		usersIn(x.ValidationReport, seen)
+		reportUsersIn(x.ValidationReport, seen)
 	}
-	usersIn(c.raw["comments"], seen)
 	out := make(map[ids.UUID]ids.UUID, len(seen))
 	if len(seen) == 0 {
 		return out, 0, nil
@@ -1705,6 +1721,10 @@ func (w importWriter) mutes(ctx context.Context, list []ValidationMute) error {
 		if err != nil {
 			return &ImportError{Code: FailContentInvalid, Section: "validation_mutes", Check: "owner", Detail: err.Error()}
 		}
+		if problems := validation.CheckImported(m.OwnerID, m.Code, m.Reason); len(problems) > 0 {
+			return &ImportError{Code: FailContentInvalid, Section: "validation_mutes", Check: problems[0].Field,
+				Detail: m.OwnerID + ": " + problems[0].Field + " " + problems[0].Message}
+		}
 		if err := w.q.InsertImportedMute(ctx, p); err != nil {
 			return sectionError("validation_mutes", m.OwnerID, err)
 		}
@@ -1805,7 +1825,9 @@ func (w importWriter) comments(ctx context.Context, list []Comment) error {
 			if len(x.Body) == 0 {
 				return fail(x.ID, "body", "a comment that is not deleted has a body")
 			}
-			p.Body = rewriteUsers(x.Body, w.users)
+			if p.Body, err = rewriteMentions(x.Body, w.users); err != nil {
+				return fail(x.ID, "body", err.Error())
+			}
 			problems, err := comment.CheckImported(p.Body)
 			if err != nil {
 				return fail(x.ID, "body", err.Error())
@@ -1833,7 +1855,7 @@ func (w importWriter) playStates(ctx context.Context, list []PlayState) error {
 		if len(names) == 0 || string(names) == "null" {
 			names = []byte("{}")
 		}
-		if problems := playstate.CheckImported(x.Name, x.State, names); len(problems) > 0 {
+		if problems := playstate.CheckImported(w.project.Bytes, x.Name, x.State, names); len(problems) > 0 {
 			return &ImportError{Code: FailContentInvalid, Section: "play_states", Check: problems[0].Field,
 				Detail: x.ID + ": " + problems[0].Field + " " + problems[0].Message}
 		}
@@ -1870,7 +1892,14 @@ func (w importWriter) release(ctx context.Context, tx pgx.Tx, rel Release, files
 	if err != nil {
 		return nil, fail("manifest", err)
 	}
-	warnings, report := []byte(rel.AcknowledgedWarnings), rewriteUsers(rel.ValidationReport, w.users)
+	if msg := snapshot.CheckNote(rel.Note); msg != "" {
+		return nil, fail("note", fmt.Errorf("its note %s", msg))
+	}
+	report, err := rewriteReport(rel.ValidationReport, w.users)
+	if err != nil {
+		return nil, fail("validation_report", err)
+	}
+	warnings := []byte(rel.AcknowledgedWarnings)
 	if len(warnings) == 0 || string(warnings) == "null" {
 		warnings = []byte("[]")
 	}

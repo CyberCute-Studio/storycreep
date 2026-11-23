@@ -222,7 +222,7 @@ func applyCreateType(ctx context.Context, tx *commands.Tx, p CreateTypePayload) 
 	// else is checked, as a variable's create is.
 	if _, err := q.ComponentTypeAny(ctx, queries.ComponentTypeAnyParams{WorkspaceID: ws, ProjectID: project,
 		ID: id}); err == nil {
-		return commands.Refuse("id", "is the ID of a component type that exists already", nil)
+		return commands.Refuse("id", "is the ID of a component type that exists already", commands.ErrIDTaken)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("component: read the type: %w", err)
 	}
@@ -248,7 +248,7 @@ func applyCreateType(ctx context.Context, tx *commands.Tx, p CreateTypePayload) 
 	if database.UniqueViolation(err, "component_type_pkey") {
 		// The ID is another workspace's, or another project's, whose rows this
 		// transaction does not see.
-		return commands.Refuse("id", "is the ID of a component type that exists already", nil)
+		return commands.Refuse("id", "is the ID of a component type that exists already", commands.ErrIDTaken)
 	}
 	if err != nil {
 		return fmt.Errorf("component: add the type: %w", err)

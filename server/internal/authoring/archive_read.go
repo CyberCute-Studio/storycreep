@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"path"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -33,10 +35,30 @@ const (
 	// small limit from refusing a small archive whose JSON compresses well.
 	expansionFactor = 4
 	minExpansion    = 1 << 30
+	// maxDirectoryBytes is the most that opening an archive reads of it, which
+	// is its central directory and the search for its end. The zip reader
+	// keeps a File of some 200 bytes for each header of at least 46 bytes, so
+	// that this bounds what it holds, before the count of its members can be
+	// checked. 200,000 members of the longest paths that an export writes take
+	// about half of it.
+	maxDirectoryBytes = 64 << 20
 	// maxJSONMember is the largest JSON file of an archive, which is read into
-	// memory whole.
-	maxJSONMember = 1 << 30
+	// memory whole. The largest is the index of the releases, which holds each
+	// one's validation report: 89 MB for the large fixture with 30 releases,
+	// so that this takes some 170 releases of a project of that size.
+	maxJSONMember = 512 << 20
+	// maxJSONValues is the most values that a JSON file may hold, past which
+	// the tree that checking it against its schema builds would take many
+	// times the file's size, at some 31 bytes a value. That index of the large
+	// fixture has 2.1 million.
+	maxJSONValues = 16_000_000
+	// maxJSONTotal is the most that the JSON files held in memory at once may
+	// take together: the sections of an archive, or the files of a release.
+	maxJSONTotal = 768 << 20
 )
+
+// errDirectoryTooLarge stops the zip reader at maxDirectoryBytes.
+var errDirectoryTooLarge = errors.New("authoring: the archive's central directory is too large")
 
 // Failure codes of an import, in its failure's code, which the API and the web
 // app show (FR-DATA-01).
@@ -111,21 +133,28 @@ func invalidArchive(check, format string, args ...any) *ImportError {
 // archive is an opened archive, whose members have passed the guards.
 type archive struct {
 	files map[string]*zip.File
+	// names are the paths of files, sorted, which under searches.
+	names []string
 	// source counts what is read of the file, which is what a member's
 	// expansion is measured against, as its header's compressed size is the
 	// archive's own word.
 	source *countingReaderAt
 }
 
-// countingReaderAt counts the bytes read through it. Like chunkReader, it is
-// not safe to call from several goroutines.
+// countingReaderAt counts the bytes read through it, and refuses to read past
+// limit, unless that is 0. Like chunkReader, it is not safe to call from
+// several goroutines.
 type countingReaderAt struct {
-	r io.ReaderAt
-	n uint64
+	r     io.ReaderAt
+	n     uint64
+	limit uint64
 }
 
 // ReadAt implements io.ReaderAt.
 func (c *countingReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if c.limit > 0 && c.n+uint64(len(p)) > c.limit {
+		return 0, errDirectoryTooLarge
+	}
 	n, err := c.r.ReadAt(p, off)
 	c.n += uint64(n)
 	return n, err
@@ -136,9 +165,13 @@ func (c *countingReaderAt) ReadAt(p []byte, off int64) (int, error) {
 // or deflated without encryption, and expands within the guards, which scale
 // with the instance's import limit.
 func openArchive(r io.ReaderAt, size, importMax int64) (*archive, error) {
-	source := &countingReaderAt{r: r}
+	source := &countingReaderAt{r: r, limit: maxDirectoryBytes}
 	zr, err := zip.NewReader(source, size)
+	source.limit = 0
 	switch {
+	case errors.Is(err, errDirectoryTooLarge):
+		return nil, invalidArchive("entries", "its central directory is past the %d bytes that an import reads",
+			maxDirectoryBytes)
 	case errors.Is(err, zip.ErrInsecurePath):
 		return nil, invalidArchive("path", "a member's path leaves the archive")
 	case err != nil && readFailure(err):
@@ -187,6 +220,7 @@ func openArchive(r io.ReaderAt, size, importMax int64) (*archive, error) {
 		}
 		a.files[f.Name] = f
 	}
+	a.names = slices.Sorted(maps.Keys(a.files))
 	return a, nil
 }
 
@@ -268,6 +302,49 @@ func (a *archive) read(name string, limit int64) ([]byte, error) {
 	return data, nil
 }
 
+// readJSON returns the JSON file of the path, whole, once it is within the
+// guards of a JSON file, so that the tree that a parser builds of it is bounded
+// whatever the file's size says of it.
+func (a *archive) readJSON(name string) ([]byte, error) {
+	data, err := a.read(name, maxJSONMember)
+	if err != nil {
+		return nil, err
+	}
+	if n := jsonValues(data); n > maxJSONValues {
+		return nil, invalidArchive("json_values", "the member %q holds %d JSON values, more than the %d that it may",
+			name, n, maxJSONValues)
+	}
+	return data, nil
+}
+
+// jsonValues counts the values that a parser would hold of the JSON document
+// data: the document, each object and array, and each item after a comma. It
+// allocates nothing, and reads a document that is not valid as far as it can,
+// which the parser then refuses.
+func jsonValues(data []byte) int {
+	n := 1
+	inString := false
+	for i := 0; i < len(data); i++ {
+		c := data[i]
+		if inString {
+			switch c {
+			case '\\':
+				i++
+			case '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{', '[', ',':
+			n++
+		}
+	}
+	return n
+}
+
 // memberError is the failure of reading a member: the store's own error, as a
 // chunk that it could not read, or a member that is damaged.
 func memberError(name string, err error) error {
@@ -288,15 +365,15 @@ func readFailure(err error) bool {
 }
 
 // under returns the paths of the archive's members below the directory dir,
-// which ends with a slash.
+// which ends with a slash, in their order. It searches the sorted paths, as an
+// archive's index can name as many releases as it has members.
 func (a *archive) under(dir string) []string {
-	var out []string
-	for name := range a.files {
-		if strings.HasPrefix(name, dir) {
-			out = append(out, name)
-		}
+	first, _ := slices.BinarySearch(a.names, dir)
+	last := first
+	for last < len(a.names) && strings.HasPrefix(a.names[last], dir) {
+		last++
 	}
-	return out
+	return a.names[first:last:last]
 }
 
 // chunkError is a failure of the store to give a chunk of the upload, which is

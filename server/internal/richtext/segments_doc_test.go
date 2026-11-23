@@ -45,7 +45,9 @@ func TestFromSegments(t *testing.T) {
 		"an item of two":    {bullets(item(para(text("a")), para(text("more"))), item(para(text("b"))))},
 		"a nested list": {bullets(item(para(text("a")), ordered(1, item(para(text("a1"))), item(para(text("a2"))))),
 			item(para(text("b"))))},
-		"two lists": {bullets(item(para(text("a")))), ordered(5, item(para(text("e"))))},
+		"two lists":                {bullets(item(para(text("a")))), ordered(5, item(para(text("e"))))},
+		"an empty first paragraph": {map[string]any{"type": "paragraph"}, para(text("x"))},
+		"two empty paragraphs":     {map[string]any{"type": "paragraph"}, map[string]any{"type": "paragraph"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

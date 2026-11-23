@@ -450,7 +450,7 @@ func applyCreateAttribute(ctx context.Context, tx *commands.Tx, p CreateAttribut
 	// anything else is checked, as a variable's create is.
 	if _, err := q.AttributeDefAny(ctx, queries.AttributeDefAnyParams{WorkspaceID: ws, ProjectID: project,
 		ID: id}); err == nil {
-		return commands.Refuse("id", "is the ID of an attribute definition that exists already", nil)
+		return commands.Refuse("id", "is the ID of an attribute definition that exists already", commands.ErrIDTaken)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("component: read the attribute definition: %w", err)
 	}
@@ -487,7 +487,7 @@ func applyCreateAttribute(ctx context.Context, tx *commands.Tx, p CreateAttribut
 		ComponentTypeID: t.ID, SortKey: order, Key: key, Name: p.Name, Type: p.Type, EnumOptions: options,
 		DefaultValue: def.JSON(), IsRuntime: p.Runtime, CreatedBy: by(tx)})
 	if database.UniqueViolation(err, "attribute_def_pkey") {
-		return commands.Refuse("id", "is the ID of an attribute definition that exists already", nil)
+		return commands.Refuse("id", "is the ID of an attribute definition that exists already", commands.ErrIDTaken)
 	}
 	if err != nil {
 		return fmt.Errorf("component: add the attribute definition: %w", err)

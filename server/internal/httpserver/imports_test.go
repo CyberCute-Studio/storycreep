@@ -22,6 +22,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
 	"github.com/CyberCute-Studio/storycreep/server/internal/schemaversion"
 	"github.com/CyberCute-Studio/storycreep/server/internal/snapshot"
+	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
 )
 
 func importsPath(ws string) string { return "/api/v1/workspaces/" + ws + "/project-imports" }
@@ -804,6 +805,61 @@ func TestImportMapsAnEscapedMention(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(body), strings.ToLower(stranger)) {
 		t.Errorf("the imported comment still names the account: %s", body)
+	}
+}
+
+// TestImportHoldsDirectRowsToTheirChecks checks that what an import writes
+// without a command is held to its package's checks: a play state of another
+// project, a mute whose reason a command would refuse, and a release's note
+// that publishing would refuse are each the archive's failure.
+//
+// Verifies: FR-DATA-01/AC1
+func TestImportHoldsDirectRowsToTheirChecks(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	exported := exportedArchive(t, f)
+	for name, c := range map[string]struct {
+		forge             func(files map[string][]byte)
+		code, section, at string
+	}{
+		"a play state of another project": {func(files map[string][]byte) {
+			list := items[authoring.PlayState](t, files, "play_states.json")
+			list[0].State = bytes.ReplaceAll(list[0].State, []byte(f.project),
+				[]byte(ids.Encode(ids.Project, ids.New())))
+			data, err := json.Marshal(authoring.Items[authoring.PlayState]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "play_states.json", data, len(list))
+		}, authoring.FailContentInvalid, "play_states", "state.projectId"},
+		"a mute's reason": {func(files map[string][]byte) {
+			list := []authoring.ValidationMute{{OwnerType: "node", OwnerID: f.node,
+				Code: string(validation.Mutable(ids.Node)[0]), Reason: "muted" + string(rune(0x202e))}}
+			data, err := json.Marshal(authoring.Items[authoring.ValidationMute]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "draft/validation_mutes.json", data, len(list))
+		}, authoring.FailContentInvalid, "validation_mutes", "reason"},
+		"a release's note": {func(files map[string][]byte) {
+			list := items[authoring.Release](t, files, "releases/index.json")
+			list[0].Note = " padded "
+			data, err := json.Marshal(authoring.Items[authoring.Release]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "releases/index.json", data, len(list))
+		}, authoring.FailReleaseInvalid, "", "note"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := maps.Clone(exported)
+			c.forge(files)
+			failure := failedImport(t, f.s, f.owner, f.ws, zipOf(t, files))
+			if failure.Code != c.code || failure.Section != c.section || failure.Check != c.at {
+				t.Errorf("the failure is %+v, want %s at %s, %s", *failure, c.code, c.section, c.at)
+			}
+		})
 	}
 }
 

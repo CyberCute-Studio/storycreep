@@ -72,7 +72,7 @@ function Projects() {
       {manages && (
         <div className="flex flex-wrap items-center gap-4">
           <NewProject workspace={workspace} />
-          <ImportButton workspaceId={workspace.id} />
+          <ImportButton key={workspace.id} workspaceId={workspace.id} />
         </div>
       )}
       {projects.length === 0 ? (
