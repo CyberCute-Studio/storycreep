@@ -136,6 +136,8 @@ docker compose exec app storycreep import jo@example.com harbour /tmp/harbour.zi
 
 A full export contains personal data, so keep the file accordingly. An import checks the whole archive first, and creates the project all or nothing. Archives are limited by `STORYCREEP_IMPORT_MAX_BYTES`. The server needs `STORYCREEP_DATABASE_MAINTENANCE_URL`, which the published compose file sets, to check whether an archive's IDs are in use.
 
+Each server process runs one import at a time. A worst-case archive takes close to 2 GiB of heap, about 3 GiB of process memory, on top of what the server already holds. Lowering `STORYCREEP_IMPORT_MAX_BYTES` does not reduce this, because a small archive can unpack to as much JSON. On a host with less memory, an owner or admin who imports a crafted archive can run the server out of memory.
+
 ### Behind a reverse proxy
 
 The server speaks plain HTTP, and expects a reverse proxy in front of it to terminate TLS. Run the proxy on the same machine, forward it to `127.0.0.1:7777`, and set `STORYCREEP_PUBLIC_URL` to the proxy's `https` URL, such as `https://storycreep.example.com`.
