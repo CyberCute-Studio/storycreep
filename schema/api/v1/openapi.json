@@ -5589,6 +5589,36 @@
         ],
         "type": "object"
       },
+      "CreateProjectImportInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "file_name": {
+            "description": "The archive's file name, which the import shows.",
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          },
+          "id_policy": {
+            "description": "auto, the default, keeps the archive's IDs unless one is in use on this instance, and remap gives everything fresh IDs (PRD §5.2).",
+            "enum": [
+              "auto",
+              "remap"
+            ],
+            "type": "string"
+          },
+          "size_bytes": {
+            "description": "The archive's size in bytes, at most the instance's STORYCREEP_IMPORT_MAX_BYTES.",
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file_name",
+          "size_bytes"
+        ],
+        "type": "object"
+      },
       "CreateTokenBody": {
         "additionalProperties": false,
         "properties": {
@@ -8700,6 +8730,29 @@
         ],
         "type": "object"
       },
+      "PageProjectImportBody": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectImportBody"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "The cursor of the next page, or null if this is the last page",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
       "PageRenameSite": {
         "additionalProperties": false,
         "properties": {
@@ -9751,6 +9804,239 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "ProjectImportBody": {
+        "additionalProperties": false,
+        "properties": {
+          "chunk_bytes": {
+            "description": "The size of every chunk but the last.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "chunk_count": {
+            "description": "How many chunks the upload has.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "created_at": {
+            "description": "When the import was asked for.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "When the import is deleted, with what is left of its upload. The project stays.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "failure": {
+            "$ref": "#/components/schemas/ProjectImportFailure",
+            "description": "Why a failed import was refused. Nothing of the archive was imported."
+          },
+          "file_name": {
+            "description": "The archive's file name.",
+            "type": "string"
+          },
+          "finished_at": {
+            "description": "When it ended.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "description": "The import's ID, a job's.",
+            "type": "string"
+          },
+          "id_policy": {
+            "description": "auto keeps the archive's IDs unless one is in use on this instance, and remap gives everything fresh IDs.",
+            "enum": [
+              "auto",
+              "remap"
+            ],
+            "type": "string"
+          },
+          "phase": {
+            "description": "What the import is doing: upload, queued, checking, verifying, assets, writing, done, or failed.",
+            "type": "string"
+          },
+          "progress_done": {
+            "description": "How much of the phase is done.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "progress_total": {
+            "description": "How much of it there is, or 0 where it is not counted.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "project_id": {
+            "description": "The project that a ready import created, unless it has been purged since.",
+            "type": "string"
+          },
+          "received_chunks": {
+            "description": "The indexes of the chunks that are stored, while the import is uploading, for a client to resume from.",
+            "items": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "report": {
+            "$ref": "#/components/schemas/ProjectImportReport",
+            "description": "What a ready import did."
+          },
+          "size_bytes": {
+            "description": "The archive's size.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "status": {
+            "description": "Where the import is: uploading, which takes chunks; queued, whose upload is whole; importing; ready, with a report; or failed, with why.",
+            "enum": [
+              "uploading",
+              "queued",
+              "importing",
+              "ready",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "workspace_id": {
+            "description": "The workspace that it imports into.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "status",
+          "file_name",
+          "size_bytes",
+          "chunk_bytes",
+          "chunk_count",
+          "received_chunks",
+          "id_policy",
+          "phase",
+          "progress_done",
+          "progress_total",
+          "created_at",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "ProjectImportFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "check": {
+            "description": "The check that failed, as hashes, content_hash, schema, references_and_asts, or ast_version for a release.",
+            "type": "string"
+          },
+          "code": {
+            "description": "What failed: archive_invalid (not an archive that the import's guards take), format_unsupported (a format or a version that this server does not read), schema_invalid, section_unsupported (a section that this server cannot import, which section names), content_invalid, release_invalid (a release that fails its verification, which version and check name), asset_invalid, workspace_limit, forbidden, canceled, expired, or internal.",
+            "type": "string"
+          },
+          "detail": {
+            "description": "More about it, in English, for a log or a support request.",
+            "type": "string"
+          },
+          "section": {
+            "description": "The section of the archive that is at fault, if one is.",
+            "type": "string"
+          },
+          "version": {
+            "description": "The version of the release that is at fault, if one is.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "type": "object"
+      },
+      "ProjectImportReport": {
+        "additionalProperties": false,
+        "properties": {
+          "assets": {
+            "description": "How many assets it imported.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "boards": {
+            "description": "How many boards it imported.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "comments": {
+            "description": "How many comments it imported.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "components": {
+            "description": "How many components it imported.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "imported_users": {
+            "description": "How many of the people whom the archive names are not members of the workspace, and are shown as imported users, with the display names from the archive.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "missing_assets": {
+            "description": "How many references to assets it could not keep, as the archive holds no assets.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "nodes": {
+            "description": "How many nodes it imported.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "play_states": {
+            "description": "How many play states it imported.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "policy": {
+            "description": "The ID policy that was applied: preserve kept the archive's IDs, and remap gave everything fresh ones, as at least one was in use on this instance, or it was asked for (PRD §5.2). It says nothing else of what is on the instance.",
+            "enum": [
+              "preserve",
+              "remap"
+            ],
+            "type": "string"
+          },
+          "project_id": {
+            "description": "The new project's ID.",
+            "type": "string"
+          },
+          "project_name": {
+            "description": "The new project's name.",
+            "type": "string"
+          },
+          "releases": {
+            "description": "How many releases it imported, each verified.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "variables": {
+            "description": "How many variables it imported.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "policy",
+          "project_id",
+          "project_name",
+          "boards",
+          "nodes",
+          "variables",
+          "components",
+          "comments",
+          "play_states",
+          "releases",
+          "assets",
+          "imported_users",
+          "missing_assets"
+        ],
         "type": "object"
       },
       "ProjectRenameCommand": {
@@ -26424,6 +26710,764 @@
         "summary": "List a member's grants",
         "tags": [
           "Grants"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/project-imports": {
+      "get": {
+        "description": "Lists the imports of the workspace that the user asked for and that have not expired, newest first. Only the user who asked for an import reads it, and an import of anyone else, or one that has expired, is answered with 404 not_found. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). Requests that read share a rate limit of 1,200 a minute for each IP address, and 600 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "listProjectImports",
+        "parameters": [
+          {
+            "description": "The workspace's ID",
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "description": "The workspace's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageProjectImportBody"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List your imports of a workspace",
+        "tags": [
+          "Project import"
+        ]
+      },
+      "post": {
+        "description": "Begins the import of an authoring export (schema/authoring/v1) as a new project of the workspace, and answers 201 with the import, uploading. Send its chunks with PUT …/chunks/{index}, each of chunk_bytes but the last, in any order, and again after an interruption, which GET of the import, whose received_chunks lists those that are stored, resumes from. Then POST …/complete hands it to a job. Only an owner or an admin of the workspace may, and anyone else with a role in it is answered with 403 insufficient_role; a workspace at its projects limit is answered with 409 limit_exceeded, before anything is uploaded. An archive past STORYCREEP_IMPORT_MAX_BYTES is answered with 413 request_too_large. A user has one import of a workspace on its way at a time, and another request is answered with 409 import_in_progress, whose details.import_id names it. Until the instance's first-run setup has completed, the answer is 403 setup_required, unless STORYCREEP_ASSET_STORAGE names where files are stored. Only the user who asked for an import reads it, and an import of anyone else, or one that has expired, is answered with 404 not_found. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Exports share a rate limit of 60 an hour for each IP address, and 30 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "createProjectImport",
+        "parameters": [
+          {
+            "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace's ID",
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "description": "The workspace's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectImportInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectImportBody"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "description": "The import's URL",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Begin importing a project",
+        "tags": [
+          "Project import"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/project-imports/{import_id}": {
+      "delete": {
+        "description": "Ends an import that is uploading or queued, deletes what its upload stored, and answers 204. An import that its job has begun runs to its end, as it is all or nothing, and one that is importing or has ended is answered with 409 import_not_uploading. Only the user who asked for an import reads it, and an import of anyone else, or one that has expired, is answered with 404 not_found. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Requests that change something share a rate limit of 600 a minute for each IP address, and 300 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "cancelProjectImport",
+        "parameters": [
+          {
+            "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace's ID",
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "description": "The workspace's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The import's ID",
+            "in": "path",
+            "name": "import_id",
+            "required": true,
+            "schema": {
+              "description": "The import's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Cancel an import",
+        "tags": [
+          "Project import"
+        ]
+      },
+      "get": {
+        "description": "Returns the import: which chunks of its upload are stored, how far its job is, and what it did or why it was refused. Only the user who asked for an import reads it, and an import of anyone else, or one that has expired, is answered with 404 not_found. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). Requests that read share a rate limit of 1,200 a minute for each IP address, and 600 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "getProjectImport",
+        "parameters": [
+          {
+            "description": "The workspace's ID",
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "description": "The workspace's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The import's ID",
+            "in": "path",
+            "name": "import_id",
+            "required": true,
+            "schema": {
+              "description": "The import's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectImportBody"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Read an import",
+        "tags": [
+          "Project import"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/project-imports/{import_id}/chunks/{index}": {
+      "put": {
+        "description": "Stores a chunk of the archive, and answers 204. Sending a chunk again replaces it, so an upload that an interruption cut off goes on from the chunks that GET of the import does not list. A chunk has chunk_bytes, or the rest of the archive if it is the last, and another size or an index past the last is answered with 422 chunk_invalid. An import that is not uploading is answered with 409 import_not_uploading, whose details.status says where it is. Only the user who asked for an import reads it, and an import of anyone else, or one that has expired, is answered with 404 not_found. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Requests that change something share a rate limit of 600 a minute for each IP address, and 300 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "putProjectImportChunk",
+        "parameters": [
+          {
+            "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace's ID",
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "description": "The workspace's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The import's ID",
+            "in": "path",
+            "name": "import_id",
+            "required": true,
+            "schema": {
+              "description": "The import's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The chunk's index, from 0",
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "description": "The chunk's index, from 0",
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "contentMediaType": "application/octet-stream",
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "description": "The chunk's bytes.",
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Upload a chunk of an import",
+        "tags": [
+          "Project import"
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/project-imports/{import_id}/complete": {
+      "post": {
+        "description": "Hands a whole upload to the import's job, and answers 202 with the import, queued. The job checks the archive before it writes anything: its members against the zip guards, each file against its hash and its schema, every release's files, hashes, references, and ASTs, and the sections that this server can import. It then creates the project, keeping the archive's IDs unless one is in use on this instance or remap was asked for, all or nothing, and the import's report or failure says what became of it. An upload that lacks chunks is answered with 409 import_incomplete, whose details.missing_chunks lists the first of them. Only the user who asked for an import reads it, and an import of anyone else, or one that has expired, is answered with 404 not_found. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Exports share a rate limit of 60 an hour for each IP address, and 30 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "completeProjectImport",
+        "parameters": [
+          {
+            "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The workspace's ID",
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "description": "The workspace's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The import's ID",
+            "in": "path",
+            "name": "import_id",
+            "required": true,
+            "schema": {
+              "description": "The import's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectImportBody"
+                }
+              }
+            },
+            "description": "Accepted",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en, and then those of the messages that its details hold, as the findings of 409 publish_blocked, where they are in another, as English is for a message that the locale's catalog lacks",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Import an uploaded archive",
+        "tags": [
+          "Project import"
         ]
       }
     },

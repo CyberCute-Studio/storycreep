@@ -568,7 +568,7 @@ var keys = []key{
 			"only to its own database: a shared login would reach all of them, and migrating one would change the " +
 			"password the others log in with. The pool parameters, such as `pool_max_conns`, configure the pool " +
 			"that serves requests. A server that runs the background jobs opens a second pool of the login for " +
-			"them, configured the same way but with at most 10 connections, whatever `pool_max_conns` says. The " +
+			"them, configured the same way but with at most 11 connections, whatever `pool_max_conns` says. The " +
 			"real-time channel's hub keeps one more connection of the login, beside the pools, from the first " +
 			"subscription of one of the server's WebSockets on, which `LISTEN`s for the batches of commands that " +
 			"commit (PRD ADR-005), so a connection pooler between the server and PostgreSQL must run in session " +
@@ -649,7 +649,8 @@ var keys = []key{
 			"PostgreSQL server, and so does its `BYPASSRLS`, so the login could also bypass row-level security in " +
 			"another database on the server that it can connect to, as PostgreSQL lets every role do by default: " +
 			"on a server shared with other applications, revoke `CONNECT` on their databases from `PUBLIC`. " +
-			"Without this URL, migrations leave the maintenance login alone. It is shown redacted in the same way.",
+			"`storycreep serve` and `storycreep import` need it, for the check of whether an archive's IDs are in use " +
+			"(PRD §5.2), and refuse to run without it. It is shown redacted in the same way.",
 		valuesDoc: "A `postgres://` URL",
 		parse: func(c *Config, v string) error {
 			d, err := ParseDatabaseURL(v)

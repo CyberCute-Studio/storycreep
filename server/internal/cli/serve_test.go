@@ -146,13 +146,28 @@ func TestServeRefusesPlainHTTPInHostedMode(t *testing.T) {
 	}
 }
 
+// TestServeNeedsTheMaintenanceURL checks that serve refuses to start without
+// the maintenance login, which the import's collision check needs (plan note
+// N20), and names the key.
+//
+// Verifies: FR-ADMIN-06/AC1
+func TestServeNeedsTheMaintenanceURL(t *testing.T) {
+	code, stdout, stderr := run(t, validEnv(), "serve")
+	if code != ExitFailure || stdout != "" ||
+		!strings.Contains(stderr, "storycreep serve: STORYCREEP_DATABASE_MAINTENANCE_URL is not set") {
+		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+}
+
 // TestServeNeedsTheAdminURL checks that serve, which applies the migrations
 // at startup unless told not to, refuses to start without the admin URL, and
 // says how to start instead.
 //
 // Verifies: FR-ADMIN-06/AC1
 func TestServeNeedsTheAdminURL(t *testing.T) {
-	code, stdout, stderr := run(t, validEnv(), "serve")
+	env := validEnv()
+	env["STORYCREEP_DATABASE_MAINTENANCE_URL"] = "postgres://storycreep_maintainer:secret@db:5432/storycreep"
+	code, stdout, stderr := run(t, env, "serve")
 	if code != ExitFailure || stdout != "" || !strings.Contains(stderr, "storycreep serve: STORYCREEP_DATABASE_ADMIN_URL is not set") ||
 		!strings.Contains(stderr, "--no-auto-migrate") {
 		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout, stderr)

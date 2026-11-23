@@ -313,6 +313,25 @@ func (s *Service) CheckCreate(ctx context.Context, userID, workspaceID ids.UUID)
 	})
 }
 
+// CheckManage says, in tx, a transaction of the workspace, whether the user may
+// manage its projects, as reading and continuing their imports needs (§5.6),
+// with the errors of Create for the workspace and the role.
+func (s *Service) CheckManage(ctx context.Context, tx pgx.Tx, userID, workspaceID ids.UUID) error {
+	q := queries.New(tx)
+	if _, err := activeWorkspace(ctx, q, workspaceID); err != nil {
+		return err
+	}
+	a, err := s.access(ctx, q, userID, workspaceID, false)
+	if err != nil {
+		return err
+	}
+	r := s.policy.Workspace(a.admin, a.member)
+	if r == role.None {
+		return ErrNotFound
+	}
+	return authz.Check(r, authz.ManageProjects)
+}
+
 // Imported is what CreateImported creates a project with.
 type Imported struct {
 	// ID is the project's ID: the archive's, or a fresh one (PRD §5.2).

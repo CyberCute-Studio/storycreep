@@ -161,6 +161,7 @@ func TestRoutesDeclareCapabilities(t *testing.T) {
 			"DELETE /api/v1/projects/{project_id}/tokens/{token_id}",
 			"DELETE /api/v1/workspaces/{workspace_id}/invites/{invite_id}",
 			"DELETE /api/v1/workspaces/{workspace_id}/members/{membership_id}",
+			"DELETE /api/v1/workspaces/{workspace_id}/project-imports/{import_id}",
 			"DELETE /api/v1/workspaces/{workspace_id}/tokens/{token_id}", "GET /", "GET /api/v1/auth/account",
 			"GET /api/v1/auth/session", "GET /api/v1/auth/sessions", "GET /api/v1/instance",
 			"GET /api/v1/notifications", "GET /api/v1/notifications/unread",
@@ -217,6 +218,8 @@ func TestRoutesDeclareCapabilities(t *testing.T) {
 			"GET /api/v1/workspaces/{workspace_id}", "GET /api/v1/workspaces/{workspace_id}/invites",
 			"GET /api/v1/workspaces/{workspace_id}/members",
 			"GET /api/v1/workspaces/{workspace_id}/members/{membership_id}/grants",
+			"GET /api/v1/workspaces/{workspace_id}/project-imports",
+			"GET /api/v1/workspaces/{workspace_id}/project-imports/{import_id}",
 			"GET /api/v1/workspaces/{workspace_id}/projects", "GET /api/v1/workspaces/{workspace_id}/tokens",
 			"GET /api/v1/workspaces/{workspace_id}/trash/projects", "GET /api/v1/workspaces/{workspace_id}/usage",
 			"GET /api/v1/ws",
@@ -239,8 +242,10 @@ func TestRoutesDeclareCapabilities(t *testing.T) {
 			"POST /api/v1/projects/{project_id}/tokens", "POST /api/v1/projects/{project_id}/unarchive",
 			"POST /api/v1/setup", "POST /api/v1/workspaces", "POST /api/v1/workspaces/{workspace_id}/invites",
 			"POST /api/v1/workspaces/{workspace_id}/invites/{invite_id}/resend",
+			"POST /api/v1/workspaces/{workspace_id}/project-imports",
+			"POST /api/v1/workspaces/{workspace_id}/project-imports/{import_id}/complete",
 			"POST /api/v1/workspaces/{workspace_id}/projects", "POST /api/v1/workspaces/{workspace_id}/tokens",
-			"PUT /api/v1/projects/{project_id}/grants/{membership_id}"},
+			"PUT /api/v1/projects/{project_id}/grants/{membership_id}", "PUT /api/v1/workspaces/{workspace_id}/project-imports/{import_id}/chunks/{index}"},
 		"admin": {"GET /metrics"},
 	}
 	for name, m := range map[string]*api.Mux{"main": s.main, "admin": s.admin} {

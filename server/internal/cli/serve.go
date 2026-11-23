@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/httpserver"
@@ -56,6 +57,12 @@ return. A second signal ends it at once.`,
 		fs.Bool("no-inline-workers", false, "do not run background jobs in this process; instances without the flag run them")
 	},
 	run: func(ctx context.Context, inv *invocation) error {
+		// The import's collision check is the first maintenance job that the
+		// server runs (plan note N20), so it needs the login.
+		if !inv.cfg.DatabaseMaintenanceURL.IsSet() {
+			return errors.New("STORYCREEP_DATABASE_MAINTENANCE_URL is not set: the server needs the maintenance " +
+				"login, which migrating provisions, to check an imported archive's IDs")
+		}
 		return httpserver.Run(ctx, inv.cfg, httpserver.Options{
 			AutoMigrate:   !inv.boolFlag("no-auto-migrate"),
 			InlineWorkers: !inv.boolFlag("no-inline-workers"),

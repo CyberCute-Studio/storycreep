@@ -73,6 +73,10 @@ const (
 	CodeSnapshotNotReady       Code = "snapshot_not_ready"
 	CodeExportInProgress       Code = "export_in_progress"
 	CodeExportNotReady         Code = "export_not_ready"
+	CodeImportInProgress       Code = "import_in_progress"
+	CodeImportNotUploading     Code = "import_not_uploading"
+	CodeImportIncomplete       Code = "import_incomplete"
+	CodeChunkInvalid           Code = "chunk_invalid"
 	CodeSchemaUnsupported      Code = "schema_unsupported"
 	CodeSchemaUnrepresentable  Code = "schema_unrepresentable"
 	CodeIdempotencyMismatch    Code = "idempotency_mismatch"
@@ -405,6 +409,20 @@ var codes = []codeSpec{
 	{CodeExportNotReady, http.StatusConflict, i18n.K("error.export_not_ready"),
 		"The authoring export has no file to download: it is `queued` or `building`, whose build has not ended, or " +
 			"`failed`, which never has one (PRD FR-DATA-01). `details.status` says which."},
+	{CodeImportInProgress, http.StatusConflict, i18n.K("error.import_in_progress"),
+		"The user already has an import of this workspace on its way, so `POST " +
+			"/api/v1/workspaces/{workspace_id}/project-imports` began no other (PRD FR-DATA-01). `details.import_id` " +
+			"names the one on its way, which a client resumes, or cancels with `DELETE`."},
+	{CodeImportNotUploading, http.StatusConflict, i18n.K("error.import_not_uploading"),
+		"The import is past taking chunks, or past being cancelled: it is `queued`, `importing`, `ready`, or " +
+			"`failed` (PRD FR-DATA-01). `details.status` says which."},
+	{CodeImportIncomplete, http.StatusConflict, i18n.K("error.import_incomplete"),
+		"The import's upload lacks chunks, so it was not handed to its job (PRD FR-DATA-01). " +
+			"`details.missing_chunks` lists the first of them, which a client sends and then completes the import."},
+	{CodeChunkInvalid, http.StatusUnprocessableEntity, i18n.K("error.chunk_invalid"),
+		"The chunk is not of this upload: its index is past the last, or its size is not `chunk_bytes`, or the rest " +
+			"of the archive for the last chunk (PRD FR-DATA-01). `details.index`, `details.expected_bytes`, and " +
+			"`details.bytes` say which."},
 	{CodeSnapshotNotReady, http.StatusConflict, i18n.K("error.snapshot_not_ready"),
 		"The snapshot is not ready, and only a ready snapshot has files to export or to compare (PRD " +
 			"FR-SYNC-01, FR-SYNC-02, §7.3): `GET /api/v1/projects/{project_id}/snapshots/{snapshot_id}/export` " +

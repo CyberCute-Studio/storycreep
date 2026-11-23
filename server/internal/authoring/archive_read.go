@@ -64,7 +64,7 @@ const (
 	FailAssetInvalid = "asset_invalid"
 	// FailLimitExceeded is a workspace without room for the project, or its
 	// assets.
-	FailLimitExceeded = "limit_exceeded"
+	FailLimitExceeded = "workspace_limit"
 	// FailForbidden is a user who may no longer create a project in the
 	// workspace.
 	FailForbidden = "forbidden"

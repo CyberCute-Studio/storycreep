@@ -114,7 +114,14 @@ type Options struct {
 	// ImportMaxBytes is the instance's import limit, which an export is
 	// compared with (FR-DATA-01).
 	ImportMaxBytes int64
-	Log            *slog.Logger
+	// Assets store an import's assets as uploads are stored, and Pipeline
+	// applies its draft through the commands (plan item 84).
+	Assets   *asset.Service
+	Pipeline *commands.Pipeline
+	// IDsInUse is the import's collision check, of the maintenance path
+	// (PRD §5.2), which answers one boolean.
+	IDsInUse func(ctx context.Context, list []ids.UUID) (bool, error)
+	Log      *slog.Logger
 }
 
 // Service keeps the authoring exports.
@@ -124,6 +131,9 @@ type Service struct {
 	queue          commands.Enqueuer
 	storage        *asset.Storage
 	importMaxBytes int64
+	assets         *asset.Service
+	pipeline       *commands.Pipeline
+	idsInUse       func(ctx context.Context, list []ids.UUID) (bool, error)
 	log            *slog.Logger
 }
 
@@ -134,7 +144,7 @@ func New(db DB, o Options) *Service {
 		log = slog.New(slog.DiscardHandler)
 	}
 	return &Service{db: db, projects: o.Projects, queue: o.Queue, storage: o.Storage,
-		importMaxBytes: o.ImportMaxBytes, log: log}
+		importMaxBytes: o.ImportMaxBytes, assets: o.Assets, pipeline: o.Pipeline, idsInUse: o.IDsInUse, log: log}
 }
 
 // Request is what an export is asked for.
@@ -436,6 +446,7 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 		}
 		return err
 	})
+	s.registerImportJobs(r)
 }
 
 func parseArgs(a jobArgs) (ws, id ids.UUID, err error) {
