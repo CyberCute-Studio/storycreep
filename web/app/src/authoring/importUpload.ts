@@ -266,11 +266,24 @@ export async function finishUpload(
   }
 }
 
+/**
+ * Returns a file's name as the server keeps it (cleanFileName): without the
+ * control characters that a name people are shown may not hold, which are
+ * Cc, Bidi_Control, Zl, and Zp, and without the white space around it, which
+ * past those is Zs alone. String.trim would also take U+FEFF, which the server
+ * keeps.
+ */
+export function storedFileName(name: string): string {
+  return name
+    .replace(/[\p{Cc}\p{Bidi_Control}\p{Zl}\p{Zp}]/gu, "")
+    .replace(/^\p{Zs}+|\p{Zs}+$/gu, "");
+}
+
 /** Reports whether item is an upload still taking chunks, of the same name and size as file. */
 export function isUploadOf(item: ProjectImportBody, file: File): boolean {
   return (
     item.status === "uploading" &&
-    item.file_name === file.name.trim() &&
+    item.file_name === storedFileName(file.name) &&
     item.size_bytes === file.size
   );
 }

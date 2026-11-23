@@ -1299,3 +1299,102 @@ func TestImportRefusesTooManyPeople(t *testing.T) {
 		t.Errorf("the refused import left %d accounts, and there were %d", after, before)
 	}
 }
+
+// TestImportRecordsAnyRefusal checks that a refusal that repeats what an archive
+// spells is recorded whatever that is, so that the import ends and its user can
+// start another: PostgreSQL's jsonb takes no NUL, and a refusal's text is read
+// back with every poll of the import.
+//
+// Verifies: NFR-SEC-13
+func TestImportRecordsAnyRefusal(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	exported := exportedArchive(t, f)
+	// Of IDs, as a text that compresses well is the zip guards' to refuse.
+	var long strings.Builder
+	for long.Len() < 1<<20 {
+		long.WriteString(ids.New().String())
+	}
+	for name, path := range map[string]string{
+		"a NUL":       "elsewhere/a\x00b.png",
+		"a long text": "elsewhere/" + long.String(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := maps.Clone(exported)
+			list := items[authoring.Asset](t, files, "assets/index.json")
+			list[0].Path = path
+			data, err := json.Marshal(authoring.Items[authoring.Asset]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "assets/index.json", data, len(list))
+			got := failedImport(t, f.s, f.owner, f.ws, zipOf(t, files))
+			if got.Code != authoring.FailAssetInvalid || got.Check != "path" {
+				t.Errorf("the failure is %+v, want asset_invalid at path", *got)
+			}
+			if strings.ContainsRune(got.Detail, 0) || len(got.Detail) > 2048 {
+				t.Errorf("the failure's detail has %d bytes, or a NUL", len(got.Detail))
+			}
+		})
+	}
+}
+
+// TestImportHoldsTheManifestToItsAssets checks that a manifest that says the
+// archive holds no assets cannot also list them, which would store the assets
+// and clear every reference to them.
+func TestImportHoldsTheManifestToItsAssets(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	files := exportedArchive(t, f)
+	var m authoring.Manifest
+	if err := json.Unmarshal(files[authoring.ManifestPath], &m); err != nil {
+		t.Fatal(err)
+	}
+	m.IncludesAssets = false
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files[authoring.ManifestPath] = data
+	got := failedImport(t, f.s, f.owner, f.ws, zipOf(t, files))
+	if got.Code != authoring.FailSchemaInvalid || got.Section != "assets" || got.Check != "includes_assets" {
+		t.Errorf("the failure is %+v, want schema_invalid of assets at includes_assets", *got)
+	}
+}
+
+// TestImportTakesNoAccountForADeletedAuthor checks that the author of a deleted
+// comment, which keeps no author, adds no imported identity.
+//
+// Verifies: FR-DATA-01/AC7
+func TestImportTakesNoAccountForADeletedAuthor(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	files := exportedArchive(t, f)
+	list := items[authoring.Comment](t, files, "comments.json")
+	gone := ids.Encode(ids.User, ids.New())
+	list[0].Deleted, list[0].AuthorID, list[0].Body = true, gone, nil
+	data, err := json.Marshal(authoring.Items[authoring.Comment]{Items: list})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resealSection(t, files, "comments.json", data, len(list))
+	people := items[authoring.Person](t, files, "people.json")
+	people = append(people, authoring.Person{ID: gone, DisplayName: "Gone"})
+	data, err = json.Marshal(authoring.Items[authoring.Person]{Items: people})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resealSection(t, files, "people.json", data, len(people))
+	mustImport(t, f.s, f.owner, f.ws, zipOf(t, files), "remap")
+	var named int
+	if err := f.d.Admin(t).QueryRow(t.Context(), `SELECT count(*) FROM imported_user WHERE source_user_id = $1`,
+		decode(t, ids.User, gone)).Scan(&named); err != nil {
+		t.Fatal(err)
+	}
+	if named != 0 {
+		t.Errorf("the deleted comment's author took %d imported identities", named)
+	}
+}

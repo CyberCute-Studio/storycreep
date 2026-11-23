@@ -286,7 +286,7 @@ func (s *Service) checkImport(ctx context.Context, actor commands.Actor, workspa
 	if err := s.projects.CheckCreate(ctx, actor.UserID, workspaceID); err != nil {
 		return err
 	}
-	req.FileName = strings.TrimSpace(req.FileName)
+	req.FileName = cleanFileName(req.FileName)
 	if msg := input.CheckName(req.FileName, maxImportFileName); msg != "" {
 		return input.FieldErrors{{Field: "file_name", Message: msg}}
 	}
@@ -295,6 +295,19 @@ func (s *Service) checkImport(ctx context.Context, actor commands.Actor, workspa
 	}
 	_, err := s.storage.FinalStore(ctx)
 	return err
+}
+
+// cleanFileName returns the name of an archive's file as it is kept, which is
+// only ever shown: without the control characters that a name people are shown
+// may not hold (input.IsControl), which a file's name can, and without the
+// white space around it. The web app's storedFileName is the same.
+func cleanFileName(name string) string {
+	return strings.TrimSpace(strings.Map(func(r rune) rune {
+		if input.IsControl(r) {
+			return -1
+		}
+		return r
+	}, name))
 }
 
 // insertImport adds the import p, or returns the *ImportInProgressError of the
@@ -685,6 +698,7 @@ var unrecordedRefusals sync.Map
 func (s *Service) failImport(ctx context.Context, ws, id ids.UUID, why *ImportError) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), failTimeout)
 	defer cancel()
+	why = why.recorded()
 	failure, err := json.Marshal(why)
 	if err != nil {
 		return jobs.Cancel(err)
@@ -876,7 +890,7 @@ func (s *Service) ImportFile(ctx context.Context, actor commands.Actor, workspac
 		if !ok {
 			return Import{}, err
 		}
-		done.Status, done.Failure = ImportFailed, refused
+		done.Status, done.Failure = ImportFailed, refused.recorded()
 		return done, nil
 	}
 	// From what the commit wrote rather than a read of it, which could fail
@@ -1013,6 +1027,14 @@ func verifyRelease(projectID, id, version string, schemaVersion int, contentHash
 			e.Detail = firstLine(err.Error())
 		}
 		return e
+	}
+	// No build writes an asset into a release, so an archive that holds one
+	// was made by hand: it would keep a file that no check of an asset has
+	// read, under an ID that a remap could not follow.
+	for _, p := range slices.Sorted(maps.Keys(files)) {
+		if !schemaversion.IsJSON(p) {
+			return fail("asset_file", fmt.Errorf("it holds the file %s, and a release that an import takes holds no asset", p))
+		}
 	}
 	v, err := schemaversion.VersionOf(files)
 	if err != nil {
@@ -1554,6 +1576,13 @@ func (s *Service) recordFileImport(ctx context.Context, tx pgx.Tx, run importRun
 // refuses.
 const uniqueViolation = "23505"
 
+// idViolation says whether pg is the refusal of a row whose ID a row has, which
+// a row that came after the collision check may be, and fresh IDs get past. Any
+// other unique constraint, as of a release's version, is the archive's own.
+func idViolation(pg *pgconn.PgError) bool {
+	return pg.Code == uniqueViolation && strings.HasSuffix(pg.ConstraintName, "_pkey")
+}
+
 // importWriteError maps what the transaction failed with: a limit or a role
 // that the import's own checks could not see coming, or a row that the
 // database's constraints refuse, which is what is wrong with the archive, is
@@ -1578,8 +1607,7 @@ func importWriteError(err error) error {
 	var pg *pgconn.PgError
 	if errors.As(err, &pg) && (strings.HasPrefix(pg.Code, "22") || strings.HasPrefix(pg.Code, "23")) {
 		return &ImportError{Code: FailContentInvalid, Check: pg.ConstraintName,
-			Detail: "a row of the archive is refused by the database: " + pg.Message,
-			unique: pg.Code == uniqueViolation}
+			Detail: "a row of the archive is refused by the database: " + pg.Message, unique: idViolation(pg)}
 	}
 	if field, message, ok := commands.PartRefusal(err); ok {
 		return &ImportError{Code: FailContentInvalid, Check: field, Detail: message,
@@ -1613,9 +1641,10 @@ func mapPeople(ctx context.Context, q *queries.Queries, ws ids.UUID, c *archived
 		}
 	}
 	for _, x := range c.comments {
-		add(x.AuthorID)
 		add(x.ResolvedBy)
+		// A deleted comment keeps neither its author nor its body.
 		if !x.Deleted {
+			add(x.AuthorID)
 			mentionsIn(x.Body, seen)
 		}
 	}
@@ -1825,7 +1854,7 @@ func sectionError(section, id string, err error) error {
 	var pg *pgconn.PgError
 	if errors.As(err, &pg) && (strings.HasPrefix(pg.Code, "22") || strings.HasPrefix(pg.Code, "23")) {
 		return &ImportError{Code: FailContentInvalid, Section: section, Check: pg.ConstraintName,
-			Detail: id + ": " + pg.Message, unique: pg.Code == uniqueViolation}
+			Detail: id + ": " + pg.Message, unique: idViolation(pg)}
 	}
 	return fmt.Errorf("authoring: add %s of the section %s: %w", id, section, err)
 }

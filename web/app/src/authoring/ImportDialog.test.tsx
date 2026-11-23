@@ -15,7 +15,7 @@ import { renderApp, testSession } from "../test/app";
 import { refused } from "../test/fake";
 import { projectsQuery } from "../workspace/queries";
 import { ImportButton } from "./ImportDialog";
-import { retries, retryAfter, retryWait } from "./importUpload";
+import { retries, retryAfter, retryWait, storedFileName } from "./importUpload";
 
 // The dialog of the project import (PRD FR-DATA-01 AC4): how it slices and
 // sends an archive, tries again, resumes, follows the job to its report or
@@ -365,6 +365,7 @@ describe("the project import's dialog", () => {
     await startImport(dialog);
     await within(dialog).findByText(/An upload of other\.zip/);
     expect(chunks).toEqual([]);
+    const input = dialog.querySelector('input[type="file"]');
     await userEvent.click(
       within(dialog).getByRole("button", { name: "Cancel import" }),
     );
@@ -380,6 +381,17 @@ describe("the project import's dialog", () => {
     expect(
       within(dialog).getByRole("button", { name: "Start import" }),
     ).toBeTruthy();
+    // The form holds no file, so neither does its field, which would keep
+    // showing it and take no second choice of the same file.
+    expect(dialog.querySelector('input[type="file"]')).not.toBe(input);
+  });
+
+  it("compares a file's name as the server keeps it", () => {
+    const mark = String.fromCodePoint(0x200e);
+    const nextLine = String.fromCodePoint(0x85);
+    const bom = String.fromCodePoint(0xfeff);
+    expect(storedFileName(`  story${mark}.zip${nextLine}`)).toBe("story.zip");
+    expect(storedFileName(`${bom}story.zip`)).toBe(`${bom}story.zip`);
   });
 
   it("does not resume an upload of the same file with another ID policy unasked", async () => {

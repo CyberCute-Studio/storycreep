@@ -12,8 +12,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
 	"github.com/CyberCute-Studio/storycreep/server/internal/schemaversion"
 	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
@@ -371,5 +375,100 @@ func TestPeopleAreOnlyWhomADocumentNames(t *testing.T) {
 	}
 	if _, ok := doc.Findings[1].Mute["muted_by"]; ok {
 		t.Errorf("a muted_by that the table does not hold stays: %v", doc.Findings[1].Mute)
+	}
+}
+
+// TestFailureIsRecordable checks that a failure is held to what its row and a
+// reader of it take, whatever the archive that it repeats spells.
+//
+// Verifies: NFR-SEC-13
+func TestFailureIsRecordable(t *testing.T) {
+	t.Parallel()
+	got := (&ImportError{Code: FailContentInvalid, Section: "a\x00b", Version: "1\x1b[2J", Check: "c",
+		Detail: strings.Repeat("x", 3*maxFailureText) + "\x00"}).recorded()
+	for _, text := range []string{got.Section, got.Version, got.Check, got.Detail} {
+		if strings.IndexFunc(text, input.IsControl) >= 0 || len(text) > maxFailureText || !utf8.ValidString(text) {
+			t.Errorf("the text %q is not one that a failure keeps", text)
+		}
+	}
+	if got.Code != FailContentInvalid || got.Check != "c" {
+		t.Errorf("the failure is %+v", got)
+	}
+}
+
+// TestCleanFileName checks that what a file's name holds besides its name
+// costs nothing but those characters.
+func TestCleanFileName(t *testing.T) {
+	t.Parallel()
+	lrm, nel := string(rune(0x200e)), string(rune(0x85))
+	for in, want := range map[string]string{
+		"harbour.zip":               "harbour.zip",
+		"  harbour.zip ":            "harbour.zip",
+		"harbour" + lrm + ".zip":    "harbour.zip",
+		"harbour.zip" + nel:         "harbour.zip",
+		"har\x00bour.zip":           "harbour.zip",
+		lrm + " harbour.zip " + lrm: "harbour.zip",
+		"a b.zip":                   "a b.zip",
+	} {
+		if got := cleanFileName(in); got != want {
+			t.Errorf("cleanFileName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestVerifyReleaseRefusesAnAsset checks that a release holding an asset's
+// file, which no build writes and no check of an asset reads, is refused and
+// named.
+func TestVerifyReleaseRefusesAnAsset(t *testing.T) {
+	t.Parallel()
+	err := verifyRelease("prj", "", "1.0.0", 0, "", schemaversion.Files{
+		published.ManifestPath:                  []byte(`{}`),
+		"assets/0123456789ABCDEFGHJKMNPQRS.svg": []byte("<svg/>"),
+	})
+	var refused *ImportError
+	if !errors.As(err, &refused) || refused.Code != FailReleaseInvalid || refused.Version != "1.0.0" ||
+		refused.Check != "asset_file" {
+		t.Errorf("the failure is %v", err)
+	}
+}
+
+// TestIDViolation checks that only a row's ID taken since the collision check
+// sends the import round again with fresh IDs.
+func TestIDViolation(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		code, constraint string
+		want             bool
+	}{
+		{uniqueViolation, "comment_pkey", true},
+		{uniqueViolation, "snapshot_version", false},
+		{uniqueViolation, "validation_mute_owner", false},
+		{"23503", "comment_pkey", false},
+	} {
+		if got := idViolation(&pgconn.PgError{Code: c.code, ConstraintName: c.constraint}); got != c.want {
+			t.Errorf("idViolation(%s, %s) = %v", c.code, c.constraint, got)
+		}
+	}
+}
+
+// TestRemapKeepsAnAssetsPath checks that an asset's file is still found after a
+// remap, in an archive whose path for it spells the asset's ID.
+//
+// Verifies: FR-DATA-01/AC8
+func TestRemapKeepsAnAssetsPath(t *testing.T) {
+	t.Parallel()
+	project, asset := ids.New(), ids.New()
+	path := "assets/" + ids.Encode(ids.Asset, asset) + ".png"
+	raw, err := json.Marshal(Items[Asset]{Items: []Asset{{ID: ids.Encode(ids.Asset, asset), Path: path}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &archived{manifest: Manifest{Project: ManifestProject{ID: ids.Encode(ids.Project, project)}},
+		assets: []Asset{{ID: ids.Encode(ids.Asset, asset), Path: path}}, raw: map[string][]byte{"assets": raw}}
+	if err := c.remap(freshIDs([]ids.UUID{project, asset})); err != nil {
+		t.Fatal(err)
+	}
+	if c.assets[0].Path != path || c.assets[0].ID == ids.Encode(ids.Asset, asset) {
+		t.Errorf("the asset is now %+v, and its file is at %s", c.assets[0], path)
 	}
 }

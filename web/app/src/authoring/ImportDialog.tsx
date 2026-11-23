@@ -131,6 +131,8 @@ function useProjectImport(workspaceId: string, open: boolean) {
   const [sent, setSent] = useState(0);
   const [waiting, setWaiting] = useState(false);
   const [canceled, setCanceled] = useState(false);
+  // Counts the resets, as a new file input is the only way to empty one.
+  const [resets, setResets] = useState(0);
   const running = useRef<AbortController>(null);
   const announced = useRef<string>(null);
 
@@ -216,6 +218,7 @@ function useProjectImport(workspaceId: string, open: boolean) {
   const reset = () => {
     setFollowed(undefined);
     setFile(undefined);
+    setResets((n) => n + 1);
     setSent(0);
     setWaiting(false);
     start.reset();
@@ -260,6 +263,7 @@ function useProjectImport(workspaceId: string, open: boolean) {
 
   return {
     file,
+    resets,
     remap,
     item,
     sent,
@@ -530,6 +534,7 @@ function FilePicker({
           {t("project_import.file_label")}
         </label>
         <input
+          key={flow.resets}
           id={id}
           type="file"
           accept=".zip,application/zip"

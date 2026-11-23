@@ -167,6 +167,10 @@ func readArchived(a *archive) (*archived, error) {
 			return nil, &ImportError{Code: FailSchemaInvalid, Section: entry.Name, Check: "path",
 				Detail: fmt.Sprintf("the section is at %q, and belongs at %q", entry.Path, sec.Path)}
 		}
+		if sec.AssetsOnly && !c.manifest.IncludesAssets {
+			return nil, &ImportError{Code: FailSchemaInvalid, Section: entry.Name, Check: "includes_assets",
+				Detail: "the manifest says that the archive holds no assets, and lists a section of them"}
+		}
 		if sec.DraftOnly && c.manifest.Source.Kind != "draft" {
 			return nil, &ImportError{Code: FailSchemaInvalid, Section: entry.Name, Check: "source",
 				Detail: "only an archive of a draft holds the section"}
@@ -679,6 +683,11 @@ func (c *archived) remap(table map[ids.UUID]ids.UUID) error {
 			return err
 		}
 		fresh.raw[name] = rewritten
+	}
+	// An asset's path is where the archive holds its file, which a remap does
+	// not move, whatever the path spells.
+	for i := range fresh.assets {
+		fresh.assets[i].Path = c.assets[i].Path
 	}
 	if c.sourceFiles != nil {
 		files, err := rewriteRelease(c.sourceFiles, table)

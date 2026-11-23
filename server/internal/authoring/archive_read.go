@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/blob"
+	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 )
 
 // The guards of reading an archive (PRD NFR-SEC-13), which hold whatever its
@@ -140,6 +141,37 @@ func (e *ImportError) Error() string {
 		}
 	}
 	return b.String()
+}
+
+// maxFailureText is how many bytes of each of a failure's texts are kept, as
+// they can repeat what an archive spells, at any length.
+const maxFailureText = 1024
+
+// recorded returns the failure as it is stored and shown: each of its texts
+// within maxFailureText, and with a mark in place of each control character.
+// PostgreSQL's jsonb takes no NUL, so that a failure that repeats one could
+// never be recorded, and its import would stay on its way.
+func (e *ImportError) recorded() *ImportError {
+	out := *e
+	for _, text := range []*string{&out.Section, &out.Version, &out.Check, &out.Detail} {
+		*text = failureText(*text)
+	}
+	return &out
+}
+
+// failureText returns s within maxFailureText, as valid UTF-8 without control
+// characters.
+func failureText(s string) string {
+	if len(s) > maxFailureText {
+		s = s[:maxFailureText]
+	}
+	mark := string(utf8.RuneError)
+	return strings.Map(func(r rune) rune {
+		if input.IsControl(r) {
+			return utf8.RuneError
+		}
+		return r
+	}, strings.ToValidUTF8(s, mark))
 }
 
 func invalidArchive(check, format string, args ...any) *ImportError {
