@@ -486,6 +486,10 @@ type spec struct {
 	// inverse is nil for a command that cannot be undone.
 	inverse func(ctx context.Context, tx *Tx, payload any) ([]Step, error)
 	apply   func(ctx context.Context, tx *Tx, payload any) error
+	// populates marks what Populate applies, whose parts may need any
+	// capability and scope: its actor manages the workspace's projects, and
+	// the project is theirs to fill, in the transaction that creates it.
+	populates bool
 }
 
 // Register registers the type of command s. It panics if s is not a

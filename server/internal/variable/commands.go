@@ -53,8 +53,8 @@ const (
 	Restore commands.Type = "variable.restore"
 )
 
-// createPayload is Create's payload.
-type createPayload struct {
+// CreatePayload is Create's payload.
+type CreatePayload struct {
 	ID           string `json:"id" doc:"The new variable's ID, a var_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
 	Key          string `json:"key" doc:"The variable's key, by which expressions name it: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as met_elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other variable of its scope has, of those that are not in the project's trash, the project's global variables for a global, and its board's for a board's, which is answered with 409 key_taken."`
 	Type         string `json:"type" enum:"bool,int,float,string" doc:"The variable's type"`
@@ -176,9 +176,9 @@ func Register(r *commands.Registry) {
 	variable := []ids.Kind{ids.Variable}
 	op, sc := authz.ManageVariablesAndComponents, scope.ProjectWrite
 
-	commands.Register(r, commands.Spec[createPayload]{
+	commands.Register(r, commands.Spec[CreatePayload]{
 		Type: Create, Capability: op, Scope: sc, Touches: []ids.Kind{ids.Variable, ids.Board, ids.Folder},
-		Check: func(p createPayload) input.FieldErrors {
+		Check: func(p CreatePayload) input.FieldErrors {
 			errs := newID(ids.Variable, p.ID)
 			errs = append(errs, checkScope(p.Scope, p.BoardID)...)
 			errs = append(errs, checkReset("reset_on_enter", p.Scope, p.ResetOnEnter)...)
@@ -193,7 +193,7 @@ func Register(r *commands.Registry) {
 		// undo is then refused for, as a deletion is. A forced undo deletes
 		// it whatever uses it then, as any forced deletion does, and needs a
 		// role that may publish, as any does (FR-VAR-04).
-		Inverse: func(ctx context.Context, tx *commands.Tx, p createPayload) ([]commands.Step, error) {
+		Inverse: func(ctx context.Context, tx *commands.Tx, p CreatePayload) ([]commands.Step, error) {
 			var board ids.UUID
 			if p.BoardID != "" {
 				board = decoded(ids.Board, p.BoardID).Bytes
@@ -452,7 +452,7 @@ func Register(r *commands.Registry) {
 }
 
 // applyCreate is Create's Apply.
-func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
+func applyCreate(ctx context.Context, tx *commands.Tx, p CreatePayload) error {
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	id := decoded(ids.Variable, p.ID)

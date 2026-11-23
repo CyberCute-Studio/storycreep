@@ -58,8 +58,8 @@ const (
 	RestoreAttribute commands.Type = "attribute.restore"
 )
 
-// createAttributePayload is CreateAttribute's payload.
-type createAttributePayload struct {
+// CreateAttributePayload is CreateAttribute's payload.
+type CreateAttributePayload struct {
 	ID              string      `json:"id" doc:"The new attribute definition's ID, an atr_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
 	ComponentTypeID string      `json:"component_type_id" doc:"The ID of the component type that the definition is added to, which is not in the project's trash, and which has fewer than 100 definitions that are not"`
 	Name            string      `json:"name" maxLength:"100" doc:"The definition's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them"`
@@ -137,13 +137,13 @@ func registerAttributes(r *commands.Registry) {
 	values := []ids.Kind{ids.AttributeDef, ids.Component}
 	op, sc := authz.ManageVariablesAndComponents, scope.ProjectWrite
 
-	commands.Register(r, commands.Spec[createAttributePayload]{
+	commands.Register(r, commands.Spec[CreateAttributePayload]{
 		Type: CreateAttribute, Capability: op, Scope: sc,
 		Touches: []ids.Kind{ids.AttributeDef, ids.ComponentType, ids.Component},
 		// A create is never a step of an inverse, so its Check checks the
 		// default whole, as a variable's create does, once the options that it
 		// is checked against are valid.
-		Check: func(p createAttributePayload) input.FieldErrors {
+		Check: func(p CreateAttributePayload) input.FieldErrors {
 			errs := newID(ids.AttributeDef, p.ID)
 			errs = append(errs, entityID(ids.ComponentType, "component_type_id", p.ComponentTypeID)...)
 			if options := checkOptions(p.Type, p.Options); len(options) > 0 {
@@ -153,11 +153,11 @@ func registerAttributes(r *commands.Registry) {
 			_, problem := p.Default.Of(p.Type, p.Options...)
 			return append(errs, field("default", problem)...)
 		},
-		CheckNew: func(p createAttributePayload) input.FieldErrors {
+		CheckNew: func(p CreateAttributePayload) input.FieldErrors {
 			errs := field("name", checkName(p.Name))
 			return append(errs, field("options", value.CheckOptionNames(p.Options))...)
 		},
-		Inverse: func(_ context.Context, _ *commands.Tx, p createAttributePayload) ([]commands.Step, error) {
+		Inverse: func(_ context.Context, _ *commands.Tx, p CreateAttributePayload) ([]commands.Step, error) {
 			return []commands.Step{{Type: DeleteAttribute, Payload: attributeIDPayload{ID: p.ID}}}, nil
 		},
 		Apply: applyCreateAttribute,
@@ -442,7 +442,7 @@ func registerAttributes(r *commands.Registry) {
 }
 
 // applyCreateAttribute is CreateAttribute's Apply.
-func applyCreateAttribute(ctx context.Context, tx *commands.Tx, p createAttributePayload) error {
+func applyCreateAttribute(ctx context.Context, tx *commands.Tx, p CreateAttributePayload) error {
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	id := decoded(ids.AttributeDef, p.ID)

@@ -43,10 +43,10 @@ func TestSchemaEnums(t *testing.T) {
 		field string
 		want  []string
 	}{
-		{reflect.TypeFor[createPayload](), "Type", Types()},
+		{reflect.TypeFor[CreatePayload](), "Type", Types()},
 		{reflect.TypeFor[retypePayload](), "Type", Types()},
 		{reflect.TypeFor[Variable](), "Type", Types()},
-		{reflect.TypeFor[createPayload](), "Scope", Scopes()},
+		{reflect.TypeFor[CreatePayload](), "Scope", Scopes()},
 		{reflect.TypeFor[scopePayload](), "Scope", Scopes()},
 		{reflect.TypeFor[Variable](), "Scope", Scopes()},
 	} {

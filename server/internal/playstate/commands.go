@@ -408,6 +408,27 @@ func checkState(name string, st published.SaveState) input.FieldErrors {
 }
 
 // checkName says what is wrong with a play state's name, or returns "".
+// CheckImported returns what is wrong with a play state of an imported
+// archive, by its name, its state, and the names of its values, which are
+// held to what the commands hold a new play state to.
+func CheckImported(name string, state, names []byte) input.FieldErrors {
+	var errs input.FieldErrors
+	if msg := checkName(name); msg != "" {
+		errs = append(errs, input.FieldError{Field: "name", Message: msg})
+	}
+	var st published.SaveState
+	if err := json.Unmarshal(state, &st); err != nil {
+		return append(errs, input.FieldError{Field: "state", Message: "is no save state: " + err.Error()})
+	}
+	errs = append(errs, checkState("state", st)...)
+	var ns PlayStateNames
+	if err := json.Unmarshal(names, &ns); err != nil {
+		return append(errs, input.FieldError{Field: "names", Message: "are no names: " + err.Error()})
+	}
+	errs = append(errs, checkNames(st, ns)...)
+	return append(errs, checkNameTexts(ns)...)
+}
+
 func checkName(name string) string {
 	return input.CheckTrimmedName(name, MaxNameLength)
 }

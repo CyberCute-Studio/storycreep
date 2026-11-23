@@ -18,10 +18,10 @@ func TestSchemaEnums(t *testing.T) {
 		field string
 		want  []string
 	}{
-		{reflect.TypeFor[createPayload](), "Color", Colors()},
+		{reflect.TypeFor[CreatePayload](), "Color", Colors()},
 		{reflect.TypeFor[colorPayload](), "Color", Colors()},
 		{reflect.TypeFor[Board](), "Color", Colors()},
-		{reflect.TypeFor[createFolderPayload](), "Kind", Kinds()},
+		{reflect.TypeFor[CreateFolderPayload](), "Kind", Kinds()},
 		{reflect.TypeFor[Folder](), "Kind", Kinds()},
 	} {
 		f, ok := c.typ.FieldByName(c.field)

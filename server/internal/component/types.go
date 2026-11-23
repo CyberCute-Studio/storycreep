@@ -36,8 +36,8 @@ const (
 	RestoreType commands.Type = "component_type.restore"
 )
 
-// createTypePayload is CreateType's payload.
-type createTypePayload struct {
+// CreateTypePayload is CreateType's payload.
+type CreateTypePayload struct {
 	ID   string `json:"id" doc:"The new type's ID, a ct_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
 	Name string `json:"name" maxLength:"100" doc:"The type's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them"`
 	Key  string `json:"key,omitempty" doc:"The type's key, by which an export names it: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as character, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other type of the project has, of those that are not in its trash, which is answered with 409 key_taken. Without it, the key is derived from the name: its letters and digits in lowercase ASCII, without their accents, each run of other characters an underscore, with an underscore before it if it starts with a digit, or type for a name without them, and with _2, _3, and so on after it if another type of the project that is not in its trash has it, or it is a reserved word."`
@@ -78,13 +78,13 @@ func registerTypes(r *commands.Registry) {
 	ct := []ids.Kind{ids.ComponentType}
 	op, sc := authz.ManageVariablesAndComponents, scope.ProjectWrite
 
-	commands.Register(r, commands.Spec[createTypePayload]{
+	commands.Register(r, commands.Spec[CreateTypePayload]{
 		Type: CreateType, Capability: op, Scope: sc, Touches: ct,
-		Check: func(p createTypePayload) input.FieldErrors { return newID(ids.ComponentType, p.ID) },
-		CheckNew: func(p createTypePayload) input.FieldErrors {
+		Check: func(p CreateTypePayload) input.FieldErrors { return newID(ids.ComponentType, p.ID) },
+		CheckNew: func(p CreateTypePayload) input.FieldErrors {
 			return field("name", checkName(p.Name))
 		},
-		Inverse: func(_ context.Context, _ *commands.Tx, p createTypePayload) ([]commands.Step, error) {
+		Inverse: func(_ context.Context, _ *commands.Tx, p CreateTypePayload) ([]commands.Step, error) {
 			return []commands.Step{{Type: DeleteType, Payload: deleteTypePayload{ID: p.ID}}}, nil
 		},
 		Apply: applyCreateType,
@@ -214,7 +214,7 @@ func registerTypes(r *commands.Registry) {
 }
 
 // applyCreateType is CreateType's Apply.
-func applyCreateType(ctx context.Context, tx *commands.Tx, p createTypePayload) error {
+func applyCreateType(ctx context.Context, tx *commands.Tx, p CreateTypePayload) error {
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	id := decoded(ids.ComponentType, p.ID)

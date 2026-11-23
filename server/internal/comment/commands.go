@@ -458,6 +458,17 @@ func checkCreate(p createPayload) input.FieldErrors {
 // @Tomas alone says. The location of a node is in the document's canonical
 // form (richtext.Parse), whose neighbouring texts with the same marks are
 // one, as an editor writes them. It reads nothing but body.
+// CheckImported returns what is wrong with data, the body of a comment of an
+// imported archive, which is held to what a comment's commands hold a body to.
+// The body is read as a stored document, in its canonical form.
+func CheckImported(data []byte) (input.FieldErrors, error) {
+	doc, err := richtext.Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	return checkBody(*doc), nil
+}
+
 func checkBody(body richtext.Doc) input.FieldErrors {
 	if errs := foreign(body.Blocks, "body"); len(errs) > 0 {
 		return errs

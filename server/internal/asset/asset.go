@@ -351,47 +351,10 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 		if err := uploadable(p); err != nil {
 			return err
 		}
-		row := queries.Asset{ID: nullUUID(ids.New()), WorkspaceID: nullUUID(workspaceID),
-			ProjectID: nullUUID(projectID), Sha256: sum[:], Mime: img.Mime, Bytes: int64(len(img.Data)),
-			StorageKey: key, UploadedBy: nullUUID(actor.UserID)}
-		if img.Width > 0 {
-			row.Width = pgtype.Int4{Int32: int32(img.Width), Valid: true}
-			row.Height = pgtype.Int4{Int32: int32(img.Height), Valid: true}
-		}
-		enqueue := thumbnail
-		if !thumbnail {
-			row.ThumbnailKey = textOf(key)
-		} else {
-			// An asset of the same content in the workspace shares its
-			// thumbnail, once its job has made it, which this one then needs
-			// no job of its own for. The thumbnail job records a thumbnail
-			// under the blob's lock, which this transaction holds.
-			shared, err := q.ContentThumbnail(ctx, queries.ContentThumbnailParams{
-				WorkspaceID: nullUUID(workspaceID), Sha256: sum[:]})
-			switch {
-			case err == nil:
-				row.ThumbnailKey, enqueue = textOf(shared), false
-			case !errors.Is(err, pgx.ErrNoRows):
-				return fmt.Errorf("asset: read the thumbnail of the content: %w", err)
-			}
-		}
-		createdAt, err := q.InsertAsset(ctx, queries.InsertAssetParams{ID: row.ID, WorkspaceID: row.WorkspaceID,
-			ProjectID: row.ProjectID, Sha256: row.Sha256, Mime: row.Mime, Bytes: row.Bytes, Width: row.Width,
-			Height: row.Height, StorageKey: row.StorageKey, ThumbnailKey: row.ThumbnailKey,
-			UploadedBy: row.UploadedBy})
+		row, err := s.addRow(ctx, tx, workspaceID, projectID, ids.New(), actor.UserID, img, sum[:], key, thumbnail,
+			again.referenced)
 		if err != nil {
-			return fmt.Errorf("asset: add the asset: %w", err)
-		}
-		row.CreatedAt = createdAt
-		if !again.referenced {
-			if err := usage.Record(ctx, tx, workspaceID, usage.StorageBytes, row.Bytes); err != nil {
-				return err
-			}
-		}
-		if enqueue {
-			if err := s.enqueueThumbnail(ctx, tx, workspaceID, ids.UUID(row.ID.Bytes)); err != nil {
-				return err
-			}
+			return err
 		}
 		out, created = assetOf(row), true
 		return nil
@@ -400,6 +363,59 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 		return Asset{}, false, err
 	}
 	return out, created, nil
+}
+
+// addRow adds the asset assetID of the blob of key, whose content is img, in
+// tx, which holds the blob's lock: with the thumbnail that an asset of the same
+// content shares, or the job that makes one if it needs one (thumbnail), and
+// what the blob adds to the workspace's storage unless a row refers to it
+// already (referenced).
+func (s *Service) addRow(ctx context.Context, tx pgx.Tx, workspaceID, projectID, assetID, uploadedBy ids.UUID,
+	img Image, sum []byte, key string, thumbnail, referenced bool) (queries.Asset, error) {
+	q := queries.New(tx)
+	row := queries.Asset{ID: nullUUID(assetID), WorkspaceID: nullUUID(workspaceID),
+		ProjectID: nullUUID(projectID), Sha256: sum, Mime: img.Mime, Bytes: int64(len(img.Data)),
+		StorageKey: key, UploadedBy: nullUUID(uploadedBy)}
+	if img.Width > 0 {
+		row.Width = pgtype.Int4{Int32: int32(img.Width), Valid: true}
+		row.Height = pgtype.Int4{Int32: int32(img.Height), Valid: true}
+	}
+	enqueue := thumbnail
+	if !thumbnail {
+		row.ThumbnailKey = textOf(key)
+	} else {
+		// An asset of the same content in the workspace shares its
+		// thumbnail, once its job has made it, which this one then needs
+		// no job of its own for. The thumbnail job records a thumbnail
+		// under the blob's lock, which this transaction holds.
+		shared, err := q.ContentThumbnail(ctx, queries.ContentThumbnailParams{
+			WorkspaceID: nullUUID(workspaceID), Sha256: sum})
+		switch {
+		case err == nil:
+			row.ThumbnailKey, enqueue = textOf(shared), false
+		case !errors.Is(err, pgx.ErrNoRows):
+			return row, fmt.Errorf("asset: read the thumbnail of the content: %w", err)
+		}
+	}
+	createdAt, err := q.InsertAsset(ctx, queries.InsertAssetParams{ID: row.ID, WorkspaceID: row.WorkspaceID,
+		ProjectID: row.ProjectID, Sha256: row.Sha256, Mime: row.Mime, Bytes: row.Bytes, Width: row.Width,
+		Height: row.Height, StorageKey: row.StorageKey, ThumbnailKey: row.ThumbnailKey,
+		UploadedBy: row.UploadedBy})
+	if err != nil {
+		return row, fmt.Errorf("asset: add the asset: %w", err)
+	}
+	row.CreatedAt = createdAt
+	if !referenced {
+		if err := usage.Record(ctx, tx, workspaceID, usage.StorageBytes, row.Bytes); err != nil {
+			return row, err
+		}
+	}
+	if enqueue {
+		if err := s.enqueueThumbnail(ctx, tx, workspaceID, ids.UUID(row.ID.Bytes)); err != nil {
+			return row, err
+		}
+	}
+	return row, nil
 }
 
 // enqueueThumbnail enqueues the job that makes the thumbnail of the asset

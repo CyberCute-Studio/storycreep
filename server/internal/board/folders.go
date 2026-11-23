@@ -36,8 +36,8 @@ const (
 	RestoreFolder commands.Type = "folder.restore"
 )
 
-// createFolderPayload is CreateFolder's payload.
-type createFolderPayload struct {
+// CreateFolderPayload is CreateFolder's payload.
+type CreateFolderPayload struct {
 	ID       string `json:"id" doc:"The new folder's ID, a fld_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
 	Kind     string `json:"kind" enum:"board,variable,component" doc:"What the folder holds: boards, variables, or components, each in a tree of folders of its own"`
 	Name     string `json:"name" maxLength:"100" doc:"The folder's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them"`
@@ -114,14 +114,14 @@ func Register(r *commands.Registry) {
 func registerFolders(r *commands.Registry) {
 	folder := []ids.Kind{ids.Folder}
 
-	commands.Register(r, commands.Spec[createFolderPayload]{
+	commands.Register(r, commands.Spec[CreateFolderPayload]{
 		Type: CreateFolder, Capability: authz.ManageFolders, Scope: scope.ProjectWrite, Touches: folder,
-		Check: func(p createFolderPayload) input.FieldErrors {
+		Check: func(p CreateFolderPayload) input.FieldErrors {
 			errs := newID(ids.Folder, p.ID)
 			errs = append(errs, field("name", checkName(p.Name))...)
 			return append(errs, optionalID(ids.Folder, "parent_id", p.ParentID)...)
 		},
-		Inverse: func(_ context.Context, _ *commands.Tx, p createFolderPayload) ([]commands.Step, error) {
+		Inverse: func(_ context.Context, _ *commands.Tx, p CreateFolderPayload) ([]commands.Step, error) {
 			return []commands.Step{{Type: DeleteFolder, Payload: deleteFolderPayload{ID: p.ID}}}, nil
 		},
 		Apply: applyCreateFolder,
@@ -226,7 +226,7 @@ func registerFolders(r *commands.Registry) {
 }
 
 // applyCreateFolder is CreateFolder's Apply.
-func applyCreateFolder(ctx context.Context, tx *commands.Tx, p createFolderPayload) error {
+func applyCreateFolder(ctx context.Context, tx *commands.Tx, p CreateFolderPayload) error {
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	id := decoded(ids.Folder, p.ID)

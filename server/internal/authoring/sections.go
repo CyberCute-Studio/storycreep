@@ -47,6 +47,11 @@ type Section struct {
 	// root is the type of its file.
 	root reflect.Type
 	read func(context.Context, *reading) (any, int, error)
+	// store decodes the section's file of an archive into what an import
+	// writes (plan item 84), or refuses it. A section without one is a
+	// section that this server declares and cannot import, whose presence in
+	// an archive refuses it, naming the section (FR-DATA-01 AC12).
+	store func(*archived, []byte) error
 }
 
 // holds says whether an archive of the export row holds the section.
@@ -56,8 +61,16 @@ func (s Section) holds(row queries.AuthoringExport) bool {
 }
 
 // section returns a Section of a file of items of T, read by read.
-func section[T any](s Section, read func(context.Context, *reading) ([]T, error)) Section {
+func section[T any](s Section, read func(context.Context, *reading) ([]T, error),
+	store func(*archived, []T) error) Section {
 	s.root = reflect.TypeFor[Items[T]]()
+	s.store = func(c *archived, data []byte) error {
+		var f Items[T]
+		if err := json.Unmarshal(data, &f); err != nil {
+			return &ImportError{Code: FailSchemaInvalid, Section: s.Name, Check: "json", Detail: err.Error()}
+		}
+		return store(c, f.Items)
+	}
 	s.read = func(ctx context.Context, r *reading) (any, int, error) {
 		items, err := read(ctx, r)
 		if err != nil {
@@ -75,34 +88,62 @@ func section[T any](s Section, read func(context.Context, *reading) ([]T, error)
 // last, as it names whom the others name.
 var sections = []Section{
 	{Name: "project", Path: "draft/project.json", Tables: []string{"project"}, DraftOnly: true,
-		root: reflect.TypeFor[Project](), read: readProject},
+		root: reflect.TypeFor[Project](), read: readProject, store: storeProject},
 	section(Section{Name: "folders", Path: "draft/folders.json", Tables: []string{"folder"}, DraftOnly: true},
-		readFolders),
+		readFolders, func(c *archived, v []Folder) error { c.folders = v; return nil }),
 	section(Section{Name: "boards", Path: "draft/boards.json", Tables: []string{"board"}, DraftOnly: true},
-		readBoards),
+		readBoards, func(c *archived, v []Board) error { c.boards = v; return nil }),
 	section(Section{Name: "variables", Path: "draft/variables.json", Tables: []string{"variable"}, DraftOnly: true},
-		readVariables),
+		readVariables, func(c *archived, v []Variable) error { c.variables = v; return nil }),
 	section(Section{Name: "component_types", Path: "draft/component_types.json",
-		Tables: []string{"component_type", "attribute_def"}, DraftOnly: true}, readComponentTypes),
+		Tables: []string{"component_type", "attribute_def"}, DraftOnly: true}, readComponentTypes,
+		func(c *archived, v []ComponentType) error { c.types = v; return nil }),
 	section(Section{Name: "components", Path: "draft/components.json",
-		Tables: []string{"component", "attribute_value"}, DraftOnly: true}, readComponents),
-	section(Section{Name: "nodes", Path: "draft/nodes.json", Tables: []string{"node"}, DraftOnly: true}, readNodes),
+		Tables: []string{"component", "attribute_value"}, DraftOnly: true}, readComponents,
+		func(c *archived, v []Component) error { c.components = v; return nil }),
+	section(Section{Name: "nodes", Path: "draft/nodes.json", Tables: []string{"node"}, DraftOnly: true}, readNodes,
+		func(c *archived, v []Node) error { c.nodes = v; return nil }),
 	section(Section{Name: "branch_outputs", Path: "draft/branch_outputs.json", Tables: []string{"branch_output"},
-		DraftOnly: true}, readOutputs),
+		DraftOnly: true}, readOutputs, func(c *archived, v []BranchOutput) error { c.outputs = v; return nil }),
 	section(Section{Name: "connections", Path: "draft/connections.json", Tables: []string{"connection"},
-		DraftOnly: true}, readConnections),
+		DraftOnly: true}, readConnections, func(c *archived, v []Connection) error { c.connections = v; return nil }),
 	section(Section{Name: "expressions", Path: "draft/expressions.json", Tables: []string{"expression"},
-		DraftOnly: true}, readExpressions),
+		DraftOnly: true}, readExpressions, func(c *archived, v []Expression) error { c.expressions = v; return nil }),
 	section(Section{Name: "validation_mutes", Path: "draft/validation_mutes.json", Tables: []string{"validation_mute"},
-		DraftOnly: true}, readMutes),
-	section(Section{Name: "comments", Path: "comments.json", Tables: []string{"comment"}, FullOnly: true}, readComments),
+		DraftOnly: true}, readMutes, func(c *archived, v []ValidationMute) error { c.mutes = v; return nil }),
+	section(Section{Name: "comments", Path: "comments.json", Tables: []string{"comment"}, FullOnly: true}, readComments,
+		func(c *archived, v []Comment) error { c.comments = v; return nil }),
 	section(Section{Name: "play_states", Path: "play_states.json", Tables: []string{"play_state"}, FullOnly: true},
-		readPlayStates),
-	section(Section{Name: "annotations", Path: "annotations.json", FullOnly: true}, readAnnotations),
+		readPlayStates, func(c *archived, v []PlayState) error { c.playStates = v; return nil }),
+	section(Section{Name: "annotations", Path: "annotations.json", FullOnly: true}, readAnnotations, storeAnnotations),
 	section(Section{Name: "releases", Path: "releases/index.json", Tables: []string{"snapshot", "snapshot_file"},
-		ReleasesOnly: true}, readReleases),
-	section(Section{Name: "assets", Path: "assets/index.json", Tables: []string{"asset"}, AssetsOnly: true}, readAssets),
-	section(Section{Name: "people", Path: "people.json", FullOnly: true}, readPeople),
+		ReleasesOnly: true}, readReleases, func(c *archived, v []Release) error { c.releases = v; return nil }),
+	section(Section{Name: "assets", Path: "assets/index.json", Tables: []string{"asset"}, AssetsOnly: true}, readAssets,
+		func(c *archived, v []Asset) error { c.assets = v; return nil }),
+	section(Section{Name: "people", Path: "people.json", FullOnly: true}, readPeople,
+		func(c *archived, v []Person) error { c.people = v; return nil }),
+}
+
+// storeProject decodes the project's section of an archive.
+func storeProject(c *archived, data []byte) error {
+	var p Project
+	if err := json.Unmarshal(data, &p); err != nil {
+		return &ImportError{Code: FailSchemaInvalid, Section: "project", Check: "json", Detail: err.Error()}
+	}
+	c.project = &p
+	return nil
+}
+
+// storeAnnotations refuses an archive that holds canvas annotations, which
+// this server cannot import until FR-EDIT-12 (plan item 127), and never drops
+// silently (FR-DATA-01 AC12).
+func storeAnnotations(c *archived, v []Annotation) error {
+	if len(v) > 0 {
+		return &ImportError{Code: FailSectionUnsupported, Section: "annotations",
+			Detail: "this server cannot import canvas annotations"}
+	}
+	c.annotations = v
+	return nil
 }
 
 // Sections returns the registry.

@@ -22,8 +22,10 @@ const packageDir = "internal/maintenance"
 // that may import this package besides its own: those of the closed list of
 // callers that PRD §5.4 names, once one of them needs to call into this
 // package rather than being written in it. Adding one adds a caller of the
-// maintenance path, which the PRD must name first.
-var allowedImporters []string
+// maintenance path, which the PRD must name first. The server's startup and
+// the command line open the pool, and hand the import's collision check (§5.2,
+// which returns one boolean) to package authoring as a function.
+var allowedImporters = []string{"internal/httpserver", "internal/cli"}
 
 // guardedNames are the names, besides this package, through which code could
 // reach the maintenance path without importing it, by the package

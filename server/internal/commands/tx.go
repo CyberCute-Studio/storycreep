@@ -376,7 +376,7 @@ func (t *Tx) ApplyPart(ctx context.Context, typ Type, payload any, at func(field
 		return fmt.Errorf("commands: %s applies a part of the type %s, which is not registered", parent.typ, typ)
 	case part == parent:
 		return fmt.Errorf("commands: %s applies a part of its own type", parent.typ)
-	case part.capability != parent.capability || part.scope != parent.scope:
+	case !parent.populates && (part.capability != parent.capability || part.scope != parent.scope):
 		return fmt.Errorf("commands: %s applies a part of the type %s, which needs %s and %s, where the command "+
 			"was authorised for %s and %s", parent.typ, typ, part.capability, part.scope, parent.capability,
 			parent.scope)

@@ -56,8 +56,8 @@ const (
 	Restore commands.Type = "component.restore"
 )
 
-// createPayload is Create's payload.
-type createPayload struct {
+// CreatePayload is Create's payload.
+type CreatePayload struct {
 	ID              string `json:"id" doc:"The new component's ID, a cmp_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
 	ComponentTypeID string `json:"component_type_id" doc:"The ID of the component's type, which is not in the project's trash, and which is fixed once the component is created"`
 	Name            string `json:"name" maxLength:"100" doc:"The component's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them"`
@@ -131,10 +131,10 @@ func registerComponents(r *commands.Registry) {
 	cmp := []ids.Kind{ids.Component}
 	op, sc := authz.ManageVariablesAndComponents, scope.ProjectWrite
 
-	commands.Register(r, commands.Spec[createPayload]{
+	commands.Register(r, commands.Spec[CreatePayload]{
 		Type: Create, Capability: op, Scope: sc,
 		Touches: []ids.Kind{ids.Component, ids.ComponentType, ids.AttributeDef, ids.Folder},
-		Check: func(p createPayload) input.FieldErrors {
+		Check: func(p CreatePayload) input.FieldErrors {
 			errs := newID(ids.Component, p.ID)
 			errs = append(errs, entityID(ids.ComponentType, "component_type_id", p.ComponentTypeID)...)
 			errs = append(errs, optionalID(ids.Asset, "image_asset_id", p.ImageAssetID)...)
@@ -144,7 +144,7 @@ func registerComponents(r *commands.Registry) {
 			}
 			return errs
 		},
-		CheckNew: func(p createPayload) input.FieldErrors { return field("name", checkName(p.Name)) },
+		CheckNew: func(p CreatePayload) input.FieldErrors { return field("name", checkName(p.Name)) },
 		// The undo of a create deletes the component, forcing the deletion if
 		// what the create makes of the project uses it, as an expression that
 		// named its key before it existed, so that the undo gives the project
@@ -152,7 +152,7 @@ func registerComponents(r *commands.Registry) {
 		// undo is then refused for, as a deletion is. A forced undo deletes
 		// it whatever uses it then, as any forced deletion does, and needs a
 		// role that may publish, as any does (FR-COMP-04).
-		Inverse: func(ctx context.Context, tx *commands.Tx, p createPayload) ([]commands.Step, error) {
+		Inverse: func(ctx context.Context, tx *commands.Tx, p CreatePayload) ([]commands.Step, error) {
 			q := queries.New(tx)
 			key, err := createKey(ctx, q, nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID()), p)
 			if err != nil {
@@ -402,7 +402,7 @@ func registerComponents(r *commands.Registry) {
 }
 
 // applyCreate is Create's Apply.
-func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
+func applyCreate(ctx context.Context, tx *commands.Tx, p CreatePayload) error {
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	id := decoded(ids.Component, p.ID)
@@ -558,7 +558,7 @@ func keyedByUUID(kind ids.Kind, name string, m map[string]value.Value) (map[ids.
 // payload's, or the one derived from its name, which no other component of
 // the project has outside its trash (FR-COMP-02), as Create's Inverse and
 // Apply read it alike.
-func createKey(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, p createPayload) (string, error) {
+func createKey(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, p CreatePayload) (string, error) {
 	if p.Key != "" {
 		return p.Key, nil
 	}

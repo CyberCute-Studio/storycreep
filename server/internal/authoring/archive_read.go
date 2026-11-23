@@ -1,0 +1,345 @@
+package authoring
+
+import (
+	"archive/zip"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"path"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/blob"
+)
+
+// The guards of reading an archive (PRD NFR-SEC-13), which hold whatever its
+// central directory says, since an archive is untrusted.
+const (
+	// maxArchiveEntries is the most members that an archive may have: a
+	// project of the largest fixture with 30 releases has some thousands.
+	maxArchiveEntries = 200_000
+	// maxMemberName is the longest path of a member.
+	maxMemberName = 512
+	// maxCompressionRatio is how many times its compressed size a member may
+	// expand to, past ratioFreeBytes, below which a highly compressible file,
+	// as a small JSON file of repeated keys, is no bomb.
+	maxCompressionRatio = 250
+	ratioFreeBytes      = 1 << 20
+	// expansionFactor is how many times the import limit all of an archive's
+	// members may expand to together, so that the guard scales with the
+	// instance's STORYCREEP_IMPORT_MAX_BYTES (FR-DATA-01). minExpansion keeps a
+	// small limit from refusing a small archive whose JSON compresses well.
+	expansionFactor = 4
+	minExpansion    = 1 << 30
+	// maxJSONMember is the largest JSON file of an archive, which is read into
+	// memory whole.
+	maxJSONMember = 1 << 30
+)
+
+// Failure codes of an import, in its failure's code, which the API and the web
+// app show (FR-DATA-01).
+const (
+	// FailArchiveInvalid is a file that is not an archive that the guards
+	// take: its check says which.
+	FailArchiveInvalid = "archive_invalid"
+	// FailFormatUnsupported is an archive of a format or a version that this
+	// server does not read (AC2).
+	FailFormatUnsupported = "format_unsupported"
+	// FailSchemaInvalid is a file that its JSON Schema refuses, or whose hash
+	// is not the manifest's: its section names it.
+	FailSchemaInvalid = "schema_invalid"
+	// FailSectionUnsupported is a section that this server cannot import
+	// (AC12): its section names it.
+	FailSectionUnsupported = "section_unsupported"
+	// FailContentInvalid is content that the project's commands refuse: its
+	// section names where.
+	FailContentInvalid = "content_invalid"
+	// FailReleaseInvalid is a release that fails its verification (AC11): its
+	// version and its check name them.
+	FailReleaseInvalid = "release_invalid"
+	// FailAssetInvalid is an asset whose file is missing or is not what its
+	// index says.
+	FailAssetInvalid = "asset_invalid"
+	// FailLimitExceeded is a workspace without room for the project, or its
+	// assets.
+	FailLimitExceeded = "limit_exceeded"
+	// FailForbidden is a user who may no longer create a project in the
+	// workspace.
+	FailForbidden = "forbidden"
+	// FailInternal is a failure of the server's own.
+	FailInternal = "internal"
+)
+
+// ImportError is why an archive is refused, which is the import's failure: it
+// says what is wrong with the archive, and nothing of the instance's other
+// workspaces.
+type ImportError struct {
+	// Code is one of the Fail codes.
+	Code string `json:"code"`
+	// Section names the section that is at fault, if one is.
+	Section string `json:"section,omitempty"`
+	// Version is the version of the release that is at fault, if one is.
+	Version string `json:"version,omitempty"`
+	// Check is the check that failed.
+	Check string `json:"check,omitempty"`
+	// Detail says more, in English, for a log or a support request.
+	Detail string `json:"detail,omitempty"`
+}
+
+func (e *ImportError) Error() string {
+	var b strings.Builder
+	b.WriteString("authoring: the archive is refused: ")
+	b.WriteString(e.Code)
+	for _, f := range [][2]string{{"section", e.Section}, {"version", e.Version}, {"check", e.Check},
+		{"detail", e.Detail}} {
+		if f[1] != "" {
+			fmt.Fprintf(&b, " %s=%q", f[0], f[1])
+		}
+	}
+	return b.String()
+}
+
+func invalidArchive(check, format string, args ...any) *ImportError {
+	return &ImportError{Code: FailArchiveInvalid, Check: check, Detail: fmt.Sprintf(format, args...)}
+}
+
+// archive is an opened archive, whose members have passed the guards.
+type archive struct {
+	files map[string]*zip.File
+}
+
+// openArchive reads the central directory of the zip r, of size bytes, and
+// refuses it unless every member has a safe path, is a regular file stored
+// or deflated without encryption, and expands within the guards, which scale
+// with the instance's import limit.
+func openArchive(r io.ReaderAt, size, importMax int64) (*archive, error) {
+	zr, err := zip.NewReader(r, size)
+	switch {
+	case errors.Is(err, zip.ErrInsecurePath):
+		return nil, invalidArchive("path", "a member's path leaves the archive")
+	case errors.Is(err, zip.ErrFormat), errors.Is(err, zip.ErrAlgorithm), errors.Is(err, zip.ErrChecksum):
+		return nil, invalidArchive("zip", "the file is not a zip archive")
+	case err != nil:
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) {
+			return nil, err
+		}
+		return nil, err
+	}
+	if len(zr.File) > maxArchiveEntries {
+		return nil, invalidArchive("entries", "it has %d members, more than the %d that an import takes", len(zr.File),
+			maxArchiveEntries)
+	}
+	budget := max(importMax*expansionFactor, minExpansion)
+	a := &archive{files: make(map[string]*zip.File, len(zr.File))}
+	var total uint64
+	for _, f := range zr.File {
+		if strings.HasSuffix(f.Name, "/") {
+			if err := checkMemberName(strings.TrimSuffix(f.Name, "/")); err != nil {
+				return nil, err
+			}
+			if f.UncompressedSize64 != 0 {
+				return nil, invalidArchive("path", "the directory %q holds data", f.Name)
+			}
+			continue
+		}
+		if err := checkMemberName(f.Name); err != nil {
+			return nil, err
+		}
+		if _, dup := a.files[f.Name]; dup {
+			return nil, invalidArchive("duplicate", "the path %q is in it twice", f.Name)
+		}
+		switch {
+		case !f.Mode().IsRegular():
+			return nil, invalidArchive("file_type", "the member %q is not a regular file", f.Name)
+		case f.Flags&0x1 != 0:
+			return nil, invalidArchive("encrypted", "the member %q is encrypted", f.Name)
+		case f.Method != zip.Store && f.Method != zip.Deflate:
+			return nil, invalidArchive("method", "the member %q has a compression method that an import does not read",
+				f.Name)
+		case f.UncompressedSize64 > ratioFreeBytes &&
+			f.UncompressedSize64/max(f.CompressedSize64, 1) > maxCompressionRatio:
+			return nil, invalidArchive("ratio", "the member %q expands more than %d times", f.Name, maxCompressionRatio)
+		}
+		total += f.UncompressedSize64
+		if total > uint64(budget) {
+			return nil, invalidArchive("size", "its members expand to more than the %d bytes that an import takes", budget)
+		}
+		a.files[f.Name] = f
+	}
+	return a, nil
+}
+
+// checkMemberName refuses a path that is not a plain relative path in the
+// archive: one that is absolute, climbs out of it, uses a backslash or a
+// Windows drive, or holds a control character.
+func checkMemberName(name string) error {
+	switch {
+	case name == "" || len(name) > maxMemberName || !utf8.ValidString(name):
+		return invalidArchive("path", "a member's path is empty, too long, or not UTF-8")
+	case strings.ContainsAny(name, "\\:"):
+		return invalidArchive("path", "the path %q has a backslash or a colon", name)
+	case strings.HasPrefix(name, "/") || path.Clean(name) != name:
+		return invalidArchive("path", "the path %q is not a clean relative path", name)
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return invalidArchive("path", "a member's path holds a control character")
+		}
+	}
+	for segment := range strings.SplitSeq(name, "/") {
+		if segment == "." || segment == ".." {
+			return invalidArchive("path", "the path %q leaves the archive", name)
+		}
+	}
+	return nil
+}
+
+// has says whether the archive has a member of the path.
+func (a *archive) has(name string) bool {
+	_, ok := a.files[name]
+	return ok
+}
+
+// read returns the member of the path, whole, of at most limit bytes, and
+// checks its CRC-32, which a read to its end does.
+func (a *archive) read(name string, limit int64) ([]byte, error) {
+	f, ok := a.files[name]
+	if !ok {
+		return nil, invalidArchive("missing", "it has no member %q", name)
+	}
+	if f.UncompressedSize64 > uint64(limit) {
+		return nil, invalidArchive("size", "the member %q has %d bytes, more than the %d that it may", name,
+			f.UncompressedSize64, limit)
+	}
+	rc, err := f.Open()
+	if err != nil {
+		return nil, memberError(name, err)
+	}
+	defer func() { _ = rc.Close() }()
+	data := make([]byte, 0, f.UncompressedSize64)
+	buf := make([]byte, 64*1024)
+	for {
+		n, err := rc.Read(buf)
+		if int64(len(data)+n) > int64(f.UncompressedSize64) {
+			return nil, invalidArchive("size", "the member %q holds more than its header says", name)
+		}
+		data = append(data, buf[:n]...)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, memberError(name, err)
+		}
+	}
+	if int64(len(data)) != int64(f.UncompressedSize64) {
+		return nil, invalidArchive("size", "the member %q holds less than its header says", name)
+	}
+	return data, nil
+}
+
+// memberError is the failure of reading a member: the store's own error, as a
+// chunk that it could not read, or a member that is damaged.
+func memberError(name string, err error) error {
+	var store *chunkError
+	if errors.As(err, &store) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return invalidArchive("zip", "the member %q cannot be read: %v", name, err)
+}
+
+// under returns the paths of the archive's members below the directory dir,
+// which ends with a slash.
+func (a *archive) under(dir string) []string {
+	var out []string
+	for name := range a.files {
+		if strings.HasPrefix(name, dir) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// chunkError is a failure of the store to give a chunk of the upload, which is
+// the instance's and not the archive's, so another attempt may get past it.
+type chunkError struct {
+	index int
+	err   error
+}
+
+func (e *chunkError) Error() string {
+	return fmt.Sprintf("authoring: read chunk %d of the upload: %v", e.index, e.err)
+}
+
+func (e *chunkError) Unwrap() error { return e.err }
+
+// chunkReader reads the chunks of an upload, each a blob of the store, as one
+// file, for the zip reader, holding one chunk in memory at a time. It is not
+// safe to call from several goroutines.
+type chunkReader struct {
+	ctx        context.Context
+	store      blob.Store
+	keys       []string
+	chunkBytes int64
+	size       int64
+	cached     int
+	buf        []byte
+}
+
+func newChunkReader(ctx context.Context, store blob.Store, keys []string, chunkBytes, size int64) *chunkReader {
+	return &chunkReader{ctx: ctx, store: store, keys: keys, chunkBytes: chunkBytes, size: size, cached: -1}
+}
+
+// ReadAt implements io.ReaderAt.
+func (c *chunkReader) ReadAt(p []byte, off int64) (int, error) {
+	if off < 0 {
+		return 0, errors.New("authoring: a negative offset")
+	}
+	n := 0
+	for n < len(p) {
+		if off >= c.size {
+			return n, io.EOF
+		}
+		i := int(off / c.chunkBytes)
+		if err := c.load(i); err != nil {
+			return n, err
+		}
+		within := off - int64(i)*c.chunkBytes
+		copied := copy(p[n:], c.buf[within:])
+		n += copied
+		off += int64(copied)
+	}
+	return n, nil
+}
+
+// load reads the chunk i into the buffer, unless it is there, and checks that
+// it has the size that its place in the file needs.
+func (c *chunkReader) load(i int) error {
+	if c.cached == i {
+		return nil
+	}
+	if i >= len(c.keys) {
+		return &chunkError{index: i, err: errors.New("the upload has no such chunk")}
+	}
+	want := c.chunkBytes
+	if rest := c.size - int64(i)*c.chunkBytes; rest < want {
+		want = rest
+	}
+	rc, _, err := c.store.Open(c.ctx, c.keys[i])
+	if err != nil {
+		return &chunkError{index: i, err: err}
+	}
+	defer func() { _ = rc.Close() }()
+	if int64(cap(c.buf)) < want {
+		c.buf = make([]byte, want)
+	}
+	c.buf = c.buf[:want]
+	c.cached = -1
+	if _, err := io.ReadFull(rc, c.buf); err != nil {
+		return &chunkError{index: i, err: err}
+	}
+	c.cached = i
+	return nil
+}
