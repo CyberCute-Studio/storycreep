@@ -13,8 +13,11 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/dependency"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
@@ -808,6 +811,97 @@ func TestDependencyGraphSharedUUIDs(t *testing.T) {
 		[]string{"A in 0 out 0", "B in 0 out 0"})
 	if got := contributions(t, h, owner, contributionsPath(p, a, b, "variable"), 50); len(got) != 0 {
 		t.Errorf("with writer in the trash, A->B lists %+v", got)
+	}
+}
+
+// ringProject creates a project of n boards, each of which writes a variable
+// of its own, and reads the variable of the board before it and whether a
+// node of the board 7 after it was visited, and returns its ID.
+func ringProject(t *testing.T, h http.Handler, owner signedIn, ws, name string, n int) string {
+	t.Helper()
+	p := createProject(t, h, owner, ws, name).ID
+	boards, scenes, ends := newBoardIDs(n), make([]string, n), make([]string, n)
+	pos := map[string]int{"x": 0, "y": 0}
+	cmd := func(typ string, p map[string]any) wireCommand { return wireCommand{Type: typ, Payload: p} }
+	var cmds []wireCommand
+	for i := range n {
+		scenes[i], ends[i] = newNodeID(), newNodeID()
+		cmds = append(cmds,
+			cmd("board.create", map[string]any{"id": boards[i], "name": fmt.Sprintf("Board %d", i)}),
+			cmd("variable.create", map[string]any{"id": newVariableID(), "key": fmt.Sprintf("v_%d", i),
+				"type": "bool", "scope": "global"}),
+			cmd("node.create", map[string]any{"id": scenes[i], "board_id": boards[i], "type": "element",
+				"position": pos, "on_exit": fmt.Sprintf("v_%d = true", i)}),
+			cmd("node.create", map[string]any{"id": ends[i], "board_id": boards[i], "type": "element",
+				"position": pos}),
+		)
+	}
+	for i := range n {
+		cmds = append(cmds, cmd("connection.create", map[string]any{"id": ids.Encode(ids.Connection, ids.New()),
+			"from_node_id": scenes[i], "to_node_id": ends[i],
+			"condition": fmt.Sprintf(`v_%d && visited(node("%s"))`, (i+n-1)%n, scenes[(i+7)%n])}))
+	}
+	sendBatch(t, h, owner, p, cmds...)
+	return p
+}
+
+// explainedTx is a transaction that runs each query that it is given under
+// EXPLAIN first, and adds up the pages that it read.
+type explainedTx struct {
+	pgx.Tx
+	pages int64
+}
+
+func (e *explainedTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	var plans []struct {
+		Plan struct {
+			Hit  int64 `json:"Shared Hit Blocks"`
+			Read int64 `json:"Shared Read Blocks"`
+		} `json:"Plan"`
+	}
+	if err := e.Tx.QueryRow(ctx, "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+sql, args...).Scan(&plans); err != nil {
+		return nil, err
+	}
+	e.pages += plans[0].Plan.Hit + plans[0].Plan.Read
+	return e.Tx.Query(ctx, sql, args...)
+}
+
+// TestDependencyGraphNewerThanStatistics checks that the graph of a project
+// that the tables' statistics do not know yet, which PostgreSQL estimates at
+// one row of each table, reads a few pages for each of its rows. A project
+// too small to have the tables analyzed again stays so, and a join of them
+// by the project read every row of one for each row of another.
+//
+// Verifies: NFR-PERF-11
+func TestDependencyGraphNewerThanStatistics(t *testing.T) {
+	t.Parallel()
+	const boards, maxPagesPerRow = 40, 30
+	ctx := context.Background()
+	s, d, owner, ws := inviteServer(t, "open", nil)
+	ringProject(t, s.main, owner, ws, "Older", boards)
+	if _, err := d.Admin(t).Exec(ctx, "ANALYZE"); err != nil {
+		t.Fatal(err)
+	}
+	p := ringProject(t, s.main, owner, ws, "Newer", boards)
+	workspace, project := uuidOf(t, ws), uuidOf(t, p)
+	var rows int
+	var pages int64
+	err := d.Open(t).InSnapshot(ctx, database.Scope{WorkspaceID: workspace}, func(tx pgx.Tx) error {
+		e := &explainedTx{Tx: tx}
+		got, err := queries.New(e).GraphReferences(ctx, queries.GraphReferencesParams{
+			WorkspaceID: pgtype.UUID{Bytes: workspace, Valid: true},
+			ProjectID:   pgtype.UUID{Bytes: project, Valid: true}})
+		rows, pages = len(got), e.pages
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := 3 * boards; rows != want {
+		t.Fatalf("the graph's read returned %d rows, want %d", rows, want)
+	}
+	if limit := int64(rows * maxPagesPerRow); pages > limit {
+		t.Errorf("the graph's read of %d rows read %d pages, more than %d", rows, pages, limit)
 	}
 }
 

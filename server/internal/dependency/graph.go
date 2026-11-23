@@ -188,6 +188,18 @@ func (s *Service) Graph(ctx context.Context, actor commands.Actor, projectID ids
 				return fmt.Errorf("dependency: read the index's rows of the graph: %w", err)
 			}
 		}
+		// The boards of the nodes, of which a site reads one as visited.
+		var nodeBoards map[ids.UUID]ids.UUID
+		if keeps[EdgeVisit] {
+			rows, err := q.GraphNodeBoards(ctx, queries.GraphNodeBoardsParams{WorkspaceID: ws, ProjectID: p})
+			if err != nil {
+				return fmt.Errorf("dependency: read the boards of the nodes: %w", err)
+			}
+			nodeBoards = make(map[ids.UUID]ids.UUID, len(rows))
+			for _, n := range rows {
+				nodeBoards[n.ID.Bytes] = n.BoardID.Bytes
+			}
+		}
 		var jumpers []queries.GraphJumpersRow
 		if keeps[EdgeJumper] {
 			if jumpers, err = q.GraphJumpers(ctx, queries.GraphJumpersParams{WorkspaceID: ws,
@@ -195,7 +207,7 @@ func (s *Service) Graph(ctx context.Context, actor commands.Actor, projectID ids
 				return fmt.Errorf("dependency: read the jumpers of the graph: %w", err)
 			}
 		}
-		g = graphOf(project.Project.Seq, boards, edgesOf(f, keeps, refs, jumpers))
+		g = graphOf(project.Project.Seq, boards, edgesOf(f, keeps, refs, nodeBoards, jumpers))
 		return nil
 	})
 	if err != nil {
@@ -212,8 +224,10 @@ type edge struct {
 
 // edgesOf returns the edges that f keeps, of the kinds keeps, which
 // f.keeps returns, each with how many of its contributions f keeps, of the
-// project's sites' rows of the index refs, which GraphReferences returns,
-// and of its jumpers, which GraphJumpers returns: of a variable or an
+// project's sites' rows of the index refs, which GraphReferences returns, of
+// the boards of its nodes that are not in its trash, nodeBoards, which
+// GraphNodeBoards returns if keeps holds the visits, and of its jumpers, which
+// GraphJumpers returns: of a variable or an
 // attribute, from each board that writes it to each other board that reads
 // it, counting each pair of their sites; of a visit, from the visited node's
 // board to another board that reads it, counting each site; and of the
@@ -221,7 +235,7 @@ type edge struct {
 // counting each jumper. The rows hold no filter, so that the reads' plans are
 // of the project alone.
 func edgesOf(f Filter, keeps map[EdgeKind]bool, refs []queries.GraphReferencesRow,
-	jumpers []queries.GraphJumpersRow) map[edge]int64 {
+	nodeBoards map[ids.UUID]ids.UUID, jumpers []queries.GraphJumpersRow) map[edge]int64 {
 	out := map[edge]int64{}
 	add := func(from, to ids.UUID, kind EdgeKind, n int64) {
 		if from == to || f.Board != (ids.UUID{}) && f.Board != from && f.Board != to {
@@ -245,8 +259,8 @@ func edgesOf(f Filter, keeps map[EdgeKind]bool, refs []queries.GraphReferencesRo
 		t := target{kind: Kind(r.TargetKind), id: r.TargetID.Bytes, attribute: r.AttributeDefID.Bytes}
 		switch t.kind {
 		case Node:
-			if keeps[EdgeVisit] && r.VisitedBoardID.Valid {
-				add(r.VisitedBoardID.Bytes, board, EdgeVisit, r.Sites)
+			if visited, ok := nodeBoards[t.id]; ok {
+				add(visited, board, EdgeVisit, r.Sites)
 			}
 			continue
 		case Variable:
