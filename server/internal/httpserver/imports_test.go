@@ -33,8 +33,10 @@ func openMaintenance(t *testing.T, s *server, d *dbtest.Database) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(db.Close)
-	s.maintenance.db.Store(db)
+	s.maintenance.mu.Lock()
+	s.maintenance.db = db
+	s.maintenance.mu.Unlock()
+	t.Cleanup(s.maintenance.close)
 }
 
 // beginImport asks for an import of an archive of size bytes as si.

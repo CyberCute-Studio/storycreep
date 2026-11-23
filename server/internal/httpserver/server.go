@@ -44,7 +44,6 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
-	"github.com/CyberCute-Studio/storycreep/server/internal/maintenance"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/search"
 	"github.com/CyberCute-Studio/storycreep/server/internal/statistics"
@@ -250,27 +249,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 	defer db.Close()
 	s.ready.db.Store(db)
 
-	// The maintenance path, which only the import's collision check reads
-	// through the server (PRD §5.2, §5.4), opens once migrating has provisioned
-	// its login.
-	maintenanceDB, err := maintenance.OpenConfigured(ctx, cfg)
-	switch {
-	case errors.Is(err, maintenance.ErrNoURL):
-		// storycreep serve refuses to start without it, so only a server that
-		// a test starts gets here, which then imports nothing.
-		log.WarnContext(ctx, "the maintenance login is not set, so this server cannot import projects")
-	case err != nil:
-		stop()
-		if ctx.Err() != nil {
-			log.InfoContext(ctx, "stopped before the maintenance path opened", "error", err)
-			return nil
-		}
-		log.ErrorContext(ctx, "the maintenance path could not open, so the server does not serve", "error", err)
-		return err
-	default:
-		defer maintenanceDB.Close()
-		s.maintenance.db.Store(maintenanceDB)
-	}
+	defer s.maintenance.close()
 
 	// The queue enqueues jobs from the start, and its workers start once the
 	// server is ready, when River's tables exist.

@@ -101,13 +101,14 @@ GRANT SELECT ON project_import TO storycreep_maintenance;
 -- ReferencedBlobs, so that it keeps the chunks of an upload that is on its way
 -- and deletes those of one that is gone.
 CREATE TABLE project_import_chunk (
-	workspace_id uuid NOT NULL,
+	id uuid PRIMARY KEY DEFAULT uuid_v7(),
+	workspace_id uuid NOT NULL REFERENCES workspace ON DELETE CASCADE,
 	import_id uuid NOT NULL,
 	chunk_index integer NOT NULL CHECK (chunk_index >= 0),
 	bytes integer NOT NULL CHECK (bytes > 0),
 	storage_key text NOT NULL,
 	created_at timestamptz NOT NULL DEFAULT now(),
-	PRIMARY KEY (workspace_id, import_id, chunk_index),
+	UNIQUE (workspace_id, import_id, chunk_index),
 	UNIQUE (workspace_id, storage_key),
 	FOREIGN KEY (workspace_id, import_id) REFERENCES project_import (workspace_id, id) ON DELETE CASCADE
 );

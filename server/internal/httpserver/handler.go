@@ -138,7 +138,7 @@ type server struct {
 	email *email.Service
 	// queue is the job queue, once Run has opened it.
 	queue *queueRef
-	// maintenance is the maintenance path, once Run has opened it.
+	// maintenance is the maintenance path, which opens when it is first used.
 	maintenance *maintenanceRef
 }
 
@@ -180,7 +180,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		RequireVerifiedEmail: cfg.Capabilities.EmailRequired,
 	})
 	s.queue = &queueRef{}
-	s.maintenance = &maintenanceRef{}
+	s.maintenance = &maintenanceRef{cfg: cfg}
 	s.commands = commands.New(readyDB{s.ready}, commands.Options{
 		Registry:     newCommandRegistry(),
 		Policy:       role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},

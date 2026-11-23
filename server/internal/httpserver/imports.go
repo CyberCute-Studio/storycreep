@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -13,24 +13,45 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/asset"
 	"github.com/CyberCute-Studio/storycreep/server/internal/authoring"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/maintenance"
 )
 
-// maintenanceRef holds the maintenance path's pool once the server has opened
-// it, for the import's collision check, which is all that the server asks of
-// it (PRD §5.2, §5.4).
+// maintenanceRef opens the maintenance path's pool when the import's collision
+// check first needs it, which is all that the server asks of it (PRD §5.2,
+// §5.4), so that a server waiting for its migrations does not need the login
+// that migrating provisions.
 type maintenanceRef struct {
-	db atomic.Pointer[maintenance.DB]
+	cfg *config.Config
+	mu  sync.Mutex
+	db  *maintenance.DB
 }
 
 // AnyIDInUse says whether any of list is in use on the instance.
 func (r *maintenanceRef) AnyIDInUse(ctx context.Context, list []ids.UUID) (bool, error) {
-	db := r.db.Load()
-	if db == nil {
-		return false, errors.New("the maintenance path is not open")
+	r.mu.Lock()
+	if r.db == nil {
+		db, err := maintenance.OpenConfigured(ctx, r.cfg)
+		if err != nil {
+			r.mu.Unlock()
+			return false, err
+		}
+		r.db = db
 	}
+	db := r.db
+	r.mu.Unlock()
 	return db.AnyIDInUse(ctx, list)
+}
+
+// close closes the pool, if it was opened.
+func (r *maintenanceRef) close() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.db != nil {
+		r.db.Close()
+		r.db = nil
+	}
 }
 
 // importDoc says who reads an import, in each route's description.

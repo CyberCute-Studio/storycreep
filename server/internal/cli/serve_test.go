@@ -74,6 +74,7 @@ func TestServe(t *testing.T) {
 			t.Parallel()
 			d := dbtest.Empty(t)
 			env := migrateEnv(d, tt.admin)
+			env["STORYCREEP_DATABASE_MAINTENANCE_URL"] = d.MaintenanceURL.Reveal()
 			addr := freeAddr(t)
 			env["STORYCREEP_HTTP_ADDR"], env["STORYCREEP_ADMIN_ADDR"] = addr, freeAddr(t)
 			env["STORYCREEP_LOG_LEVEL"] = "debug"
