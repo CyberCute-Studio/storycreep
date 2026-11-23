@@ -125,6 +125,17 @@ docker compose exec app storycreep create-token --scopes snapshot:read jo@exampl
 
 It prints the token's secret alone, once: the database keeps only its hash. A program sends it as `Authorization: Bearer scp_…`, so a reverse proxy in front of the server must pass that header on, as Caddy, Traefik, and nginx do unasked. A token acts only with the scopes that it holds, and never does more than its member's role allows at the time; removing the member revokes it. With any scope but `export:read`, it lists its workspace and the projects that it acts on, and reads them; the routes of accounts, members, and the administration of a workspace take a session alone, and answer a token with 403 `session_required`. Its requests count against its own rate limits and its member's, and in its workspace's usage, as `api_requests`.
 
+### Exporting and importing projects
+
+Owners and admins of a workspace import a project from its page. The operator can do both from the command line, as a member of the workspace:
+
+```sh
+docker compose exec app storycreep export --output /tmp/harbour.zip jo@example.com prj_01HQ8Z3XK4F7NAWR5TCQ9M2BVD
+docker compose exec app storycreep import jo@example.com harbour /tmp/harbour.zip
+```
+
+A full export contains personal data, so keep the file accordingly. An import checks the whole archive first, and creates the project all or nothing. Archives are limited by `STORYCREEP_IMPORT_MAX_BYTES`. The server needs `STORYCREEP_DATABASE_MAINTENANCE_URL`, which the published compose file sets, to check whether an archive's IDs are in use.
+
 ### Behind a reverse proxy
 
 The server speaks plain HTTP, and expects a reverse proxy in front of it to terminate TLS. Run the proxy on the same machine, forward it to `127.0.0.1:7777`, and set `STORYCREEP_PUBLIC_URL` to the proxy's `https` URL, such as `https://storycreep.example.com`.
