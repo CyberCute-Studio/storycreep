@@ -294,6 +294,7 @@ function useProjectImport(workspaceId: string, open: boolean) {
     closed: () => {
       running.current?.abort();
       cancel.reset();
+      setCanceled(false);
       if (item?.status === "ready" || item?.status === "failed") {
         reset();
         return;

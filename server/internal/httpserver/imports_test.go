@@ -876,6 +876,72 @@ func TestImportMapsAnEscapedMention(t *testing.T) {
 	}
 }
 
+// TestImportRemapFollowsAnEscapedNodeReference checks that a valid expression
+// whose node reference spells the ID with an escape of the expression language
+// still names its node after a remap, in the draft and in a release's files.
+//
+// Verifies: FR-DATA-01/AC8
+func TestImportRemapFollowsAnEscapedNodeReference(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	h := f.s.main
+	other := newNodeID()
+	escaped := strings.Replace(f.node, "_", string(rune(0x5c))+"u005f", 1)
+	sendBatch(t, h, f.owner, f.project,
+		wireCommand{Type: "node.create", Payload: map[string]any{"id": other, "board_id": f.board, "type": "element",
+			"kind": "narration", "title": "Again", "text": paragraph("Back once more."),
+			"position": map[string]int{"x": 0, "y": 0}, "is_ending": true}},
+		wireCommand{Type: "connection.create", Payload: map[string]any{"id": ids.Encode(ids.Connection, ids.New()),
+			"from_node_id": f.node, "to_node_id": other, "label": paragraph("Again"),
+			"condition": `visited(node("` + escaped + `"))`}})
+	release := snapshotFrom(t, call(h, http.MethodPost, snapshotsPath(f.project),
+		publishBody(t, "1.1.0", validationReport(t, h, f.owner, f.project)), f.owner.header(true)), http.StatusAccepted)
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		got := snapshotFrom(t, call(h, http.MethodGet, snapshotsPath(f.project)+"/"+release.ID, nil,
+			f.owner.header(false)), http.StatusOK)
+		if got.Status == snapshot.Ready {
+			break
+		}
+		if got.Status == snapshot.Failed || time.Now().After(deadline) {
+			t.Fatalf("the snapshot's build ended as %+v", got)
+		}
+	}
+	got := mustImport(t, f.s, f.owner, f.ws, zipOf(t, exportedArchive(t, f)), "remap")
+	var broken int
+	if err := f.d.Admin(t).QueryRow(t.Context(), `SELECT count(*) FROM expression
+		WHERE project_id = $1 AND error IS NOT NULL`, decode(t, ids.Project, got.ProjectID)).Scan(&broken); err != nil {
+		t.Fatal(err)
+	}
+	if broken != 0 {
+		t.Errorf("%d expressions no longer compile after the remap", broken)
+	}
+	body := strings.ToLower(f.node[strings.IndexByte(f.node, '_')+1:])
+	for name, data := range exportOf(t, f.s, f.owner, got.ProjectID) {
+		if strings.HasSuffix(name, ".json") && strings.Contains(strings.ToLower(string(data)), body) {
+			t.Errorf("%s still names the node of the project that it came from", name)
+		}
+	}
+}
+
+// TestImportChunkPastTheLastHasNoExpectedSize checks that a chunk of an index
+// that the upload does not have is told so without a size that it should have.
+//
+// Verifies: FR-DATA-01/AC4
+func TestImportChunkPastTheLastHasNoExpectedSize(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	i := beginImport(t, f.s.main, f.owner, f.ws, 10, "")
+	res := call(f.s.main, http.MethodPut, fmt.Sprintf("%s/%s/chunks/%d", importsPath(f.ws), i.ID, i.ChunkCount),
+		[]byte("0123456789"), withOctets(f.owner.header(true)))
+	if res.status != http.StatusUnprocessableEntity {
+		t.Fatalf("a chunk past the last: %d %s", res.status, res.body)
+	}
+	if strings.Contains(string(res.body), "expected_bytes") {
+		t.Errorf("a chunk past the last is told a size: %s", res.body)
+	}
+}
+
 // TestImportHoldsDirectRowsToTheirChecks checks that what an import writes
 // without a command is held to what a reader of its row needs, its package's
 // structural checks and its bounds: a play state of another project, or that

@@ -23,6 +23,42 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
 )
 
+// TestRewriteIDsFollowsAnEscapedReference checks that a remap follows a node
+// reference whose string literal spells the ID with an escape, which the
+// expression's lexer reads as the ID, and leaves what only looks like one.
+//
+// Verifies: FR-DATA-01/AC8
+func TestRewriteIDsFollowsAnEscapedReference(t *testing.T) {
+	t.Parallel()
+	old, fresh := ids.New(), ids.New()
+	id, want := ids.Encode(ids.Node, old), ids.Encode(ids.Node, fresh)
+	table := map[ids.UUID]ids.UUID{old: fresh}
+	backslash := string(rune(0x5c))
+	escape := backslash + "u00"
+	underscore := strings.Replace(id, "_", escape+"5f", 1)
+	stranger := strings.Replace(ids.Encode(ids.Node, ids.New()), "_", escape+"5f", 1)
+	doubled := strings.Replace(id, "_", backslash+escape+"5f", 1)
+	for _, c := range []struct{ name, source, want string }{
+		{"an escaped underscore", `visited(node("` + underscore + `"))`, `visited(node("` + want + `"))`},
+		{"an escaped first letter", `visited(node("` + escape + "6e" + id[1:] + `"))`, `visited(node("` + want + `"))`},
+		{"after a character of two bytes", "é" + underscore, "é" + want},
+		{"an ID that the table does not hold", `visited(node("` + stranger + `"))`, `visited(node("` + stranger + `"))`},
+		{"an escaped backslash", `"` + doubled + `"`, `"` + doubled + `"`},
+	} {
+		data, err := json.Marshal(map[string]string{"source": c.source})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]string
+		if err := json.Unmarshal(rewriteIDs(data, table), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got["source"] != c.want {
+			t.Errorf("%s: rewritten as %s, want %s", c.name, got["source"], c.want)
+		}
+	}
+}
+
 // TestArchiveDirectoryGuard checks that a central directory of more headers
 // than an import reads is refused as it is read, and not once the zip reader
 // has built a File of each of them.

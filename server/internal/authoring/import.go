@@ -912,9 +912,16 @@ func (s *Service) ImportFile(ctx context.Context, actor commands.Actor, workspac
 		finished: &report}
 	done := Import{ID: ids.Encode(ids.Job, id), WorkspaceID: ids.Encode(ids.Workspace, workspaceID),
 		FileName: req.FileName, SizeBytes: size}
-	if err := s.importArchive(ctx, run, r, size); err != nil {
+	// The time of a job's attempt, as the transaction waits for a lock for as
+	// long as it takes (queries.KeepLongStatements), and nothing else ends it.
+	running, cancel := context.WithTimeout(ctx, importTimeout)
+	defer cancel()
+	if err := s.importArchive(running, run, r, size); err != nil {
 		refused, ok := isRefusal(err)
 		if !ok {
+			if errors.Is(running.Err(), context.DeadlineExceeded) {
+				return Import{}, fmt.Errorf("the import ran out of its %s, and nothing was imported", importTimeout)
+			}
 			return Import{}, err
 		}
 		done.Status, done.Failure = ImportFailed, refused.recorded()

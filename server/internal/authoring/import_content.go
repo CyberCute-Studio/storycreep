@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
@@ -451,10 +452,61 @@ func idByte(r uint64) bool {
 	return r == '_' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
 }
 
+// escapedToken finds a run of what an ID is written in, of which at least one
+// character is an escape of an expression's string literal, a backslash, u, and
+// four digits, which a JSON file holds with its backslash escaped, after the
+// byte before the run. That byte is no backslash, as the run would otherwise
+// begin inside an escaped backslash, which is no escape of a character.
+var escapedToken = regexp.MustCompile(`[^\x5c](?:[0-9A-Za-z_]|\x5c\x5cu00[0-9A-Fa-f]{2})*` +
+	`\x5c\x5cu00[0-9A-Fa-f]{2}(?:[0-9A-Za-z_]|\x5c\x5cu00[0-9A-Fa-f]{2})*`)
+
+// rewriteEscapedIDs returns data with each ID of table that an expression's
+// string literal spells with escapes, as the lexer reads it, written as its new
+// ID in its canonical spelling, and anything else as it is. plainIDs cannot
+// undo these, as the same bytes are plain text in any other string.
+func rewriteEscapedIDs(data []byte, table map[ids.UUID]ids.UUID) []byte {
+	if !bytes.Contains(data, []byte{'\\', '\\', 'u', '0', '0'}) {
+		return data
+	}
+	return escapedToken.ReplaceAllFunc(data, func(match []byte) []byte {
+		// The character before the run, which may take more than a byte.
+		_, before := utf8.DecodeRune(match)
+		// As long as the longest that idToken finds, so that a run of any
+		// length takes no memory to read.
+		var plain [30]byte
+		n := 0
+		for i := before; i < len(match); i++ {
+			if n == len(plain) {
+				return match
+			}
+			c := match[i]
+			if c == '\\' {
+				r, err := strconv.ParseUint(string(match[i+3:i+7]), 16, 16)
+				if err != nil || !idByte(r) {
+					return match
+				}
+				c = byte(r)
+				i += 6
+			}
+			plain[n] = c
+			n++
+		}
+		kind, id, err := ids.DecodeAny(string(plain[:n]))
+		if err != nil {
+			return match
+		}
+		fresh, ok := table[id]
+		if !ok {
+			return match
+		}
+		return append(slices.Clone(match[:before]), ids.Encode(kind, fresh)...)
+	})
+}
+
 // rewriteIDs returns data with each ID that table has written as its new ID,
 // in its canonical spelling, and anything else as it is.
 func rewriteIDs(data []byte, table map[ids.UUID]ids.UUID) []byte {
-	return idToken.ReplaceAllFunc(data, func(tok []byte) []byte {
+	return idToken.ReplaceAllFunc(rewriteEscapedIDs(data, table), func(tok []byte) []byte {
 		kind, id, err := ids.DecodeAny(string(tok))
 		if err != nil {
 			return tok

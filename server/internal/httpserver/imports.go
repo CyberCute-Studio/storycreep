@@ -406,8 +406,12 @@ func importError(err error) error {
 	case errors.As(err, &incomplete):
 		return &api.Error{Code: api.CodeImportIncomplete, Details: map[string]any{"missing_chunks": incomplete.Missing}}
 	case errors.As(err, &chunk):
-		return &api.Error{Code: api.CodeChunkInvalid, Details: map[string]any{"index": chunk.Index,
-			"expected_bytes": chunk.Expected, "bytes": chunk.Got}}
+		details := map[string]any{"index": chunk.Index, "bytes": chunk.Got}
+		// An index outside the upload has no size that it should have.
+		if chunk.Expected > 0 {
+			details["expected_bytes"] = chunk.Expected
+		}
+		return &api.Error{Code: api.CodeChunkInvalid, Details: details}
 	}
 	return projectError(err)
 }

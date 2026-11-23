@@ -421,8 +421,8 @@ var codes = []codeSpec{
 			"`details.missing_chunks` lists the first of them, which a client sends and then completes the import."},
 	{CodeChunkInvalid, http.StatusUnprocessableEntity, i18n.K("error.chunk_invalid"),
 		"The chunk is not of this upload: its index is past the last, or its size is not `chunk_bytes`, or the rest " +
-			"of the archive for the last chunk (PRD FR-DATA-01). `details.index`, `details.expected_bytes`, and " +
-			"`details.bytes` say which."},
+			"of the archive for the last chunk (PRD FR-DATA-01). `details.index` and `details.bytes` say which, with " +
+			"`details.expected_bytes` for an index that the upload has."},
 	{CodeSnapshotNotReady, http.StatusConflict, i18n.K("error.snapshot_not_ready"),
 		"The snapshot is not ready, and only a ready snapshot has files to export or to compare (PRD " +
 			"FR-SYNC-01, FR-SYNC-02, §7.3): `GET /api/v1/projects/{project_id}/snapshots/{snapshot_id}/export` " +
