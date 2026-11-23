@@ -1004,6 +1004,11 @@
       "AuthoringExportBody": {
         "additionalProperties": false,
         "properties": {
+          "asset_count": {
+            "description": "How many assets a ready archive holds, if it was counted.",
+            "format": "int32",
+            "type": "integer"
+          },
           "contains_personal_data": {
             "description": "Whether the archive holds personal data, as a full export does.",
             "type": "boolean"
@@ -1014,7 +1019,7 @@
             "type": "string"
           },
           "exceeds_import_limit": {
-            "description": "Whether the archive is larger than import_max_bytes, so that this instance could not import it.",
+            "description": "Whether this instance could not import the archive: it is larger than import_max_bytes, or holds more than import_max_assets.",
             "type": "boolean"
           },
           "expires_at": {
@@ -1034,6 +1039,11 @@
           "id": {
             "description": "The export's ID, a job's.",
             "type": "string"
+          },
+          "import_max_assets": {
+            "description": "The most assets that an archive may hold for this instance to import it.",
+            "format": "int32",
+            "type": "integer"
           },
           "import_max_bytes": {
             "description": "The largest archive that this instance imports (STORYCREEP_IMPORT_MAX_BYTES).",
@@ -1089,6 +1099,7 @@
           "include_releases",
           "contains_personal_data",
           "import_max_bytes",
+          "import_max_assets",
           "exceeds_import_limit",
           "created_at",
           "expires_at"

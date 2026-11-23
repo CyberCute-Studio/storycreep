@@ -310,11 +310,13 @@ export interface AttributeSetRuntimePayload {
 }
 
 export interface AuthoringExportBody {
+  /** How many assets a ready archive holds, if it was counted. */
+  asset_count?: number;
   /** Whether the archive holds personal data, as a full export does. */
   contains_personal_data: boolean;
   /** When the export was asked for. */
   created_at: string;
-  /** Whether the archive is larger than import_max_bytes, so that this instance could not import it. */
+  /** Whether this instance could not import the archive: it is larger than import_max_bytes, or holds more than import_max_assets. */
   exceeds_import_limit: boolean;
   /** When the export and its file are deleted. */
   expires_at: string;
@@ -324,6 +326,8 @@ export interface AuthoringExportBody {
   finished_at?: string;
   /** The export's ID, a job's. */
   id: string;
+  /** The most assets that an archive may hold for this instance to import it. */
+  import_max_assets: number;
   /** The largest archive that this instance imports (STORYCREEP_IMPORT_MAX_BYTES). */
   import_max_bytes: number;
   /** Whether the archive holds the project's assets, node cover images among them. */

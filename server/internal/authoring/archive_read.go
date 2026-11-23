@@ -67,6 +67,10 @@ const (
 	// shares, which takes some 13,000 locks on PostgreSQL's default settings,
 	// past which any other session that needs a lock fails too.
 	maxImportAssets = 4_000
+	// maxImportPeople is the most people outside the workspace whom an archive
+	// may name. Each takes an account, in a table of the whole instance, and
+	// a project's comments have far fewer authors.
+	maxImportPeople = 10_000
 )
 
 // errDirectoryTooLarge stops the zip reader at maxDirectoryBytes.

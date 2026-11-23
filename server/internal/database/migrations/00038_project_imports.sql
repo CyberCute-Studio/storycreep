@@ -122,3 +122,9 @@ CREATE POLICY workspace_isolation ON project_import_chunk TO storycreep_app
 GRANT SELECT, INSERT, DELETE ON project_import_chunk TO storycreep_app;
 GRANT UPDATE (bytes, storage_key) ON project_import_chunk TO storycreep_app;
 GRANT SELECT ON project_import_chunk TO storycreep_maintenance;
+
+-- How many assets a ready export's archive holds, as an import takes at most
+-- so many, so that the export can say that this instance could not import it.
+-- An export made before this column has none, and says nothing of it.
+ALTER TABLE authoring_export ADD COLUMN asset_count integer CHECK (asset_count >= 0);
+GRANT UPDATE (asset_count) ON authoring_export TO storycreep_app;

@@ -1245,3 +1245,57 @@ func TestImportChunkSentAgainIsANewBlob(t *testing.T) {
 		t.Errorf("the chunk sent again kept the key %s", first)
 	}
 }
+
+// TestImportRefusesTooManyPeople checks that an archive cannot add an account
+// of the instance for each of a great many people that it invents.
+//
+// Verifies: NFR-SEC-13
+func TestImportRefusesTooManyPeople(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	files := exportedArchive(t, f)
+	root := items[authoring.Comment](t, files, "comments.json")[0]
+	const n = 10_001
+	list := make([]authoring.Comment, n)
+	for i := range list {
+		c := root
+		c.ID = ids.Encode(ids.Comment, ids.New())
+		c.ThreadID, c.AuthorID = c.ID, ids.Encode(ids.User, ids.New())
+		list[i] = c
+	}
+	data, err := json.Marshal(authoring.Items[authoring.Comment]{Items: list})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resealSection(t, files, "comments.json", data, n)
+	// A workspace of another account, of which none of them is a member.
+	newAccount(t, f.s.main, "many@example.com")
+	stranger := signIn(t, f.s.main, "many@example.com")
+	res := call(f.s.main, http.MethodPost, "/api/v1/workspaces", jsonBody(t, map[string]any{"name": "Many"}),
+		stranger.header(true))
+	if res.status != http.StatusCreated {
+		t.Fatalf("create a workspace: %d %s", res.status, res.body)
+	}
+	var other struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(res.body, &other); err != nil {
+		t.Fatal(err)
+	}
+	var before, after int
+	admin := f.d.Admin(t)
+	if err := admin.QueryRow(t.Context(), `SELECT count(*) FROM "user"`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	got := failedImport(t, f.s, stranger, other.ID, zipOf(t, files))
+	if got.Code != authoring.FailContentInvalid || got.Check != "people" {
+		t.Errorf("the failure is %+v, want content_invalid at people", got)
+	}
+	if err := admin.QueryRow(t.Context(), `SELECT count(*) FROM "user"`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Errorf("the refused import left %d accounts, and there were %d", after, before)
+	}
+}

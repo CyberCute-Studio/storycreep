@@ -41,7 +41,9 @@ type AuthoringExportBody struct {
 	ContainsPersonal   bool       `json:"contains_personal_data" doc:"Whether the archive holds personal data, as a full export does."`
 	SizeBytes          *int64     `json:"size_bytes,omitempty" doc:"The archive's size, once it is ready."`
 	ImportMaxBytes     int64      `json:"import_max_bytes" doc:"The largest archive that this instance imports (STORYCREEP_IMPORT_MAX_BYTES)."`
-	ExceedsImportLimit bool       `json:"exceeds_import_limit" doc:"Whether the archive is larger than import_max_bytes, so that this instance could not import it."`
+	AssetCount         *int32     `json:"asset_count,omitempty" doc:"How many assets a ready archive holds, if it was counted."`
+	ImportMaxAssets    int32      `json:"import_max_assets" doc:"The most assets that an archive may hold for this instance to import it."`
+	ExceedsImportLimit bool       `json:"exceeds_import_limit" doc:"Whether this instance could not import the archive: it is larger than import_max_bytes, or holds more than import_max_assets."`
 	FileName           string     `json:"file_name,omitempty" doc:"The name that a ready archive is downloaded under."`
 	CreatedAt          time.Time  `json:"created_at" doc:"When the export was asked for."`
 	FinishedAt         *time.Time `json:"finished_at,omitempty" doc:"When its build ended."`
@@ -52,6 +54,7 @@ func authoringExportBody(e authoring.Export) AuthoringExportBody {
 	return AuthoringExportBody{ID: e.ID, ProjectID: e.ProjectID, SnapshotID: e.SnapshotID, Status: e.Status,
 		Profile: string(e.Profile), IncludeAssets: e.IncludeAssets, IncludeReleases: e.IncludeReleases,
 		ContainsPersonal: e.PersonalData, SizeBytes: e.SizeBytes, ImportMaxBytes: e.ImportMaxBytes,
+		AssetCount: e.AssetCount, ImportMaxAssets: authoring.MaxImportAssets,
 		ExceedsImportLimit: e.ExceedsImportLimit(), FileName: e.FileName, CreatedAt: e.CreatedAt,
 		FinishedAt: e.FinishedAt, ExpiresAt: e.ExpiresAt}
 }

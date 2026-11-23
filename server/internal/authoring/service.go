@@ -167,17 +167,24 @@ type Export struct {
 	IncludeReleases bool
 	PersonalData    bool
 	SizeBytes       *int64
-	ImportMaxBytes  int64
-	FileName        string
-	CreatedAt       time.Time
-	FinishedAt      *time.Time
-	ExpiresAt       time.Time
+	// AssetCount is how many assets a ready archive holds, if it was counted.
+	AssetCount     *int32
+	ImportMaxBytes int64
+	FileName       string
+	CreatedAt      time.Time
+	FinishedAt     *time.Time
+	ExpiresAt      time.Time
 }
 
-// ExceedsImportLimit says whether the archive is larger than the instance's
-// import limit, so that this instance could not import it again.
+// MaxImportAssets is the most assets that an archive may hold for an import
+// to take it (maxImportAssets), which an export warns of.
+const MaxImportAssets = maxImportAssets
+
+// ExceedsImportLimit says whether this instance could not import the archive
+// again: it is larger than the instance's import limit, or holds more assets
+// than an import takes.
 func (e Export) ExceedsImportLimit() bool {
-	return e.SizeBytes != nil && *e.SizeBytes > e.ImportMaxBytes
+	return e.SizeBytes != nil && *e.SizeBytes > e.ImportMaxBytes || e.AssetCount != nil && *e.AssetCount > MaxImportAssets
 }
 
 func (s *Service) exportOf(row queries.AuthoringExport) Export {
@@ -189,6 +196,9 @@ func (s *Service) exportOf(row queries.AuthoringExport) Export {
 		ExpiresAt: row.ExpiresAt.Time.UTC()}
 	if row.SizeBytes.Valid {
 		e.SizeBytes = &row.SizeBytes.Int64
+	}
+	if row.AssetCount.Valid {
+		e.AssetCount = &row.AssetCount.Int32
 	}
 	return e
 }
@@ -609,7 +619,8 @@ func (s *Service) Build(ctx context.Context, ws, id ids.UUID) (err error) {
 		var err error
 		finished, err = queries.New(tx).FinishAuthoringExport(ctx, queries.FinishAuthoringExportParams{
 			WorkspaceID: uuid(ws), ID: uuid(id), SizeBytes: pgtype.Int8{Int64: counted.n, Valid: true},
-			FileName: pgtype.Text{String: c.fileName, Valid: true}})
+			AssetCount: pgtype.Int4{Int32: int32(len(c.assets)), Valid: true},
+			FileName:   pgtype.Text{String: c.fileName, Valid: true}})
 		return err
 	})
 	if err != nil {

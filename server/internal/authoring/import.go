@@ -1660,6 +1660,11 @@ func mapPeople(ctx context.Context, q *queries.Queries, ws ids.UUID, c *archived
 			strangers = append(strangers, id)
 		}
 	}
+	if len(strangers) > maxImportPeople {
+		return nil, 0, &ImportError{Code: FailContentInvalid, Section: "people", Check: "people",
+			Detail: fmt.Sprintf("the archive names %d people outside the workspace, more than the %d that an import "+
+				"takes", len(strangers), maxImportPeople)}
+	}
 	if len(strangers) == 0 {
 		return out, 0, nil
 	}

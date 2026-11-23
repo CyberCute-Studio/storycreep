@@ -322,10 +322,18 @@ function ExportResult({
       )}
       {item.exceeds_import_limit && (
         <Alert
-          message={t("authoring_export.too_large", {
-            size,
-            limit: formatBytes(i18n.language, item.import_max_bytes),
-          })}
+          message={
+            item.size_bytes !== undefined &&
+            item.size_bytes > item.import_max_bytes
+              ? t("authoring_export.too_large", {
+                  size,
+                  limit: formatBytes(i18n.language, item.import_max_bytes),
+                })
+              : t("authoring_export.too_many_assets", {
+                  count: item.asset_count ?? 0,
+                  limit: item.import_max_assets,
+                })
+          }
         />
       )}
       {item.status === "ready" && (

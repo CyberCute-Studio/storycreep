@@ -59,6 +59,7 @@ type AuthoringExport struct {
 	CreatedAt       pgtype.Timestamptz
 	FinishedAt      pgtype.Timestamptz
 	ExpiresAt       pgtype.Timestamptz
+	AssetCount      pgtype.Int4
 }
 
 type Board struct {

@@ -123,6 +123,7 @@
   "authoring_export.submit": "Start export",
   "authoring_export.title": "Export project data",
   "authoring_export.too_large": "This archive ({size}) is larger than this instance's import limit ({limit}), so this instance could not import it again.",
+  "authoring_export.too_many_assets": "This archive holds {count} assets, more than the {limit} that an import takes, so this instance could not import it again.",
   "bench.board_nodes": "Nodes of the board",
   "bench.done": "Done.",
   "bench.edit": "From a local edit to the frame that shows it",
