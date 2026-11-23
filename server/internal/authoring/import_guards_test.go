@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
@@ -131,8 +134,15 @@ func TestRemapHoldsWhatOnlyAReleaseHolds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := &archived{releasePaths: []string{"releases/one/"}}
-	all, err := c.remapIDs(a, []ids.UUID{draft})
+	files, err := releaseFiles(a, "releases/one/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spelled := map[ids.UUID]bool{}
+	if err := addFileIDs(files, spelled, maxRemapIDs); err != nil {
+		t.Fatal(err)
+	}
+	all, err := allIDs([]ids.UUID{draft}, spelled)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,6 +226,98 @@ func TestReportIsReadAsTheAPIReadsIt(t *testing.T) {
 		if _, err := storedReport([]byte(bad)); err == nil {
 			t.Errorf("the report %s was read", bad)
 		}
+	}
+}
+
+// wantCheck fails the test unless err is a refusal at the check.
+func wantCheck(t *testing.T, err error, check string) {
+	t.Helper()
+	var refused *ImportError
+	if !errors.As(err, &refused) || refused.Check != check {
+		t.Errorf("the error is %v, want a refusal at %s", err, check)
+	}
+}
+
+// TestFoldersInOrderClimbsWithoutRecursion checks a chain far deeper than a
+// project can hold, each folder before its parent in the archive, which is
+// put in order for the commands to refuse rather than overflow the stack, and
+// that a cycle and a missing parent are still refused.
+//
+// Verifies: NFR-SEC-13
+func TestFoldersInOrderClimbsWithoutRecursion(t *testing.T) {
+	t.Parallel()
+	const n = 200_000
+	list := make([]Folder, n)
+	for i := range list {
+		list[i].ID = "f" + strconv.Itoa(i)
+		if i+1 < n {
+			list[i].ParentID = "f" + strconv.Itoa(i+1)
+		}
+	}
+	out, err := foldersInOrder(list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != n || out[0].ID != list[n-1].ID || out[n-1].ID != list[0].ID {
+		t.Fatalf("%d folders, from %s to %s", len(out), out[0].ID, out[len(out)-1].ID)
+	}
+	_, err = foldersInOrder([]Folder{{ID: "a", ParentID: "b"}, {ID: "b", ParentID: "a"}})
+	wantCheck(t, err, "cycle")
+	_, err = foldersInOrder([]Folder{{ID: "a", ParentID: "gone"}})
+	wantCheck(t, err, "parent")
+}
+
+// TestStoredValuesAreReadAsTheirReadersReadThem checks that a value that an
+// import writes without a command is refused if its reader would refuse it,
+// and is written as what was checked, whichever spelling of a key came last.
+//
+// Verifies: FR-DATA-01/AC1
+func TestStoredValuesAreReadAsTheirReadersReadThem(t *testing.T) {
+	t.Parallel()
+	if _, err := storedReport([]byte(`{"findings":[{"args":{"n":1e999}}]}`)); err == nil {
+		t.Error("a report with a number past a float64 was read")
+	}
+	foreign := ids.Encode(ids.User, ids.New())
+	got, err := rewriteReport([]byte(`{"findings":[{"mute":{"reason":"r","muted_by":"`+foreign+`"}}],"FINDINGS":[]}`),
+		map[ids.UUID]ids.UUID{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), foreign) || strings.Contains(string(got), "FINDINGS") {
+		t.Errorf("the report is written as %s", got)
+	}
+	if _, err := storedWarnings([]byte(`{"code":"x"}`)); err == nil {
+		t.Error("acknowledged warnings that are no list were read")
+	}
+	if out, err := storedWarnings([]byte(`null`)); err != nil || string(out) != `[]` {
+		t.Errorf("no warnings are %s, %v", out, err)
+	}
+	for _, bad := range []string{``, `null`, `[]`, `{"boards":"x"}`, `{"boards":1e30}`} {
+		if _, err := storedCounts([]byte(bad)); err == nil {
+			t.Errorf("the counts %q were read", bad)
+		}
+	}
+}
+
+// TestCheckTimesHoldsWhatTheAPIWrites checks that a time that is within JSON's
+// years as the archive spells it, and outside them in UTC, is refused.
+//
+// Verifies: FR-DATA-01/AC1
+func TestCheckTimesHoldsWhatTheAPIWrites(t *testing.T) {
+	t.Parallel()
+	late := time.Date(9999, 12, 31, 23, 59, 59, 0, time.FixedZone("", -(23*3600+59*60)))
+	early := time.Date(0, 1, 1, 0, 0, 0, 0, time.FixedZone("", 23*3600+59*60))
+	fine := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, at := range []time.Time{late, early} {
+		wantCheck(t, (&archived{releases: []Release{{PublishedAt: at, BuiltAt: fine}}}).checkTimes(), "published_at")
+		wantCheck(t, (&archived{releases: []Release{{PublishedAt: fine, BuiltAt: at}}}).checkTimes(), "built_at")
+		wantCheck(t, (&archived{comments: []Comment{{CreatedAt: fine, ResolvedAt: &at}}}).checkTimes(), "time")
+		wantCheck(t, (&archived{playStates: []PlayState{{CreatedAt: at}}}).checkTimes(), "time")
+	}
+	c := &archived{releases: []Release{{PublishedAt: fine, BuiltAt: fine}}, comments: []Comment{{CreatedAt: fine}},
+		playStates: []PlayState{{CreatedAt: fine}}}
+	if err := c.checkTimes(); err != nil {
+		t.Error(err)
 	}
 }
 

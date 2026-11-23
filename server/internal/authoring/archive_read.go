@@ -55,11 +55,18 @@ const (
 	// maxJSONTotal is the most that the JSON files held in memory at once may
 	// take together: the sections of an archive, or the files of a release.
 	maxJSONTotal = 768 << 20
-	// maxRemapIDs is the most IDs that a remap gives fresh ones, each of which
-	// its tables hold, at some 100 bytes an ID, and which a release's text can
-	// spell far more of than it has values. The large fixture has tens of
-	// thousands.
+	// maxRemapIDs is the most IDs that an import takes, of its rows and of what
+	// its releases' files spell, which the collision check asks about and a
+	// remap gives fresh ones, each of which its tables hold, at some 100 bytes
+	// an ID, and which a release's text can spell far more of than it has
+	// values. The large fixture has tens of thousands.
 	maxRemapIDs = 4_000_000
+	// maxImportAssets is the most assets that an archive may hold. The one
+	// transaction of an import holds the advisory lock of each one's blob
+	// until it commits, in the lock table that every session of the database
+	// shares, which takes some 13,000 locks on PostgreSQL's default settings,
+	// past which any other session that needs a lock fails too.
+	maxImportAssets = 4_000
 )
 
 // errDirectoryTooLarge stops the zip reader at maxDirectoryBytes.

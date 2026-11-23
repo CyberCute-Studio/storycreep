@@ -6,11 +6,14 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/blob"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
 
@@ -38,10 +41,15 @@ func (f ImportedFile) Size() int64 { return f.size }
 
 // StoreImported checks data, an imported asset's file, as an upload's is: it
 // tells its type from its content, refuses what is not an image that the
-// server takes, sanitizes an SVG (FR-ASSET-01), and stores it as a blob of the
-// workspace, outside any transaction. AddImported then adds its asset, and
-// the orphan reconciliation deletes the blob if none ever does.
-func (s *Service) StoreImported(ctx context.Context, workspaceID ids.UUID, data []byte) (ImportedFile, error) {
+// server takes, sanitizes an SVG (FR-ASSET-01), checks that the workspace has
+// room for it, as an upload does before it stores anything, and stores it as a
+// blob of the workspace, outside any transaction. adding is how many bytes the
+// import has stored so far that are new to the workspace, which this adds to.
+// AddImported then adds its asset, under the blob's lock, and the orphan
+// reconciliation deletes the blob if none ever does. It returns an
+// *entitlements.LimitError for a workspace without the room.
+func (s *Service) StoreImported(ctx context.Context, workspaceID ids.UUID, data []byte, adding *int64) (ImportedFile,
+	error) {
 	img, err := Sniff(data, int(s.maxBytes))
 	if err != nil {
 		return ImportedFile{}, err
@@ -52,12 +60,48 @@ func (s *Service) StoreImported(ctx context.Context, workspaceID ids.UUID, data 
 	if err != nil {
 		return ImportedFile{}, err
 	}
+	size := int64(len(img.Data))
+	err = s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
+		refs, err := queries.New(tx).ReferencedBlobs(ctx, queries.ReferencedBlobsParams{
+			WorkspaceID: nullUUID(workspaceID), Keys: []string{key}})
+		if err != nil {
+			return fmt.Errorf("asset: read the assets of the blob: %w", err)
+		}
+		if len(refs) > 0 {
+			return nil
+		}
+		if err := s.ent.Check(ctx, tx, workspaceID, entitlements.StorageBytes, *adding+size); err != nil {
+			return err
+		}
+		*adding += size
+		return nil
+	})
+	if err != nil {
+		return ImportedFile{}, err
+	}
 	if err := ensureBlob(ctx, store, key, img, true); err != nil {
 		return ImportedFile{}, err
 	}
-	f := ImportedFile{image: img, size: int64(len(img.Data)), sum: sum[:], key: key, thumbnail: needsThumbnail(img)}
+	f := ImportedFile{image: img, size: size, sum: sum[:], key: key, thumbnail: needsThumbnail(img)}
 	f.image.Data = nil
 	return f, nil
+}
+
+// LockImported takes the locks of the blobs of an import's files, in tx, the
+// import's transaction, until it ends: in the order of their integers and in
+// one statement, as the orphan reconciliation takes several (deleteOrphans), so
+// that two imports that share files never hold one each of what the other
+// waits for.
+func (s *Service) LockImported(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, files []ImportedFile) error {
+	if len(files) == 0 {
+		return nil
+	}
+	objects := make([]int32, len(files))
+	for i, f := range files {
+		objects[i] = database.LockObject(workspaceID, f.sum)
+	}
+	slices.Sort(objects)
+	return lockBlobs(ctx, queries.New(tx), slices.Compact(objects))
 }
 
 // AddImported adds the asset assetID of the file f to the new project

@@ -409,15 +409,18 @@ func checkState(name string, st published.SaveState) input.FieldErrors {
 
 // CheckImported returns what is wrong with a play state of an imported
 // archive for the project projectID, by its name, its state, and the names of
-// its values, which are held to what the commands hold a new play state to.
-func CheckImported(projectID ids.UUID, name string, state, names []byte) input.FieldErrors {
-	var errs input.FieldErrors
+// its values, which are held to what the commands hold a new play state to. It
+// also returns the state and the names as a command stores them, which are what
+// it checked: jsonb sorts a document's keys, so that of two spellings of a key,
+// a read of the bytes as the archive holds them could take the other one.
+func CheckImported(projectID ids.UUID, name string, state, names []byte) (stateData, namesData []byte,
+	errs input.FieldErrors) {
 	if msg := checkName(name); msg != "" {
 		errs = append(errs, input.FieldError{Field: "name", Message: msg})
 	}
 	var st published.SaveState
 	if err := json.Unmarshal(state, &st); err != nil {
-		return append(errs, input.FieldError{Field: "state", Message: "is no save state: " + err.Error()})
+		return nil, nil, append(errs, input.FieldError{Field: "state", Message: "is no save state: " + err.Error()})
 	}
 	errs = append(errs, checkState("state", st)...)
 	if st.ProjectID != ids.Encode(ids.Project, projectID) {
@@ -426,10 +429,21 @@ func CheckImported(projectID ids.UUID, name string, state, names []byte) input.F
 	}
 	var ns PlayStateNames
 	if err := json.Unmarshal(names, &ns); err != nil {
-		return append(errs, input.FieldError{Field: "names", Message: "are no names: " + err.Error()})
+		return nil, nil, append(errs, input.FieldError{Field: "names", Message: "are no names: " + err.Error()})
 	}
 	errs = append(errs, checkNames(st, ns)...)
-	return append(errs, checkNameTexts(ns)...)
+	errs = append(errs, checkNameTexts(ns)...)
+	if len(errs) > 0 {
+		return nil, nil, errs
+	}
+	var err error
+	if stateData, err = json.Marshal(st); err != nil {
+		return nil, nil, input.FieldErrors{{Field: "state", Message: "is no save state: " + err.Error()}}
+	}
+	if namesData, err = json.Marshal(ns); err != nil {
+		return nil, nil, input.FieldErrors{{Field: "names", Message: "are no names: " + err.Error()}}
+	}
+	return stateData, namesData, nil
 }
 
 // checkName says what is wrong with a play state's name, or returns "".

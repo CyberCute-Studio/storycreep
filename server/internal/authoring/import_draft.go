@@ -520,41 +520,45 @@ func decodeDecimal(id string, d Decimal, v any) error {
 }
 
 // foldersInOrder returns the folders with each after its parent, and refuses
-// a parent that the archive does not hold, or a cycle.
+// a parent that the archive does not hold, or a cycle. It climbs each chain
+// with a list of its own rather than by recursion, as an archive can hold a
+// chain of millions, which would overflow a goroutine's stack, and that ends
+// the process. How deep a folder may be is the command's to refuse.
 func foldersInOrder(list []Folder) ([]Folder, error) {
-	byID := make(map[string]Folder, len(list))
-	for _, f := range list {
-		byID[f.ID] = f
+	const (
+		climbing = 1
+		placed   = 2
+	)
+	byID := make(map[string]int, len(list))
+	for i, f := range list {
+		byID[f.ID] = i
 	}
 	out := make([]Folder, 0, len(list))
-	state := make(map[string]int, len(list))
-	var visit func(f Folder) error
-	visit = func(f Folder) error {
-		switch state[f.ID] {
-		case 1:
-			return &ImportError{Code: FailContentInvalid, Section: "folders", Check: "cycle",
-				Detail: fmt.Sprintf("the folder %s is inside itself", f.ID)}
-		case 2:
-			return nil
-		}
-		state[f.ID] = 1
-		if f.ParentID != "" {
+	state := make([]uint8, len(list))
+	var chain []int
+	for start := range list {
+		chain = chain[:0]
+		for at := start; state[at] != placed; {
+			f := list[at]
+			if state[at] == climbing {
+				return nil, &ImportError{Code: FailContentInvalid, Section: "folders", Check: "cycle",
+					Detail: fmt.Sprintf("the folder %s is inside itself", f.ID)}
+			}
+			state[at] = climbing
+			chain = append(chain, at)
+			if f.ParentID == "" {
+				break
+			}
 			parent, ok := byID[f.ParentID]
 			if !ok {
-				return &ImportError{Code: FailContentInvalid, Section: "folders", Check: "parent",
+				return nil, &ImportError{Code: FailContentInvalid, Section: "folders", Check: "parent",
 					Detail: fmt.Sprintf("the folder %s has a parent that the archive does not hold", f.ID)}
 			}
-			if err := visit(parent); err != nil {
-				return err
-			}
+			at = parent
 		}
-		state[f.ID] = 2
-		out = append(out, f)
-		return nil
-	}
-	for _, f := range list {
-		if err := visit(f); err != nil {
-			return nil, err
+		for _, at := range slices.Backward(chain) {
+			state[at] = placed
+			out = append(out, list[at])
 		}
 	}
 	return out, nil

@@ -12,7 +12,9 @@ import (
 	"io"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -57,6 +59,12 @@ const maxImportFileName = 255
 // importTimeout is how long each attempt of an import has: as for an export,
 // within the hour after which River's rescuer would take the job for stuck.
 const importTimeout = 50 * time.Minute
+
+// importKeepIdle is how long the transaction that writes an import may wait
+// idle before the database ends its session (queries.KeepSession): longer than
+// it takes to read and rewrite the largest release that an archive may hold,
+// and short enough that the locks of a worker that went away are released.
+const importKeepIdle = 15 * time.Minute
 
 // The statuses of an import.
 const (
@@ -632,8 +640,11 @@ func (s *Service) registerImportJobs(r *jobs.Registry) {
 		}
 		svc := s.withDB(job.DB)
 		if onlyFails(job.Attempt, job.Snoozes) {
-			return svc.failImport(ctx, ws, id, &ImportError{Code: FailInternal,
-				Detail: "the import failed, and its attempts are over"})
+			why := &ImportError{Code: FailInternal, Detail: "the import failed, and its attempts are over"}
+			if kept, ok := unrecordedRefusals.Load(id); ok {
+				why = kept.(*ImportError)
+			}
+			return svc.failImport(ctx, ws, id, why)
 		}
 		err = svc.RunImport(ctx, ws, id)
 		if refused, ok := isRefusal(err); ok {
@@ -662,6 +673,12 @@ func (s *Service) registerImportJobs(r *jobs.Registry) {
 	})
 }
 
+// unrecordedRefusals holds, by the import's ID, why an import failed while the
+// database would not record it, so that the job's next run, which snoozing
+// leaves with nothing else of it, records that rather than a failure of its
+// own. A process that restarts in between records the generic one.
+var unrecordedRefusals sync.Map
+
 // failImport fails the import with why, deletes what its upload stored, and
 // ends its job. Where the database does not take that, the job runs again
 // rather than end with the import still on its way.
@@ -688,8 +705,10 @@ func (s *Service) failImport(ctx context.Context, ws, id ids.UUID, why *ImportEr
 	if err != nil {
 		s.log.ErrorContext(ctx, "the import could not be failed, and its job will try again",
 			"import_id", ids.Encode(ids.Job, id), "error", err)
+		unrecordedRefusals.Store(id, why)
 		return jobs.Snooze(failRetry)
 	}
+	unrecordedRefusals.Delete(id)
 	s.dropChunks(ctx, keys)
 	if failed == 0 {
 		return nil
@@ -847,16 +866,23 @@ func (s *Service) ImportFile(ctx context.Context, actor commands.Actor, workspac
 		return Import{}, err
 	}
 	id := ids.New()
-	run := importRun{workspace: workspaceID, importID: id, user: actor.UserID, remap: remap, client: actor, file: &req}
+	var report ImportReport
+	run := importRun{workspace: workspaceID, importID: id, user: actor.UserID, remap: remap, client: actor, file: &req,
+		finished: &report}
+	done := Import{ID: ids.Encode(ids.Job, id), WorkspaceID: ids.Encode(ids.Workspace, workspaceID),
+		FileName: req.FileName, SizeBytes: size}
 	if err := s.importArchive(ctx, run, r, size); err != nil {
 		refused, ok := isRefusal(err)
 		if !ok {
 			return Import{}, err
 		}
-		return Import{ID: ids.Encode(ids.Job, id), WorkspaceID: ids.Encode(ids.Workspace, workspaceID),
-			Status: ImportFailed, FileName: req.FileName, SizeBytes: size, Failure: refused}, nil
+		done.Status, done.Failure = ImportFailed, refused
+		return done, nil
 	}
-	return s.GetImport(ctx, actor, workspaceID, id)
+	// From what the commit wrote rather than a read of it, which could fail
+	// and report an import that has created its project as one that has not.
+	done.Status, done.AppliedPolicy, done.ProjectID, done.Report = ImportReady, report.Policy, report.ProjectID, &report
+	return done, nil
 }
 
 // ExportFile builds an export of the project for the command line, here rather
@@ -920,6 +946,8 @@ type importRun struct {
 	// until the transaction that writes the project adds it, or nil for a
 	// job's.
 	file *ImportRequest
+	// finished, if set, receives the report of the transaction that commits.
+	finished *ImportReport
 }
 
 // progress records how far the job is, which a failure to record leaves as it
@@ -1171,6 +1199,12 @@ func (s *Service) importArchive(ctx context.Context, run importRun, r io.ReaderA
 			return err
 		}
 	}
+	// What the releases' files spell, as they are read here, which the
+	// collision check asks about with the rows' IDs, and a remap rewrites.
+	spelled := map[ids.UUID]bool{}
+	if err := addFileIDs(c.sourceFiles, spelled, maxRemapIDs); err != nil {
+		return err
+	}
 	total := int64(len(c.releases))
 	for i, rel := range c.releases {
 		s.progress(ctx, run, "verifying", int64(i), total)
@@ -1186,8 +1220,15 @@ func (s *Service) importArchive(ctx context.Context, run importRun, r io.ReaderA
 			files); err != nil {
 			return err
 		}
+		if err := addFileIDs(files, spelled, maxRemapIDs); err != nil {
+			return err
+		}
 	}
-	list, err := c.entityIDs()
+	entities, err := c.entityIDs()
+	if err != nil {
+		return err
+	}
+	list, err := allIDs(entities, spelled)
 	if err != nil {
 		return err
 	}
@@ -1208,15 +1249,16 @@ func (s *Service) importArchive(ctx context.Context, run importRun, r io.ReaderA
 	}
 	var table map[ids.UUID]ids.UUID
 	if policy == PolicyRemap {
-		if table, err = c.remapAll(a, list); err != nil {
+		if table, err = c.remapAll(list); err != nil {
 			return err
 		}
 	}
 	missing := c.dropMissingAssets()
 	files := make([]asset.ImportedFile, len(c.assets))
+	var adding int64
 	for i, as := range c.assets {
 		s.progress(ctx, run, "assets", int64(i), int64(len(c.assets)))
-		if files[i], err = s.storeAsset(ctx, a, run.workspace, as); err != nil {
+		if files[i], err = s.storeAsset(ctx, a, run.workspace, as, &adding); err != nil {
 			return err
 		}
 	}
@@ -1229,22 +1271,18 @@ func (s *Service) importArchive(ctx context.Context, run importRun, r io.ReaderA
 	// as a concurrent import of the same archive on another process does. The
 	// transaction wrote nothing, so the import is made again with fresh IDs,
 	// and a unique violation that remains is the archive's own.
-	if table, err = c.remapAll(a, list); err != nil {
+	if table, err = c.remapAll(list); err != nil {
 		return err
 	}
 	missing = c.dropMissingAssets()
 	return s.writeImport(ctx, run, a, c, PolicyRemap, table, files, missing)
 }
 
-// remapAll gives the archive's IDs of list, and those that only its releases'
-// files hold, fresh ones, through its sections and the draft of an archive of a
-// release, and returns the table of them.
-func (c *archived) remapAll(a *archive, list []ids.UUID) (map[ids.UUID]ids.UUID, error) {
-	all, err := c.remapIDs(a, list)
-	if err != nil {
-		return nil, err
-	}
-	table := freshIDs(all)
+// remapAll gives the archive's IDs of list, which holds those that only its
+// releases' files hold (allIDs), fresh ones, through its sections and the draft
+// of an archive of a release, and returns the table of them.
+func (c *archived) remapAll(list []ids.UUID) (map[ids.UUID]ids.UUID, error) {
+	table := freshIDs(list)
 	if err := c.remap(table); err != nil {
 		return nil, err
 	}
@@ -1263,14 +1301,20 @@ func idTaken(err error) bool {
 }
 
 // storeAsset reads an asset's file from the archive, checks that it is what
-// the index says, and stores it as an upload's is checked and stored.
-func (s *Service) storeAsset(ctx context.Context, a *archive, ws ids.UUID, as Asset) (asset.ImportedFile, error) {
+// the index says, and stores it as an upload's is checked and stored. adding
+// counts what the import's assets add to the workspace's storage.
+func (s *Service) storeAsset(ctx context.Context, a *archive, ws ids.UUID, as Asset, adding *int64) (
+	asset.ImportedFile, error) {
 	fail := func(check, detail string) *ImportError {
 		return &ImportError{Code: FailAssetInvalid, Section: "assets", Check: check,
 			Detail: as.ID + ": " + detail}
 	}
 	if !a.has(as.Path) {
 		return asset.ImportedFile{}, fail("missing_file", "the archive does not hold its file")
+	}
+	if size, most := a.files[as.Path].UncompressedSize64, s.maxAssetBytes(); size > uint64(most) {
+		return asset.ImportedFile{}, fail("type", fmt.Sprintf("its file has %d bytes, more than the %d that an asset "+
+			"may have on this server", size, most))
 	}
 	data, err := a.read(as.Path, s.maxAssetBytes())
 	if err != nil {
@@ -1280,10 +1324,14 @@ func (s *Service) storeAsset(ctx context.Context, a *archive, ws ids.UUID, as As
 	if hex.EncodeToString(sum[:]) != as.SHA256 || int64(len(data)) != as.Bytes {
 		return asset.ImportedFile{}, fail("hash", "its file is not what the index says")
 	}
-	f, err := s.assets.StoreImported(ctx, ws, data)
+	f, err := s.assets.StoreImported(ctx, ws, data, adding)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return asset.ImportedFile{}, err
+		}
+		var limit *entitlements.LimitError
+		if errors.As(err, &limit) {
+			return asset.ImportedFile{}, importWriteError(err)
 		}
 		var refused *asset.ImageError
 		if errors.As(err, &refused) || errors.Is(err, asset.ErrTooLarge) {
@@ -1338,12 +1386,26 @@ func (s *Service) writeImport(ctx context.Context, run importRun, a *archive, c 
 		Settings: project.Settings{Name: c.project.Name, Description: c.project.Description,
 			DefaultLocale: settings.DefaultLocale},
 		Metadata: map[string]any{"import_id": ids.Encode(ids.Job, run.importID), "id_policy": policy}}
+	// A root that its author deleted only keeps its thread's place, and the
+	// export does not count it either.
+	live := 0
+	for _, x := range c.comments {
+		if !x.Deleted {
+			live++
+		}
+	}
 	report := ImportReport{Policy: policy, ProjectID: ids.Encode(ids.Project, projectID),
 		ProjectName: strings.TrimSpace(c.project.Name), Boards: len(c.boards), Nodes: len(c.nodes),
-		Variables: len(c.variables), Components: len(c.components), Comments: len(c.comments),
+		Variables: len(c.variables), Components: len(c.components), Comments: live,
 		PlayStates: len(c.playStates), Releases: len(c.releases), Assets: len(c.assets), MissingAssets: missing}
 	err = s.db.InTx(ctx, database.Scope{WorkspaceID: run.workspace, UserID: run.user}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
+		// First, as this transaction waits idle while it reads and rewrites a
+		// release's files, and runs for minutes, which a timeout that an
+		// operator set would end it for.
+		if err := q.KeepSession(ctx, strconv.FormatInt(importKeepIdle.Milliseconds(), 10)); err != nil {
+			return fmt.Errorf("authoring: set the timeouts of the session: %w", err)
+		}
 		if _, err := s.projects.CreateImported(ctx, tx, run.user, run.workspace, in); err != nil {
 			return err
 		}
@@ -1352,6 +1414,9 @@ func (s *Service) writeImport(ctx context.Context, run importRun, a *archive, c 
 			return err
 		}
 		report.ImportedUsers = imported
+		if err := s.assets.LockImported(ctx, tx, run.workspace, files); err != nil {
+			return err
+		}
 		for i, as := range c.assets {
 			id, err := ids.Decode(ids.Asset, as.ID)
 			if err != nil {
@@ -1440,6 +1505,9 @@ func (s *Service) writeImport(ctx context.Context, run importRun, a *archive, c 
 		data, err := json.Marshal(report)
 		if err != nil {
 			return err
+		}
+		if run.finished != nil {
+			*run.finished = report
 		}
 		if run.file != nil {
 			return s.recordFileImport(ctx, tx, run, policy, projectID, data)
@@ -1869,12 +1937,13 @@ func (w importWriter) playStates(ctx context.Context, list []PlayState) error {
 		if len(names) == 0 || string(names) == "null" {
 			names = []byte("{}")
 		}
-		if problems := playstate.CheckImported(w.project.Bytes, x.Name, x.State, names); len(problems) > 0 {
+		state, names, problems := playstate.CheckImported(w.project.Bytes, x.Name, x.State, names)
+		if len(problems) > 0 {
 			return &ImportError{Code: FailContentInvalid, Section: "play_states", Check: problems[0].Field,
 				Detail: x.ID + ": " + problems[0].Field + " " + problems[0].Message}
 		}
 		if err := w.q.InsertImportedPlayState(ctx, queries.InsertImportedPlayStateParams{ID: uuid(id), WorkspaceID: w.ws,
-			ProjectID: w.project, Name: x.Name, State: x.State, Names: names, CreatedBy: w.user(x.CreatedBy),
+			ProjectID: w.project, Name: x.Name, State: state, Names: names, CreatedBy: w.user(x.CreatedBy),
 			CreatedAt: pgtype.Timestamptz{Time: x.CreatedAt, Valid: true}}); err != nil {
 			return sectionError("play_states", x.ID, err)
 		}
@@ -1913,9 +1982,13 @@ func (w importWriter) release(ctx context.Context, tx pgx.Tx, rel Release, files
 	if err != nil {
 		return nil, fail("validation_report", err)
 	}
-	warnings := []byte(rel.AcknowledgedWarnings)
-	if len(warnings) == 0 || string(warnings) == "null" {
-		warnings = []byte("[]")
+	warnings, err := storedWarnings(rel.AcknowledgedWarnings)
+	if err != nil {
+		return nil, fail("acknowledged_warnings", err)
+	}
+	counts, err := storedCounts(rel.Counts)
+	if err != nil {
+		return nil, fail("counts", err)
 	}
 	if err := w.q.InsertImportedSnapshot(ctx, queries.InsertImportedSnapshotParams{ID: uuid(id), WorkspaceID: w.ws,
 		ProjectID: w.project, Version: rel.Version, VersionMajor: v.Major, VersionMinor: v.Minor, VersionPatch: v.Patch,
@@ -1961,7 +2034,7 @@ func (w importWriter) release(ctx context.Context, tx pgx.Tx, rel Release, files
 	n, err := w.q.FinishImportedSnapshot(ctx, queries.FinishImportedSnapshotParams{WorkspaceID: w.ws, ID: uuid(id),
 		SourceSeq: pgtype.Int8{Int64: rel.SourceSeq, Valid: true}, ValidationReport: report,
 		SchemaVersion: pgtype.Int4{Int32: int32(rel.SchemaVersion), Valid: true},
-		ContentHash:   pgtype.Text{String: contentHash, Valid: true}, Counts: rel.Counts,
+		ContentHash:   pgtype.Text{String: contentHash, Valid: true}, Counts: counts,
 		BuiltAt: pgtype.Timestamptz{Time: rel.BuiltAt, Valid: true}})
 	if err != nil {
 		return nil, sectionError("releases", rel.Version, err)

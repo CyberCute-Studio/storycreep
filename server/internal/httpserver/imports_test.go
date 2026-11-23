@@ -365,6 +365,27 @@ func TestImportAtProjectsLimit(t *testing.T) {
 	wantCode(t, "an import at the projects limit", res, http.StatusConflict, "limit_exceeded")
 }
 
+// TestImportAtStorageLimit checks that a workspace without room for an
+// archive's assets is refused with its limit, and gets no project.
+//
+// Verifies: FR-DATA-01/AC9
+func TestImportAtStorageLimit(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	data := zipOf(t, exportedArchive(t, f))
+	s, d, owner, ws := inviteServer(t, "open", map[string]string{"STORYCREEP_WORKSPACE_LIMITS": "storage_bytes=1"})
+	openMaintenance(t, s, d)
+	startWorkers(t, s, d)
+	failure := failedImport(t, s, owner, ws, data)
+	if failure.Code != authoring.FailLimitExceeded || failure.Check != "storage_bytes" {
+		t.Errorf("the failure is %+v", *failure)
+	}
+	if n := projectCount(t, s, owner, ws); n != 0 {
+		t.Errorf("the workspace has %d projects", n)
+	}
+}
+
 // TestImportCollisionOnChildIDs checks an archive whose project ID is unused,
 // and whose node and snapshot IDs are another workspace's: the import remaps,
 // with no primary-key error, the projects share no ID, and the report says no
@@ -941,6 +962,160 @@ func TestImportHoldsDirectRowsToTheirChecks(t *testing.T) {
 				t.Errorf("the failure is %+v, want %s at %s, %s", *failure, c.code, c.section, c.at)
 			}
 		})
+	}
+}
+
+// TestImportHoldsRowsToTheirReaders checks that what the API could not read
+// back is the archive's failure: a time past JSON's years in UTC, a report's
+// number past a float64, values of the wrong type, and more assets than the
+// lock table of the database should hold for one transaction.
+//
+// Verifies: FR-DATA-01/AC1, NFR-SEC-13
+func TestImportHoldsRowsToTheirReaders(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	exported := exportedArchive(t, f)
+	late := time.Date(9999, 12, 31, 23, 59, 59, 0, time.FixedZone("", -(23*3600+59*60)))
+	release := func(edit func(r *authoring.Release)) func(map[string][]byte) {
+		return func(files map[string][]byte) {
+			list := items[authoring.Release](t, files, "releases/index.json")
+			edit(&list[0])
+			data, err := json.Marshal(authoring.Items[authoring.Release]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "releases/index.json", data, len(list))
+		}
+	}
+	for name, c := range map[string]struct {
+		forge             func(files map[string][]byte)
+		code, section, at string
+	}{
+		"a release's time": {release(func(r *authoring.Release) { r.PublishedAt = late }),
+			authoring.FailReleaseInvalid, "", "published_at"},
+		"a comment's time": {func(files map[string][]byte) {
+			list := items[authoring.Comment](t, files, "comments.json")
+			list[0].EditedAt = &late
+			data, err := json.Marshal(authoring.Items[authoring.Comment]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "comments.json", data, len(list))
+		}, authoring.FailContentInvalid, "comments", "time"},
+		"a play state's time": {func(files map[string][]byte) {
+			list := items[authoring.PlayState](t, files, "play_states.json")
+			list[0].CreatedAt = late
+			data, err := json.Marshal(authoring.Items[authoring.PlayState]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "play_states.json", data, len(list))
+		}, authoring.FailContentInvalid, "play_states", "time"},
+		"a report's number": {release(func(r *authoring.Release) {
+			r.ValidationReport = authoring.Value(`{"seq":1,"findings":[{"code":"node_empty","entity_type":"node",` +
+				`"entity_id":"` + f.node + `","args":{"n":1e999}}]}`)
+		}), authoring.FailReleaseInvalid, "", "validation_report"},
+		"acknowledged warnings that are no list": {release(func(r *authoring.Release) {
+			r.AcknowledgedWarnings = authoring.Value(`{"code":"node_empty"}`)
+		}), authoring.FailReleaseInvalid, "", "acknowledged_warnings"},
+		"counts of the wrong type": {release(func(r *authoring.Release) {
+			r.Counts = authoring.Value(`{"boards":"many"}`)
+		}), authoring.FailReleaseInvalid, "", "counts"},
+		"too many assets": {func(files map[string][]byte) {
+			list := items[authoring.Asset](t, files, "assets/index.json")
+			first := list[0]
+			for i := range 4000 {
+				more := first
+				more.ID, more.Path = ids.Encode(ids.Asset, ids.New()), fmt.Sprintf("assets/more-%d.png", i)
+				list = append(list, more)
+			}
+			data, err := json.Marshal(authoring.Items[authoring.Asset]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "assets/index.json", data, len(list))
+		}, authoring.FailAssetInvalid, "assets", "count"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := maps.Clone(exported)
+			c.forge(files)
+			failure := failedImport(t, f.s, f.owner, f.ws, zipOf(t, files))
+			if failure.Code != c.code || failure.Section != c.section || failure.Check != c.at {
+				t.Errorf("the failure is %+v, want %s at %s, %s", *failure, c.code, c.section, c.at)
+			}
+		})
+	}
+}
+
+// TestImportStoresWhatItChecked checks a key spelled twice in two cases, of
+// which jsonb's order of keys would have a later read take the one that the
+// import did not check: a report's mute of an account elsewhere on the
+// instance, and a play state of another project.
+//
+// Verifies: FR-DATA-01/AC7
+func TestImportStoresWhatItChecked(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	files := exportedArchive(t, f)
+	newAccount(t, f.s.main, "elsewhere@example.com")
+	foreign := signIn(t, f.s.main, "elsewhere@example.com").body.UserID
+
+	releases := items[authoring.Release](t, files, "releases/index.json")
+	releases[0].ValidationReport = authoring.Value(`{"seq":1,"findings":[{"code":"node_unreachable",` +
+		`"entity_type":"node","entity_id":"` + f.node + `","mute":{"reason":"r","muted_by":"` + foreign +
+		`","muted_at":"2026-01-01T00:00:00Z"}}],"FINDINGS":[]}`)
+	data, err := json.Marshal(authoring.Items[authoring.Release]{Items: releases})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resealSection(t, files, "releases/index.json", data, len(releases))
+
+	other := ids.Encode(ids.Project, ids.New())
+	states := items[authoring.PlayState](t, files, "play_states.json")
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(states[0].State, &doc); err != nil {
+		t.Fatal(err)
+	}
+	own := doc["projectId"]
+	delete(doc, "projectId")
+	rest, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	states[0].State = append([]byte(`{"projectId":"`+other+`","PROJECTID":`+string(own)+`,`),
+		bytes.TrimPrefix(rest, []byte("{"))...)
+	data, err = json.Marshal(authoring.Items[authoring.PlayState]{Items: states})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resealSection(t, files, "play_states.json", data, len(states))
+
+	got := mustImport(t, f.s, f.owner, f.ws, zipOf(t, files), "")
+	var page struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	res := call(f.s.main, http.MethodGet, snapshotsPath(got.ProjectID), nil, f.owner.header(false))
+	if err := json.Unmarshal(res.body, &page); err != nil || len(page.Items) == 0 {
+		t.Fatalf("the releases: %d %s", res.status, res.body)
+	}
+	report := call(f.s.main, http.MethodGet, snapshotsPath(got.ProjectID)+"/"+page.Items[0].ID+"/validation", nil,
+		f.owner.header(false))
+	if report.status != http.StatusOK || strings.Contains(string(report.body), foreign) {
+		t.Errorf("the report: %d %s", report.status, report.body)
+	}
+	res = call(f.s.main, http.MethodGet, playStatesPath(got.ProjectID), nil, f.owner.header(false))
+	page.Items = nil
+	if err := json.Unmarshal(res.body, &page); err != nil || len(page.Items) == 0 {
+		t.Fatalf("the play states: %d %s", res.status, res.body)
+	}
+	state := call(f.s.main, http.MethodGet, playStatesPath(got.ProjectID)+"/"+page.Items[0].ID, nil,
+		f.owner.header(false))
+	if state.status != http.StatusOK || strings.Contains(string(state.body), other) {
+		t.Errorf("the play state: %d %s", state.status, state.body)
 	}
 }
 

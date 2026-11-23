@@ -13,12 +13,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
 	"github.com/CyberCute-Studio/storycreep/server/internal/schemaversion"
+	"github.com/CyberCute-Studio/storycreep/server/internal/snapshot"
 	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
 )
 
@@ -229,10 +231,26 @@ func readArchived(a *archive) (*archived, error) {
 			return nil, &ImportError{Code: FailReleaseInvalid, Version: rel.Version, Check: "validation_report",
 				Detail: firstLine(err.Error())}
 		}
+		if _, err := storedWarnings(rel.AcknowledgedWarnings); err != nil {
+			return nil, &ImportError{Code: FailReleaseInvalid, Version: rel.Version, Check: "acknowledged_warnings",
+				Detail: firstLine(err.Error())}
+		}
+		if _, err := storedCounts(rel.Counts); err != nil {
+			return nil, &ImportError{Code: FailReleaseInvalid, Version: rel.Version, Check: "counts",
+				Detail: firstLine(err.Error())}
+		}
 		c.releasePaths[i] = rel.Path
 		for _, name := range a.under(rel.Path) {
 			known[name] = true
 		}
+	}
+	if err := c.checkTimes(); err != nil {
+		return nil, err
+	}
+	if len(c.assets) > maxImportAssets {
+		return nil, &ImportError{Code: FailAssetInvalid, Section: "assets", Check: "count",
+			Detail: fmt.Sprintf("it holds %d assets, more than the %d that an import takes", len(c.assets),
+				maxImportAssets)}
 	}
 	assetPaths := make(map[string]bool, len(c.assets))
 	for _, as := range c.assets {
@@ -372,20 +390,92 @@ func rewriteMentions(body []byte, table map[ids.UUID]ids.UUID) ([]byte, error) {
 }
 
 // storedReport reads a release's validation report as the API reads it
-// (snapshot.Service.Report), so that a report that it could not read is the
-// archive's failure, and what names a person here is what names one there,
-// whatever the case of its keys. Its numbers stay as they are written.
+// (snapshot.Service.Report), so that a report that it could not read, as one
+// with a number past a float64, is the archive's failure, and what names a
+// person here is what names one there, whatever the case of its keys. Its
+// numbers stay as they are written.
 func storedReport(raw []byte) (validation.Stored, error) {
 	var s validation.Stored
 	if text := bytes.TrimSpace(raw); len(text) == 0 || text[0] != '{' {
 		return s, errors.New("the validation report is no JSON object")
+	}
+	if err := json.Unmarshal(raw, &validation.Stored{}); err != nil {
+		return s, fmt.Errorf("the validation report: %w", err)
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	if err := dec.Decode(&s); err != nil {
 		return s, fmt.Errorf("the validation report: %w", err)
 	}
+	if s.Findings == nil {
+		s.Findings = []validation.StoredFinding{}
+	}
 	return s, nil
+}
+
+// storedWarnings returns a release's acknowledged warnings as the type that
+// its build reads them with writes them, so that the row holds what was
+// checked, whichever of two spellings of a key a later read would take.
+func storedWarnings(raw []byte) ([]byte, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return []byte("[]"), nil
+	}
+	acks := []validation.Acknowledgement{}
+	if err := json.Unmarshal(raw, &acks); err != nil {
+		return nil, fmt.Errorf("the acknowledged warnings: %w", err)
+	}
+	return json.Marshal(acks)
+}
+
+// storedCounts returns a release's entity counts as the type that the API
+// reads them with writes them.
+func storedCounts(raw []byte) ([]byte, error) {
+	if text := bytes.TrimSpace(raw); len(text) == 0 || text[0] != '{' {
+		return nil, errors.New("the counts are no JSON object")
+	}
+	var counts snapshot.EntityCounts
+	if err := json.Unmarshal(raw, &counts); err != nil {
+		return nil, fmt.Errorf("the counts: %w", err)
+	}
+	return json.Marshal(counts)
+}
+
+// checkTimes refuses a time of a row that an import writes as it is, which the
+// API could not write back: JSON's times end at the year 9999, and an offset
+// can put one that the archive spells within them outside them in UTC, which
+// every read of the row answers in.
+func (c *archived) checkTimes() error {
+	bad := func(t time.Time) bool {
+		_, err := t.UTC().MarshalJSON()
+		return err != nil
+	}
+	badOf := func(t *time.Time) bool { return t != nil && bad(*t) }
+	for _, x := range c.releases {
+		check := ""
+		switch {
+		case bad(x.PublishedAt):
+			check = "published_at"
+		case bad(x.BuiltAt):
+			check = "built_at"
+		}
+		if check != "" {
+			return &ImportError{Code: FailReleaseInvalid, Version: x.Version, Check: check,
+				Detail: "the time is outside the years 0 to 9999"}
+		}
+	}
+	for _, x := range c.comments {
+		if bad(x.CreatedAt) || badOf(x.EditedAt) || badOf(x.ResolvedAt) {
+			return &ImportError{Code: FailContentInvalid, Section: "comments", Check: "time",
+				Detail: x.ID + ": a time is outside the years 0 to 9999"}
+		}
+	}
+	for _, x := range c.playStates {
+		if bad(x.CreatedAt) {
+			return &ImportError{Code: FailContentInvalid, Section: "play_states", Check: "time",
+				Detail: x.ID + ": its time is outside the years 0 to 9999"}
+		}
+	}
+	return nil
 }
 
 // reportUsersIn adds to set each user who a validation report says muted a
@@ -407,19 +497,19 @@ func reportUsersIn(raw []byte, set map[ids.UUID]bool) {
 
 // rewriteReport returns the validation report raw with each finding's muted_by
 // naming the account that table maps it to, and without one that names no one
-// of the table, which is how the API reads an ID that is no account's. A report
-// with a mute is written anew, with its keys as the API reads them.
+// of the table, which is how the API reads an ID that is no account's. The
+// report is always written anew, with its keys as the API reads them: jsonb
+// sorts a document's keys, so that of two spellings of a key, the one that a
+// read of the stored row takes need not be the one that was mapped here.
 func rewriteReport(raw []byte, table map[ids.UUID]ids.UUID) ([]byte, error) {
 	s, err := storedReport(raw)
 	if err != nil {
 		return nil, err
 	}
-	muted := false
 	for _, f := range s.Findings {
 		if f.Mute == nil {
 			continue
 		}
-		muted = true
 		id, err := ids.Decode(ids.User, f.Mute.MutedBy)
 		fresh, ok := table[id]
 		if err != nil || !ok {
@@ -427,9 +517,6 @@ func rewriteReport(raw []byte, table map[ids.UUID]ids.UUID) ([]byte, error) {
 			continue
 		}
 		f.Mute.MutedBy = ids.Encode(ids.User, fresh)
-	}
-	if !muted {
-		return raw, nil
 	}
 	return json.Marshal(s)
 }
@@ -522,29 +609,20 @@ func freshIDs(list []ids.UUID) map[ids.UUID]ids.UUID {
 	return table
 }
 
-// remapIDs returns list with every ID that the files of the archive's releases
+// allIDs returns list with the IDs that the files of the archive's releases
 // spell, sorted, each once. A release can hold what the draft no longer does,
-// which no row has, and which has to take a fresh ID too, or it would sort
-// apart from the fresh IDs around it.
-func (c *archived) remapIDs(a *archive, list []ids.UUID) ([]ids.UUID, error) {
-	set := make(map[ids.UUID]bool, len(list))
+// which no row has, and which the collision check has to see, and a remap to
+// give a fresh ID too, or it would sort apart from the fresh IDs around it.
+func allIDs(list []ids.UUID, spelled map[ids.UUID]bool) ([]ids.UUID, error) {
+	set := maps.Clone(spelled)
+	if set == nil {
+		set = make(map[ids.UUID]bool, len(list))
+	}
 	for _, id := range list {
 		set[id] = true
 	}
 	if len(set) > maxRemapIDs {
 		return nil, tooManyIDs(maxRemapIDs)
-	}
-	if err := addFileIDs(c.sourceFiles, set, maxRemapIDs); err != nil {
-		return nil, err
-	}
-	for _, dir := range c.releasePaths {
-		files, err := releaseFiles(a, dir)
-		if err != nil {
-			return nil, err
-		}
-		if err := addFileIDs(files, set, maxRemapIDs); err != nil {
-			return nil, err
-		}
 	}
 	return slices.SortedFunc(maps.Keys(set), func(a, b ids.UUID) int { return bytes.Compare(a[:], b[:]) }), nil
 }
@@ -576,7 +654,7 @@ func addFileIDs(files schemaversion.Files, set map[ids.UUID]bool, limit int) err
 // tooManyIDs is the refusal of an archive that holds more IDs than a remap
 // takes.
 func tooManyIDs(limit int) error {
-	return invalidArchive("ids", "it holds more than the %d IDs that a remap gives fresh ones", limit)
+	return invalidArchive("ids", "it holds more than the %d IDs that an import takes", limit)
 }
 
 // remap rewrites every ID that table holds through the archive's sections, and
