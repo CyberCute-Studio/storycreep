@@ -182,9 +182,18 @@ func Register(r *commands.Registry) {
 			errs := newID(ids.Variable, p.ID)
 			errs = append(errs, checkScope(p.Scope, p.BoardID)...)
 			errs = append(errs, checkReset("reset_on_enter", p.Scope, p.ResetOnEnter)...)
-			errs = append(errs, checkDefault(p.Type, p.Default)...)
-			errs = append(errs, field("description", checkDescription(p.Description))...)
+			errs = append(errs, checkDefaultForm(p.Type, p.Default)...)
 			return append(errs, optionalID(ids.Folder, "folder_id", p.FolderID)...)
+		},
+		// An import creates a variable with its stored default and description,
+		// which the text rules may refuse (commands.Spec.CheckNew). A default
+		// that is not of its type is Check's to report, once.
+		CheckNew: func(p CreatePayload) input.FieldErrors {
+			errs := field("description", checkDescription(p.Description))
+			if len(checkDefaultForm(p.Type, p.Default)) == 0 {
+				errs = append(errs, checkDefault(p.Type, p.Default)...)
+			}
+			return errs
 		},
 		// The undo of a create deletes the variable, forcing the deletion if
 		// what the create makes of the project uses it, as an expression that
@@ -481,8 +490,9 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p CreatePayload) error {
 	if err != nil {
 		return err
 	}
-	// Check checked the default against the type.
-	def, _ := of(p.Default, p.Type, value.All)
+	// Check checked the default against the type, and CheckNew the characters
+	// of one that is not a stored value.
+	def, _ := of(p.Default, p.Type, value.Checks{Length: true})
 	err = q.InsertVariable(ctx, queries.InsertVariableParams{ID: id, WorkspaceID: ws, ProjectID: project,
 		Scope: p.Scope, BoardID: boardID, FolderID: folder, SortKey: order, Key: p.Key, Type: p.Type,
 		DefaultValue: def.JSON(), Description: p.Description, ResetOnEnter: p.ResetOnEnter, CreatedBy: by(tx)})
@@ -774,6 +784,13 @@ func refuse(errs input.FieldErrors) error {
 // none, for the type's zero value, has not.
 func checkDefault(typ string, def Value) input.FieldErrors {
 	_, problem := of(def, typ, value.All)
+	return field("default", problem)
+}
+
+// checkDefaultForm returns the problem of a default that is not a value of the
+// type typ, whatever its characters, which a stored default may hold.
+func checkDefaultForm(typ string, def Value) input.FieldErrors {
+	_, problem := of(def, typ, value.Checks{Length: true})
 	return field("default", problem)
 }
 

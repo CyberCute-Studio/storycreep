@@ -265,7 +265,10 @@ func textOf(segs richtext.Segments) (Text, error) {
 }
 
 // parts applies an archive's draft through the commands that make each entity,
-// so that it meets every rule that content typed in meets (PRD §10.4). A
+// so that it meets their schemas and their Check, and what they check of the
+// project (PRD §10.4). Its values are stored ones, which the text rules that a
+// value typed in meets may refuse (commands.Spec.CheckNew), as a project keeps
+// a value that a newer rule would refuse, and its backup has to restore it. A
 // refusal names the section and the entity.
 type parts struct {
 	ctx context.Context

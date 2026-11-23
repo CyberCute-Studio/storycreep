@@ -39,6 +39,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -350,15 +351,17 @@ type Imported struct {
 // writes what the import holds, so that an import that fails leaves no project
 // (PRD FR-DATA-01). It is Create's one site of creating a project (plan note
 // N32), with the same authorisation, checks, and limit, and returns the same
-// errors, but for what the archive holds: it seeds nothing, and the project is
-// recorded in the audit log as imported. The limit is the one thing that it
+// errors, but for what the archive holds: it seeds nothing, the project is
+// recorded in the audit log as imported, and its name and description are
+// stored values, kept as they are and held only to their lengths, as the text
+// rules may refuse one that a project holds. The limit is the one thing that it
 // leaves to FinishImported, which the transaction calls last, as the check
 // holds the lock of the workspace's projects until the transaction ends, which
 // every other project's creation in the workspace would wait for.
 func (s *Service) CreateImported(ctx context.Context, tx pgx.Tx, userID, workspaceID ids.UUID, in Imported) (Visible,
 	error) {
 	return s.create(ctx, tx, userID, workspaceID, creation{id: in.ID, in: in.Settings, slug: in.Slug,
-		action: audit.ActionProjectImport, metadata: in.Metadata, client: in.Client, limitLater: true})
+		action: audit.ActionProjectImport, metadata: in.Metadata, client: in.Client, limitLater: true, stored: true})
 }
 
 // FinishImported checks the workspace's projects limit for the project that
@@ -383,12 +386,17 @@ type creation struct {
 	client   audit.Client
 	// limitLater leaves the projects limit and its usage to FinishImported.
 	limitLater bool
+	// stored says that the name and the description are stored values, which
+	// are kept as they are (CreateImported).
+	stored bool
 }
 
 // create creates a project in tx, after every check that creating one takes.
 func (s *Service) create(ctx context.Context, tx pgx.Tx, userID, workspaceID ids.UUID, c creation) (Visible, error) {
 	in := c.in
-	in.Description = input.LineFeeds(in.Description)
+	if !c.stored {
+		in.Name, in.Description = strings.TrimSpace(in.Name), strings.TrimSpace(input.LineFeeds(in.Description))
+	}
 	q := queries.New(tx)
 	ws, err := activeWorkspace(ctx, q, workspaceID)
 	if err != nil {
@@ -405,7 +413,7 @@ func (s *Service) create(ctx context.Context, tx pgx.Tx, userID, workspaceID ids
 	if err := authz.Check(r, authz.ManageProjects); err != nil {
 		return Visible{}, err
 	}
-	set, err := check(in, workspaceLocale(ws.Settings))
+	set, err := check(in, workspaceLocale(ws.Settings), c.stored)
 	if err != nil {
 		return Visible{}, err
 	}
@@ -418,7 +426,7 @@ func (s *Service) create(ctx context.Context, tx pgx.Tx, userID, workspaceID ids
 	if err != nil {
 		return Visible{}, fmt.Errorf("project: encode the settings: %w", err)
 	}
-	name, description := strings.TrimSpace(in.Name), strings.TrimSpace(in.Description)
+	name, description := in.Name, in.Description
 	projectSlug := c.slug
 	if slug.Check(projectSlug) != nil {
 		projectSlug = slug.Derive(name, "project")
@@ -451,14 +459,19 @@ func (s *Service) create(ctx context.Context, tx pgx.Tx, userID, workspaceID ids
 
 // check returns the settings of a project created with in, whose default
 // locale is locale unless in names one, or input.FieldErrors if a field of
-// in is not valid.
-func check(in Settings, locale string) (settings, error) {
+// in is not valid. A stored name or description is held to its length alone.
+func check(in Settings, locale string, stored bool) (settings, error) {
 	var errs input.FieldErrors
-	if msg := checkName(strings.TrimSpace(in.Name)); msg != "" {
-		errs = append(errs, input.FieldError{Field: "name", Message: msg})
+	nameProblem, descriptionProblem := checkName(in.Name), checkDescription(in.Description)
+	if stored {
+		nameProblem, descriptionProblem = storedLength(in.Name, MaxNameLength),
+			storedLength(in.Description, MaxDescriptionLength)
 	}
-	if msg := checkDescription(strings.TrimSpace(in.Description)); msg != "" {
-		errs = append(errs, input.FieldError{Field: "description", Message: msg})
+	if nameProblem != "" {
+		errs = append(errs, input.FieldError{Field: "name", Message: nameProblem})
+	}
+	if descriptionProblem != "" {
+		errs = append(errs, input.FieldError{Field: "description", Message: descriptionProblem})
 	}
 	if in.DefaultLocale != "" {
 		var msg string
@@ -499,6 +512,15 @@ func workspaceLocale(doc []byte) string {
 		return locale
 	}
 	return fallbackLocale
+}
+
+// storedLength says that a stored text is longer than maxChars characters, or
+// returns "".
+func storedLength(text string, maxChars int) string {
+	if utf8.RuneCountInString(text) > maxChars {
+		return fmt.Sprintf("is longer than %d characters", maxChars)
+	}
+	return ""
 }
 
 // checkName says what is wrong with a project's name, or returns "".

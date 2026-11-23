@@ -141,10 +141,12 @@ func registerBoards(r *commands.Registry) {
 	commands.Register(r, commands.Spec[CreatePayload]{
 		Type: Create, Capability: authz.ManageBoards, Scope: scope.ProjectWrite, Touches: inFolder,
 		Check: func(p CreatePayload) input.FieldErrors {
-			errs := newID(ids.Board, p.ID)
-			errs = append(errs, field("name", checkName(p.Name))...)
-			errs = append(errs, field("description", checkDescription(p.Description))...)
-			return append(errs, optionalID(ids.Folder, "folder_id", p.FolderID)...)
+			return append(newID(ids.Board, p.ID), optionalID(ids.Folder, "folder_id", p.FolderID)...)
+		},
+		// An import creates a board with its stored name and description,
+		// which the text rules may refuse (commands.Spec.CheckNew).
+		CheckNew: func(p CreatePayload) input.FieldErrors {
+			return append(field("name", checkName(p.Name)), field("description", checkDescription(p.Description))...)
 		},
 		Inverse: func(_ context.Context, _ *commands.Tx, p CreatePayload) ([]commands.Step, error) {
 			return []commands.Step{{Type: Delete, Payload: deletePayload{ID: p.ID}}}, nil

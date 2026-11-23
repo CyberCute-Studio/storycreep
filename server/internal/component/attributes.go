@@ -150,12 +150,20 @@ func registerAttributes(r *commands.Registry) {
 				return append(errs, options...)
 			}
 			errs = append(errs, checkRuntime("runtime", p.Type, p.Runtime)...)
-			_, problem := p.Default.Of(p.Type, p.Options...)
+			_, problem := p.Default.Read(p.Type, value.Checks{Length: true}, p.Options...)
 			return append(errs, field("default", problem)...)
 		},
+		// An import creates a definition with its stored name, options, and
+		// default, which the text rules may refuse (commands.Spec.CheckNew). A
+		// default that is not of its type is Check's to report, once.
 		CheckNew: func(p CreateAttributePayload) input.FieldErrors {
 			errs := field("name", checkName(p.Name))
-			return append(errs, field("options", value.CheckOptionNames(p.Options))...)
+			errs = append(errs, field("options", value.CheckOptionNames(p.Options))...)
+			if _, problem := p.Default.Read(p.Type, value.Checks{Length: true}, p.Options...); problem == "" {
+				_, problem = p.Default.Of(p.Type, p.Options...)
+				errs = append(errs, field("default", problem)...)
+			}
+			return errs
 		},
 		Inverse: func(_ context.Context, _ *commands.Tx, p CreateAttributePayload) ([]commands.Step, error) {
 			return []commands.Step{{Type: DeleteAttribute, Payload: attributeIDPayload{ID: p.ID}}}, nil
@@ -477,8 +485,9 @@ func applyCreateAttribute(ctx context.Context, tx *commands.Tx, p CreateAttribut
 	if err != nil {
 		return err
 	}
-	// Check checked the default against the type.
-	def, _ := p.Default.Of(p.Type, p.Options...)
+	// Check checked the default against the type, and CheckNew the characters
+	// of one that is not a stored value.
+	def, _ := p.Default.Read(p.Type, value.Checks{Length: true}, p.Options...)
 	options := p.Options
 	if options == nil {
 		options = []string{}

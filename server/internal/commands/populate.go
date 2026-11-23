@@ -26,9 +26,12 @@ const populating Type = "project.populate"
 // (Tx.ApplyPart) of a batch of its own, so that an imported project's content
 // goes through the commands that any other content does, with their checks
 // (PRD §10.4, FR-DATA-01), in the one transaction that creates the project, so
-// that an import is all or nothing. Once fn returns, it runs the pipeline's
-// derivations, which compile the expressions and write the indexes, and
-// records what the parts added to the workspace's usage.
+// that an import is all or nothing. The parts' values are stored ones, so that
+// they are held to what a step of an inverse is, and not to CheckNew's rules,
+// which a project may hold a value that they refuse (ApplyPart). Once fn
+// returns, it runs the pipeline's derivations, which compile the expressions
+// and write the indexes, and records what the parts added to the workspace's
+// usage.
 //
 // The actor needs the workspace's authz.ManageProjects, which creating a
 // project needs, and which stands for the capability of every part. The batch

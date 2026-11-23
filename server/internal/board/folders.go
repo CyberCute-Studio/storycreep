@@ -117,10 +117,11 @@ func registerFolders(r *commands.Registry) {
 	commands.Register(r, commands.Spec[CreateFolderPayload]{
 		Type: CreateFolder, Capability: authz.ManageFolders, Scope: scope.ProjectWrite, Touches: folder,
 		Check: func(p CreateFolderPayload) input.FieldErrors {
-			errs := newID(ids.Folder, p.ID)
-			errs = append(errs, field("name", checkName(p.Name))...)
-			return append(errs, optionalID(ids.Folder, "parent_id", p.ParentID)...)
+			return append(newID(ids.Folder, p.ID), optionalID(ids.Folder, "parent_id", p.ParentID)...)
 		},
+		// An import creates a folder with its stored name, which the text
+		// rules may refuse (commands.Spec.CheckNew).
+		CheckNew: func(p CreateFolderPayload) input.FieldErrors { return field("name", checkName(p.Name)) },
 		Inverse: func(_ context.Context, _ *commands.Tx, p CreateFolderPayload) ([]commands.Step, error) {
 			return []commands.Step{{Type: DeleteFolder, Payload: deleteFolderPayload{ID: p.ID}}}, nil
 		},

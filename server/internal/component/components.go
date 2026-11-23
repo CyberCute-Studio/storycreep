@@ -443,7 +443,13 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p CreatePayload) error {
 	if err != nil {
 		return err
 	}
-	vals, err := createValues(ctx, q, t, p.Attributes)
+	// An import gives a component its stored values, whose characters the text
+	// rules may refuse (commands.Spec.CheckNew).
+	checks := value.All
+	if tx.Populating() {
+		checks = value.Checks{Length: true}
+	}
+	vals, err := createValues(ctx, q, t, p.Attributes, checks)
 	if err != nil {
 		return err
 	}
@@ -478,9 +484,9 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p CreatePayload) error {
 // gives the definition, by its ID, or else its default. It refuses the batch
 // for a definition in given that is not one of the type's that are not in the
 // trash, or that given names twice, in two spellings of its ID, and for a
-// value there that is not one of its definition's type.
+// value there that is not one of its definition's type, as checks reads it.
 func createValues(ctx context.Context, q *queries.Queries, t queries.ComponentType,
-	given map[string]value.Value) ([]byte, error) {
+	given map[string]value.Value, checks value.Checks) ([]byte, error) {
 	byID, err := keyedByUUID(ids.AttributeDef, "attributes", given)
 	if err != nil {
 		return nil, err
@@ -497,7 +503,7 @@ func createValues(ctx context.Context, q *queries.Queries, t queries.ComponentTy
 		if g, ok := byID[a.ID.Bytes]; ok {
 			delete(byID, a.ID.Bytes)
 			var problem string
-			if v, problem = g.value.Of(a.Type, a.EnumOptions...); problem != "" {
+			if v, problem = g.value.Read(a.Type, checks, a.EnumOptions...); problem != "" {
 				return nil, commands.Refuse(g.at, problem, nil)
 			}
 		} else if v, err = storedDefault(a); err != nil {
