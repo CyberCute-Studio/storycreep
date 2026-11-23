@@ -46,20 +46,21 @@ const (
 	// maxJSONMember is the largest JSON file of an archive, which is read into
 	// memory whole. The largest is the index of the releases, which holds each
 	// one's validation report: 89 MB for the large fixture with 30 releases,
-	// so that this takes some 170 releases of a project of that size.
-	maxJSONMember = 512 << 20
+	// so that this takes some 85 releases of a project of that size. An archive
+	// past it can leave the release history out, which the export offers.
+	maxJSONMember = 256 << 20
 	// maxJSONValues is the most values that a JSON file may hold, past which
 	// the tree that checking it against its schema builds would take many
 	// times the file's size, at some 31 bytes a value. That index of the large
 	// fixture has 2.1 million.
-	maxJSONValues = 16_000_000
+	maxJSONValues = 8_000_000
 	// maxJSONTotal is the most that the JSON files held in memory at once may
 	// take together: the manifest and the sections of an archive, which stay
 	// for the whole import, the release that an archive of a release is, and
 	// the files of the one release being read. The large fixture with 30
 	// releases holds 115 MiB of them. It counts the files' bytes: decoding and
 	// checking files at these limits takes the heap to some 3 GiB.
-	maxJSONTotal = 768 << 20
+	maxJSONTotal = 384 << 20
 	// maxRemapIDs is the most IDs that an import takes, of its rows and of what
 	// its releases' files spell, which the collision check asks about and a
 	// remap gives fresh ones, each of which its tables hold, at some 100 bytes
