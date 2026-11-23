@@ -132,6 +132,13 @@ WHERE m.workspace_id = @workspace_id AND m.user_id = ANY(@user_ids::uuid[]) AND 
 SELECT source_user_id, display_name, user_id FROM imported_user
 WHERE workspace_id = @workspace_id AND source_user_id = ANY(@source_ids::uuid[]);
 
+-- name: OwnImportedUsers :many
+-- OwnImportedUsers returns those of the users who are the workspace's own
+-- imported identities, as an export of its project names them, with the
+-- display name of each.
+SELECT user_id, display_name FROM imported_user
+WHERE workspace_id = @workspace_id AND user_id = ANY(@user_ids::uuid[]);
+
 -- name: InsertImportedAccount :exec
 -- InsertImportedAccount adds the account of an imported identity, which no one
 -- can sign in as: it is not active and has no password.

@@ -55,6 +55,11 @@ const (
 	// maxJSONTotal is the most that the JSON files held in memory at once may
 	// take together: the sections of an archive, or the files of a release.
 	maxJSONTotal = 768 << 20
+	// maxRemapIDs is the most IDs that a remap gives fresh ones, each of which
+	// its tables hold, at some 100 bytes an ID, and which a release's text can
+	// spell far more of than it has values. The large fixture has tens of
+	// thousands.
+	maxRemapIDs = 4_000_000
 )
 
 // errDirectoryTooLarge stops the zip reader at maxDirectoryBytes.
@@ -214,10 +219,12 @@ func openArchive(r io.ReaderAt, size, importMax int64) (*archive, error) {
 			f.UncompressedSize64/max(f.CompressedSize64, 1) > maxCompressionRatio:
 			return nil, invalidArchive("ratio", "the member %q expands more than %d times", f.Name, maxCompressionRatio)
 		}
-		total += f.UncompressedSize64
-		if total > uint64(budget) {
+		// Against what is left of the budget, as a size that the header claims
+		// near 2^64 would wrap a sum back to a small one.
+		if f.UncompressedSize64 > uint64(budget)-total {
 			return nil, invalidArchive("size", "its members expand to more than the %d bytes that an import takes", budget)
 		}
+		total += f.UncompressedSize64
 		a.files[f.Name] = f
 	}
 	a.names = slices.Sorted(maps.Keys(a.files))

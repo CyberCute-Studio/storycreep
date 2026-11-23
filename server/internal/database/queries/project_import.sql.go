@@ -555,6 +555,44 @@ func (q *Queries) LockProjectImportUpload(ctx context.Context, arg LockProjectIm
 	return status, err
 }
 
+const ownImportedUsers = `-- name: OwnImportedUsers :many
+SELECT user_id, display_name FROM imported_user
+WHERE workspace_id = $1 AND user_id = ANY($2::uuid[])
+`
+
+type OwnImportedUsersParams struct {
+	WorkspaceID pgtype.UUID
+	UserIds     []pgtype.UUID
+}
+
+type OwnImportedUsersRow struct {
+	UserID      pgtype.UUID
+	DisplayName string
+}
+
+// OwnImportedUsers returns those of the users who are the workspace's own
+// imported identities, as an export of its project names them, with the
+// display name of each.
+func (q *Queries) OwnImportedUsers(ctx context.Context, arg OwnImportedUsersParams) ([]OwnImportedUsersRow, error) {
+	rows, err := q.db.Query(ctx, ownImportedUsers, arg.WorkspaceID, arg.UserIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OwnImportedUsersRow
+	for rows.Next() {
+		var i OwnImportedUsersRow
+		if err := rows.Scan(&i.UserID, &i.DisplayName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const projectImport = `-- name: ProjectImport :one
 SELECT id, workspace_id, requested_by, status, file_name, size_bytes, chunk_bytes, id_policy, applied_policy, created_project_id, phase, progress_done, progress_total, report, failure, created_at, finished_at, expires_at FROM project_import
 WHERE workspace_id = $1 AND requested_by = $2 AND id = $3 AND expires_at > now()

@@ -358,11 +358,11 @@ type Release struct {
 	ID                   string    `json:"id" doc:"The snapshot's ID."`
 	Version              string    `json:"version" doc:"Its version."`
 	Note                 string    `json:"note" doc:"Its changelog note."`
-	AcknowledgedSeq      int64     `json:"acknowledgedSeq" minimum:"0" doc:"The project's operation sequence of the validation report that its author acknowledged when they published it."`
+	AcknowledgedSeq      int64     `json:"acknowledgedSeq" minimum:"0" maximum:"9007199254740991" doc:"The project's operation sequence of the validation report that its author acknowledged when they published it."`
 	AcknowledgedWarnings Value     `json:"acknowledgedWarnings" doc:"The warnings of that report that its author acknowledged, each by its code, its entity, its field, and its target."`
 	SchemaVersion        int       `json:"schemaVersion" minimum:"1" doc:"The version of the published format of its files."`
 	ContentHash          string    `json:"contentHash" doc:"Its content hash."`
-	SourceSeq            int64     `json:"sourceSeq" minimum:"0" doc:"The project's operation sequence as of the draft that it was built from."`
+	SourceSeq            int64     `json:"sourceSeq" minimum:"0" maximum:"9007199254740991" doc:"The project's operation sequence as of the draft that it was built from."`
 	Counts               Value     `json:"counts" doc:"Its manifest's entity counts."`
 	ValidationReport     Value     `json:"validationReport" doc:"The validation report that its build stored."`
 	PublishedBy          string    `json:"publishedBy,omitempty" doc:"Who published it, of a full archive alone, whom people.json names."`

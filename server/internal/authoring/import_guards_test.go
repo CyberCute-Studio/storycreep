@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
 	"github.com/CyberCute-Studio/storycreep/server/internal/schemaversion"
+	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
 )
 
 // TestArchiveDirectoryGuard checks that a central directory of more headers
@@ -139,6 +141,81 @@ func TestRemapHoldsWhatOnlyAReleaseHolds(t *testing.T) {
 	}
 	if !slices.IsSortedFunc(all, func(a, b ids.UUID) int { return bytes.Compare(a[:], b[:]) }) {
 		t.Errorf("the IDs to remap are not sorted: %v", all)
+	}
+}
+
+// TestArchiveBudgetHoldsAgainstAWrap checks that a size near 2^64, which would
+// wrap the sum of the members' sizes back to a small one, is past the budget.
+//
+// Verifies: NFR-SEC-13
+func TestArchiveBudgetHoldsAgainstAWrap(t *testing.T) {
+	t.Parallel()
+	const first = 1 << 20
+	var b bytes.Buffer
+	w := zip.NewWriter(&b)
+	for _, h := range []*zip.FileHeader{
+		{Name: "a.bin", Method: zip.Store, UncompressedSize64: first, CompressedSize64: first},
+		{Name: "b.bin", Method: zip.Store, UncompressedSize64: math.MaxUint64 - first + 2, CompressedSize64: 1 << 62},
+	} {
+		if _, err := w.CreateRaw(h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data := b.Bytes()
+	_, err := openArchive(bytes.NewReader(data), int64(len(data)), 1<<30)
+	wantRefused(t, err, "size")
+}
+
+// TestRemapRefusesTooManyIDs checks that what a remap holds of the IDs that a
+// release's files spell is bounded, by the IDs and by how often a file spells
+// them.
+//
+// Verifies: NFR-SEC-13
+func TestRemapRefusesTooManyIDs(t *testing.T) {
+	t.Parallel()
+	one, two := ids.Encode(ids.Node, ids.New()), ids.Encode(ids.Node, ids.New())
+	files := schemaversion.Files{"boards/a.json": []byte(`"` + one + " " + two + `"`)}
+	set := map[ids.UUID]bool{}
+	if err := addFileIDs(files, set, 2); err != nil || len(set) != 2 {
+		t.Errorf("two IDs of a limit of two: %v, %v", set, err)
+	}
+	wantRefused(t, addFileIDs(files, map[ids.UUID]bool{}, 1), "ids")
+	repeated := schemaversion.Files{"boards/a.json": []byte(`"` + strings.Repeat(one+" ", 3) + `"`)}
+	wantRefused(t, addFileIDs(repeated, map[ids.UUID]bool{}, 2), "ids")
+}
+
+// TestReportIsReadAsTheAPIReadsIt checks that a muted_by in any case of its key,
+// which the API's decoding takes, is mapped, and that a report that the API
+// could not decode is refused.
+//
+// Verifies: FR-DATA-01/AC1
+func TestReportIsReadAsTheAPIReadsIt(t *testing.T) {
+	t.Parallel()
+	named, mapped := ids.New(), ids.New()
+	report := []byte(`{"findings":[{"mute":{"MUTED_BY":"` + ids.Encode(ids.User, named) + `"}}]}`)
+	seen := map[ids.UUID]bool{}
+	reportUsersIn(report, seen)
+	if !seen[named] {
+		t.Errorf("the people of the report are %v", seen)
+	}
+	got, err := rewriteReport(report, map[ids.UUID]ids.UUID{named: mapped})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s validation.Stored
+	if err := json.Unmarshal(got, &s); err != nil {
+		t.Fatal(err)
+	}
+	if by := s.Findings[0].Mute.MutedBy; by != ids.Encode(ids.User, mapped) {
+		t.Errorf("the mute names %s", by)
+	}
+	for _, bad := range []string{`null`, `[]`, `{"findings":"x"}`, `{"findings":[{"mute":{"muted_by":1}}]}`} {
+		if _, err := storedReport([]byte(bad)); err == nil {
+			t.Errorf("the report %s was read", bad)
+		}
 	}
 }
 

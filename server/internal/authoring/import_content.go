@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"regexp"
@@ -18,6 +19,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
 	"github.com/CyberCute-Studio/storycreep/server/internal/schemaversion"
+	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
 )
 
 // archived is what an archive holds, decoded, once its files have passed
@@ -201,22 +203,46 @@ func readArchived(a *archive) (*archived, error) {
 			known[name] = true
 		}
 	}
+	// Each release and each asset is listed once, before any is read, so that
+	// an index of the same entry many times over cannot have one member read
+	// and verified as often, which the guards count once.
 	c.releasePaths = make([]string, len(c.releases))
+	releaseIDs := make(map[ids.UUID]bool, len(c.releases))
+	releasePaths := make(map[string]bool, len(c.releases))
 	for i, rel := range c.releases {
 		if !strings.HasPrefix(rel.Path, "releases/") || !strings.HasSuffix(rel.Path, "/") ||
 			strings.Count(rel.Path, "/") != 2 {
 			return nil, &ImportError{Code: FailSchemaInvalid, Section: "releases", Check: "path",
 				Detail: fmt.Sprintf("release %s has the path %q", rel.Version, rel.Path)}
 		}
+		id, err := ids.Decode(ids.Snapshot, rel.ID)
+		if err != nil {
+			return nil, &ImportError{Code: FailContentInvalid, Section: "releases", Check: "id",
+				Detail: fmt.Sprintf("%q is no %s ID", rel.ID, ids.Snapshot)}
+		}
+		if releaseIDs[id] || releasePaths[rel.Path] {
+			return nil, &ImportError{Code: FailContentInvalid, Section: "releases", Check: "duplicate_release",
+				Version: rel.Version, Detail: fmt.Sprintf("the index lists %s or %q twice", rel.ID, rel.Path)}
+		}
+		releaseIDs[id], releasePaths[rel.Path] = true, true
+		if _, err := storedReport(rel.ValidationReport); err != nil {
+			return nil, &ImportError{Code: FailReleaseInvalid, Version: rel.Version, Check: "validation_report",
+				Detail: firstLine(err.Error())}
+		}
 		c.releasePaths[i] = rel.Path
 		for _, name := range a.under(rel.Path) {
 			known[name] = true
 		}
 	}
+	assetPaths := make(map[string]bool, len(c.assets))
 	for _, as := range c.assets {
 		if !strings.HasPrefix(as.Path, "assets/") {
 			return nil, &ImportError{Code: FailAssetInvalid, Section: "assets", Check: "path", Detail: as.Path}
 		}
+		if assetPaths[as.Path] {
+			return nil, &ImportError{Code: FailAssetInvalid, Section: "assets", Check: "duplicate_path", Detail: as.Path}
+		}
+		assetPaths[as.Path] = true
 		known[as.Path] = true
 	}
 	for _, name := range slices.Sorted(maps.Keys(a.files)) {
@@ -345,34 +371,35 @@ func rewriteMentions(body []byte, table map[ids.UUID]ids.UUID) ([]byte, error) {
 	return json.Marshal(*doc)
 }
 
-// reportMutes returns the validation report raw as a tree, and the mute of each
-// of its findings that names who muted it. A report that is not an object has
-// none.
-func reportMutes(raw []byte) (map[string]any, []map[string]any) {
+// storedReport reads a release's validation report as the API reads it
+// (snapshot.Service.Report), so that a report that it could not read is the
+// archive's failure, and what names a person here is what names one there,
+// whatever the case of its keys. Its numbers stay as they are written.
+func storedReport(raw []byte) (validation.Stored, error) {
+	var s validation.Stored
+	if text := bytes.TrimSpace(raw); len(text) == 0 || text[0] != '{' {
+		return s, errors.New("the validation report is no JSON object")
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
-	var doc map[string]any
-	if err := dec.Decode(&doc); err != nil {
-		return nil, nil
+	if err := dec.Decode(&s); err != nil {
+		return s, fmt.Errorf("the validation report: %w", err)
 	}
-	findings, _ := doc["findings"].([]any)
-	var mutes []map[string]any
-	for _, f := range findings {
-		finding, _ := f.(map[string]any)
-		mute, _ := finding["mute"].(map[string]any)
-		if _, ok := mute["muted_by"].(string); ok {
-			mutes = append(mutes, mute)
-		}
-	}
-	return doc, mutes
+	return s, nil
 }
 
 // reportUsersIn adds to set each user who a validation report says muted a
-// finding.
+// finding. A report that cannot be read has been refused (readArchived).
 func reportUsersIn(raw []byte, set map[ids.UUID]bool) {
-	_, mutes := reportMutes(raw)
-	for _, mute := range mutes {
-		if id, err := ids.Decode(ids.User, mute["muted_by"].(string)); err == nil {
+	s, err := storedReport(raw)
+	if err != nil {
+		return
+	}
+	for _, f := range s.Findings {
+		if f.Mute == nil {
+			continue
+		}
+		if id, err := ids.Decode(ids.User, f.Mute.MutedBy); err == nil {
 			set[id] = true
 		}
 	}
@@ -380,22 +407,31 @@ func reportUsersIn(raw []byte, set map[ids.UUID]bool) {
 
 // rewriteReport returns the validation report raw with each finding's muted_by
 // naming the account that table maps it to, and without one that names no one
-// of the table, which is how the API reads an ID that is no account's.
+// of the table, which is how the API reads an ID that is no account's. A report
+// with a mute is written anew, with its keys as the API reads them.
 func rewriteReport(raw []byte, table map[ids.UUID]ids.UUID) ([]byte, error) {
-	doc, mutes := reportMutes(raw)
-	if len(mutes) == 0 {
-		return raw, nil
+	s, err := storedReport(raw)
+	if err != nil {
+		return nil, err
 	}
-	for _, mute := range mutes {
-		id, err := ids.Decode(ids.User, mute["muted_by"].(string))
-		fresh, ok := table[id]
-		if err != nil || !ok {
-			delete(mute, "muted_by")
+	muted := false
+	for _, f := range s.Findings {
+		if f.Mute == nil {
 			continue
 		}
-		mute["muted_by"] = ids.Encode(ids.User, fresh)
+		muted = true
+		id, err := ids.Decode(ids.User, f.Mute.MutedBy)
+		fresh, ok := table[id]
+		if err != nil || !ok {
+			f.Mute.MutedBy = ""
+			continue
+		}
+		f.Mute.MutedBy = ids.Encode(ids.User, fresh)
 	}
-	return json.Marshal(doc)
+	if !muted {
+		return raw, nil
+	}
+	return json.Marshal(s)
 }
 
 // entityIDs returns the ID of every row that the archive would add, each once,
@@ -495,27 +531,52 @@ func (c *archived) remapIDs(a *archive, list []ids.UUID) ([]ids.UUID, error) {
 	for _, id := range list {
 		set[id] = true
 	}
-	add := func(files schemaversion.Files) {
-		for p, data := range files {
-			if !schemaversion.IsJSON(p) {
-				continue
-			}
-			for _, tok := range idToken.FindAll(plainIDs(data), -1) {
-				if _, id, err := ids.DecodeAny(string(tok)); err == nil {
-					set[id] = true
-				}
-			}
-		}
+	if len(set) > maxRemapIDs {
+		return nil, tooManyIDs(maxRemapIDs)
 	}
-	add(c.sourceFiles)
+	if err := addFileIDs(c.sourceFiles, set, maxRemapIDs); err != nil {
+		return nil, err
+	}
 	for _, dir := range c.releasePaths {
 		files, err := releaseFiles(a, dir)
 		if err != nil {
 			return nil, err
 		}
-		add(files)
+		if err := addFileIDs(files, set, maxRemapIDs); err != nil {
+			return nil, err
+		}
 	}
 	return slices.SortedFunc(maps.Keys(set), func(a, b ids.UUID) int { return bytes.Compare(a[:], b[:]) }), nil
+}
+
+// addFileIDs adds to set every ID that the JSON files spell, and refuses files
+// that take it past limit, or one that spells more than limit, so that neither
+// the list of what a file spells nor the table grows with its size alone.
+func addFileIDs(files schemaversion.Files, set map[ids.UUID]bool, limit int) error {
+	for p, data := range files {
+		if !schemaversion.IsJSON(p) {
+			continue
+		}
+		tokens := idToken.FindAll(plainIDs(data), limit+1)
+		if len(tokens) > limit {
+			return tooManyIDs(limit)
+		}
+		for _, tok := range tokens {
+			if _, id, err := ids.DecodeAny(string(tok)); err == nil {
+				set[id] = true
+			}
+		}
+		if len(set) > limit {
+			return tooManyIDs(limit)
+		}
+	}
+	return nil
+}
+
+// tooManyIDs is the refusal of an archive that holds more IDs than a remap
+// takes.
+func tooManyIDs(limit int) error {
+	return invalidArchive("ids", "it holds more than the %d IDs that a remap gives fresh ones", limit)
 }
 
 // remap rewrites every ID that table holds through the archive's sections, and

@@ -1529,11 +1529,11 @@ func importWriteError(err error) error {
 
 // mapPeople returns the account that each person whom the archive names is
 // attributed to on this instance (FR-DATA-01): themselves if they are a member
-// of the workspace, and otherwise the workspace's imported identity of them,
-// which carries the display name from the archive. An ID that names anyone
-// else on the instance is never kept, so that an archive cannot show another
-// workspace's user. It also returns how many imported identities the archive's
-// people take.
+// of the workspace or one of its imported identities, of the same name, and
+// otherwise the workspace's imported identity of them, which carries the
+// display name from the archive. An ID that names anyone else on the instance
+// is never kept, so that an archive cannot show another workspace's user. It
+// also returns how many imported identities the archive's people take.
 func mapPeople(ctx context.Context, q *queries.Queries, ws ids.UUID, c *archived) (map[ids.UUID]ids.UUID, int, error) {
 	seen := map[ids.UUID]bool{}
 	add := func(s string) {
@@ -1595,6 +1595,17 @@ func mapPeople(ctx context.Context, q *queries.Queries, ws ids.UUID, c *archived
 	if len(strangers) == 0 {
 		return out, 0, nil
 	}
+	// An archive of a project that holds imported identities names them, and
+	// one of this workspace's, of the same name, is that person already.
+	own, err := q.OwnImportedUsers(ctx, queries.OwnImportedUsersParams{WorkspaceID: uuid(ws), UserIds: strangers})
+	if err != nil {
+		return nil, 0, fmt.Errorf("authoring: read the workspace's imported identities: %w", err)
+	}
+	for _, o := range own {
+		if id := ids.UUID(o.UserID.Bytes); cleanDisplayName(names[id]) == o.DisplayName {
+			out[id] = id
+		}
+	}
 	existing, err := q.ImportedUsers(ctx, queries.ImportedUsersParams{WorkspaceID: uuid(ws), SourceIds: strangers})
 	if err != nil {
 		return nil, 0, fmt.Errorf("authoring: read the workspace's imported identities: %w", err)
@@ -1609,6 +1620,9 @@ func mapPeople(ctx context.Context, q *queries.Queries, ws ids.UUID, c *archived
 	}
 	for _, s := range strangers {
 		source := ids.UUID(s.Bytes)
+		if _, ok := out[source]; ok {
+			continue
+		}
 		name := cleanDisplayName(names[source])
 		k := identity{source, name}
 		user, ok := have[k]

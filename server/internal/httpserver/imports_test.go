@@ -775,6 +775,49 @@ func TestImportAttribution(t *testing.T) {
 	}
 }
 
+// TestImportKeepsAnImportedIdentity checks that an export of a project with an
+// imported identity, imported back into the same workspace, takes that identity
+// again rather than a second account for the same person and name.
+//
+// Verifies: FR-DATA-01/AC1
+func TestImportKeepsAnImportedIdentity(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	newAccount(t, f.s.main, "elsewhere@example.com")
+	stranger := signIn(t, f.s.main, "elsewhere@example.com")
+	res := call(f.s.main, http.MethodPost, "/api/v1/workspaces", jsonBody(t, map[string]any{"name": "Elsewhere"}),
+		stranger.header(true))
+	if res.status != http.StatusCreated {
+		t.Fatalf("create a workspace: %d %s", res.status, res.body)
+	}
+	var other struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(res.body, &other); err != nil {
+		t.Fatal(err)
+	}
+	first := mustImport(t, f.s, stranger, other.ID, zipOf(t, exportedArchive(t, f)), "remap")
+	view := exportOf(t, f.s, stranger, first.ProjectID)
+	people := items[authoring.Person](t, view, "people.json")
+	if len(people) != 1 {
+		t.Fatalf("the first import names %+v", people)
+	}
+	second := mustImport(t, f.s, stranger, other.ID, zipOf(t, view), "")
+	if second.Report.ImportedUsers != 1 {
+		t.Errorf("the report is %+v", *second.Report)
+	}
+	again := items[authoring.Person](t, exportOf(t, f.s, stranger, second.ProjectID), "people.json")
+	if len(again) != 1 || again[0] != people[0] {
+		t.Errorf("the second import names %+v, want %+v", again, people)
+	}
+	var count int
+	if err := f.d.Admin(t).QueryRow(t.Context(), `SELECT count(*) FROM imported_user WHERE workspace_id = $1`,
+		decode(t, ids.Workspace, other.ID)).Scan(&count); err != nil || count != 1 {
+		t.Errorf("the workspace has %d imported identities, want 1: %v", count, err)
+	}
+}
+
 // TestImportMapsAnEscapedMention checks a comment that mentions an account of
 // the instance with its ID's underscore escaped, which a parser reads as the
 // ID: it takes an imported identity like any other, so that the archive cannot
@@ -851,6 +894,44 @@ func TestImportHoldsDirectRowsToTheirChecks(t *testing.T) {
 			}
 			resealSection(t, files, "releases/index.json", data, len(list))
 		}, authoring.FailReleaseInvalid, "", "note"},
+		"a release's report that the API cannot read": {func(files map[string][]byte) {
+			list := items[authoring.Release](t, files, "releases/index.json")
+			list[0].ValidationReport = authoring.Value(`{"findings": "none"}`)
+			data, err := json.Marshal(authoring.Items[authoring.Release]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "releases/index.json", data, len(list))
+		}, authoring.FailReleaseInvalid, "", "validation_report"},
+		"a release's sequence past what a client reads": {func(files map[string][]byte) {
+			list := items[authoring.Release](t, files, "releases/index.json")
+			list[0].SourceSeq = 1 << 53
+			data, err := json.Marshal(authoring.Items[authoring.Release]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "releases/index.json", data, len(list))
+		}, authoring.FailSchemaInvalid, "releases", "schema"},
+		"a release listed twice": {func(files map[string][]byte) {
+			list := items[authoring.Release](t, files, "releases/index.json")
+			list = append(list, list[0])
+			data, err := json.Marshal(authoring.Items[authoring.Release]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "releases/index.json", data, len(list))
+		}, authoring.FailContentInvalid, "releases", "duplicate_release"},
+		"two assets of one file": {func(files map[string][]byte) {
+			list := items[authoring.Asset](t, files, "assets/index.json")
+			again := list[0]
+			again.ID = ids.Encode(ids.Asset, ids.New())
+			list = append(list, again)
+			data, err := json.Marshal(authoring.Items[authoring.Asset]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "assets/index.json", data, len(list))
+		}, authoring.FailAssetInvalid, "assets", "duplicate_path"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			files := maps.Clone(exported)
