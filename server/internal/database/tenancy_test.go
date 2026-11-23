@@ -37,9 +37,11 @@ const auditTable = "audit_entry"
 // workspace (or, for audit_entry, has one), or leads no index, a tenant table without forced
 // row-level security or without a policy for storycreep_app, or that
 // storycreep_maintenance may not read, as the maintenance jobs must (PRD
-// §5.4), a table that spans workspaces but has a workspace_id, and a tenant
-// table that is not in registered, the isolation harness's tables, or a name
-// in registered that is not a tenant table.
+// §5.4), a tenant table with a project_id that autovacuum does not analyze
+// after 50 changed rows, so that a new project's reads are not planned as if
+// it were empty, a table that spans workspaces but has a workspace_id, and a
+// tenant table that is not in registered, the isolation harness's tables, or
+// a name in registered that is not a tenant table.
 func tenantTableProblems(t *testing.T, conn *pgx.Conn, registered []string) []string {
 	t.Helper()
 	rows, err := conn.Query(context.Background(), `
@@ -54,7 +56,11 @@ func tenantTableProblems(t *testing.T, conn *pgx.Conn, registered []string) []st
 			c.relrowsecurity, c.relforcerowsecurity,
 			EXISTS (SELECT FROM pg_policy p
 				WHERE p.polrelid = c.oid AND p.polcmd = '*' AND 'storycreep_app'::regrole = ANY (p.polroles)),
-			has_table_privilege('storycreep_maintenance', c.oid, 'SELECT')
+			has_table_privilege('storycreep_maintenance', c.oid, 'SELECT'),
+			NOT EXISTS (SELECT FROM pg_attribute pa
+				WHERE pa.attrelid = c.oid AND pa.attname = 'project_id' AND NOT pa.attisdropped)
+				OR coalesce(c.reloptions @> ARRAY['autovacuum_analyze_scale_factor=0',
+					'autovacuum_analyze_threshold=50'], false)
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'workspace_id' AND NOT a.attisdropped
@@ -67,12 +73,12 @@ func tenantTableProblems(t *testing.T, conn *pgx.Conn, registered []string) []st
 		name                                 string
 		hasColumn, notNull, uuid, fk, index  bool
 		rowSecurity, forced, workspacePolicy bool
-		maintenanceReads                     bool
+		maintenanceReads, analyzedSoon       bool
 	}
 	tables, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (table, error) {
 		var x table
 		err := r.Scan(&x.name, &x.hasColumn, &x.notNull, &x.uuid, &x.fk, &x.index, &x.rowSecurity, &x.forced,
-			&x.workspacePolicy, &x.maintenanceReads)
+			&x.workspacePolicy, &x.maintenanceReads, &x.analyzedSoon)
 		return x, err
 	})
 	if err != nil {
@@ -119,6 +125,9 @@ func tenantTableProblems(t *testing.T, conn *pgx.Conn, registered []string) []st
 		if !tb.maintenanceReads {
 			add("storycreep_maintenance may not read it")
 		}
+		if !tb.analyzedSoon {
+			add("has a project_id, but autovacuum does not analyze it after 50 changed rows")
+		}
 		if !slices.Contains(registered, tb.name) {
 			add("is not one of the isolation harness's tables")
 		}
@@ -144,9 +153,9 @@ func tableNames(tables []isolationtest.Table) []string {
 // workspace_id with a foreign key to workspace (audit_entry's has none, and
 // is null for an event of no workspace),
 // forced row-level security with a policy for the application, a grant that
-// lets storycreep_maintenance read it, and a place among the isolation
-// harness's tables, and that every other table is one of those that span
-// workspaces.
+// lets storycreep_maintenance read it, a place among the isolation harness's
+// tables, and, with a project_id, autovacuum's analyze after 50 changed rows,
+// and that every other table is one of those that span workspaces.
 //
 // Verifies: FR-TEN-01/AC1, NFR-SEC-01
 func TestTenantTables(t *testing.T) {
@@ -170,7 +179,7 @@ func TestTenantTablesCheckFindsOmissions(t *testing.T) {
 	if _, err := admin.Exec(ctx, `
 		CREATE TABLE stray (id uuid PRIMARY KEY);
 		CREATE TABLE loose (id uuid PRIMARY KEY, workspace_id text);
-		CREATE TABLE unforced (id uuid PRIMARY KEY, workspace_id uuid NOT NULL REFERENCES workspace);
+		CREATE TABLE unforced (id uuid PRIMARY KEY, workspace_id uuid NOT NULL REFERENCES workspace, project_id uuid);
 		CREATE INDEX unforced_workspace ON unforced (workspace_id);
 		ALTER TABLE unforced ENABLE ROW LEVEL SECURITY;
 		CREATE POLICY reads ON unforced FOR SELECT TO storycreep_app USING (true);
@@ -194,6 +203,7 @@ func TestTenantTablesCheckFindsOmissions(t *testing.T) {
 		"unforced: row-level security is not enabled and forced",
 		"unforced: has no policy for storycreep_app",
 		"unforced: storycreep_maintenance may not read it",
+		"unforced: has a project_id, but autovacuum does not analyze it after 50 changed rows",
 		"ghost: is one of the isolation harness's tables, but not a tenant table",
 	}
 	if !slices.Equal(got, want) {
