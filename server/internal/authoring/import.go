@@ -926,11 +926,11 @@ func verifyRelease(version string, schemaVersion int, contentHash string, files 
 		return fail("hashes", err)
 	}
 	if contentHash != "" {
-		var m published.Manifest
-		if err := published.Decode(files[published.ManifestPath], &m); err != nil {
+		_, got, err := manifestFacts(files)
+		if err != nil {
 			return fail("manifest", err)
 		}
-		if got := manifestContentHash(m); got != "" && got != contentHash {
+		if got != contentHash {
 			return fail("content_hash", fmt.Errorf("its manifest's content hash is %s, and its metadata says %s", got,
 				contentHash))
 		}
@@ -948,13 +948,35 @@ func verifyRelease(version string, schemaVersion int, contentHash string, files 
 	return nil
 }
 
-// manifestContentHash returns the content hash of a release's manifest.
-func manifestContentHash(m published.Manifest) string {
-	switch snap := m.Snapshot.(type) {
-	case *published.ReleaseSnapshot:
-		return string(snap.ContentHash)
+// manifestFacts returns the hash of each file that a release's manifest lists,
+// and its content hash, of a manifest of any version that the server reads,
+// which package published's types need not be of.
+func manifestFacts(files schemaversion.Files) (map[string]string, string, error) {
+	m, err := schemaversion.Object(files, published.ManifestPath)
+	if err != nil {
+		return nil, "", err
 	}
-	return ""
+	listed, ok := m["files"].(map[string]any)
+	if !ok {
+		return nil, "", errors.New("its manifest lists no files")
+	}
+	hashes := make(map[string]string, len(listed))
+	for path, h := range listed {
+		text, ok := h.(string)
+		if !ok {
+			return nil, "", fmt.Errorf("its manifest's hash of %s is not a string", path)
+		}
+		hashes[path] = text
+	}
+	snap, ok := m["snapshot"].(map[string]any)
+	if !ok {
+		return nil, "", errors.New("its manifest has no snapshot")
+	}
+	hash, ok := snap["contentHash"].(string)
+	if !ok || hash == "" {
+		return nil, "", errors.New("its manifest has no content hash")
+	}
+	return hashes, hash, nil
 }
 
 // atTypesVersion returns the files at the version of package published's
@@ -1657,8 +1679,8 @@ func (w importWriter) release(ctx context.Context, tx pgx.Tx, rel Release, files
 	if err != nil {
 		return nil, fail("version", err)
 	}
-	var m published.Manifest
-	if err := published.Decode(files[published.ManifestPath], &m); err != nil {
+	hashes, contentHash, err := manifestFacts(files)
+	if err != nil {
 		return nil, fail("manifest", err)
 	}
 	warnings, report := []byte(rel.AcknowledgedWarnings), rewriteUsers(rel.ValidationReport, w.users)
@@ -1687,13 +1709,14 @@ func (w importWriter) release(ctx context.Context, tx pgx.Tx, rel Release, files
 		return nil
 	}
 	for _, p := range paths {
-		hash := m.Files[p]
-		if hash == "" {
-			hash = published.HashOf(files[p])
+		// The manifest holds the hash of each file but itself.
+		hash, ok := hashes[p]
+		if !ok {
+			hash = string(published.HashOf(files[p]))
 		}
 		batch.Ids = append(batch.Ids, uuid(ids.New()))
 		batch.Paths = append(batch.Paths, p)
-		batch.Hashes = append(batch.Hashes, string(hash))
+		batch.Hashes = append(batch.Hashes, hash)
 		batch.Contents = append(batch.Contents, files[p])
 		size += len(files[p])
 		if size >= maxFilesBatch {
@@ -1704,10 +1727,6 @@ func (w importWriter) release(ctx context.Context, tx pgx.Tx, rel Release, files
 	}
 	if err := flush(); err != nil {
 		return nil, err
-	}
-	contentHash := manifestContentHash(m)
-	if contentHash == "" {
-		contentHash = rel.ContentHash
 	}
 	n, err := w.q.FinishImportedSnapshot(ctx, queries.FinishImportedSnapshotParams{WorkspaceID: w.ws, ID: uuid(id),
 		SourceSeq: pgtype.Int8{Int64: rel.SourceSeq, Valid: true}, ValidationReport: report,

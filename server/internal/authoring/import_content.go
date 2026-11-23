@@ -220,9 +220,16 @@ func readArchived(a *archive) (*archived, error) {
 	return c, nil
 }
 
-// sectionNamed returns the section of the registry of the name.
+// declaredSections are sections that a test build declares and no importer
+// handles, whose presence in an archive refuses it, naming the section
+// (FR-DATA-01 AC12, in the same way as the synthetic schema version). No
+// release build has any.
+var declaredSections []Section
+
+// sectionNamed returns the section of the registry of the name, or one that a
+// test build declares.
 func sectionNamed(name string) (Section, bool) {
-	for _, s := range sections {
+	for _, s := range slices.Concat(sections, declaredSections) {
 		if s.Name == name {
 			return s, true
 		}

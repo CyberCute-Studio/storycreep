@@ -667,3 +667,108 @@ func TestImportRefusesBadZips(t *testing.T) {
 		t.Errorf("the failure is %+v, want archive_invalid at path", got)
 	}
 }
+
+// TestImportOfARelease checks that an archive of a release, which holds the
+// release's files rather than a draft, imports as a project whose draft is that
+// release: its boards, nodes, connections, expressions, and text.
+//
+// Verifies: FR-DATA-01/AC1, FR-DATA-01/AC5
+func TestImportOfARelease(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	e := askExport(t, f.s.main, f.owner, f.project, map[string]any{"source": f.release.ID})
+	e = waitForExport(t, f, f.owner, e.ID)
+	files := archiveOf(t, f.s.main, f.owner, f.project, e)
+	got := mustImport(t, f.s, f.owner, f.ws, zipOf(t, files), "")
+	if got.Report.Boards != 1 || got.Report.Nodes != 2 || got.Report.Releases != 1 || got.Report.Comments != 1 {
+		t.Errorf("the report is %+v", *got.Report)
+	}
+	after := exportOf(t, f.s, f.owner, got.ProjectID)
+	nodes := items[authoring.Node](t, after, "draft/nodes.json")
+	titles := []string{}
+	for _, n := range nodes {
+		titles = append(titles, n.Title)
+	}
+	slices.Sort(titles)
+	if !slices.Equal(titles, []string{"Home", "Start"}) {
+		t.Errorf("the draft's nodes are %v", titles)
+	}
+	if !strings.Contains(string(after["draft/nodes.json"]), "The quay, at night.") {
+		t.Errorf("the draft lost the release's text:\n%s", after["draft/nodes.json"])
+	}
+	exprs := items[authoring.Expression](t, after, "draft/expressions.json")
+	if len(exprs) != 1 || exprs[0].Source != "1 + 1 == 2" {
+		t.Errorf("the draft's expressions are %+v", exprs)
+	}
+}
+
+// TestImportContentProfile checks that a content-only archive, which names
+// nobody and holds no comments, imports cleanly, as does one without its
+// assets, whose references to them the report counts.
+//
+// Verifies: FR-DATA-01/AC5
+func TestImportContentProfile(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	e := askExport(t, f.s.main, f.owner, f.project, map[string]any{"profile": "content", "include_assets": false})
+	e = waitForExport(t, f, f.owner, e.ID)
+	files := archiveOf(t, f.s.main, f.owner, f.project, e)
+	got := mustImport(t, f.s, f.owner, f.ws, zipOf(t, files), "")
+	if got.Report.Comments != 0 || got.Report.PlayStates != 0 || got.Report.Assets != 0 ||
+		got.Report.MissingAssets != 1 || got.Report.ImportedUsers != 0 {
+		t.Errorf("the report is %+v", *got.Report)
+	}
+}
+
+// TestImportAttribution checks who an archive's people become: a member of
+// the workspace keeps their comments, and anyone else, whatever account of the
+// instance the archive's ID may name, is an imported identity with the display
+// name from the archive, which cannot sign in.
+//
+// Verifies: FR-DATA-01/AC7
+func TestImportAttribution(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	files := exportedArchive(t, f)
+	got := mustImport(t, f.s, f.owner, f.ws, zipOf(t, files), "")
+	if got.Report.ImportedUsers != 0 {
+		t.Errorf("a member's comment took an imported identity: %+v", *got.Report)
+	}
+	after := exportOf(t, f.s, f.owner, got.ProjectID)
+	if c := items[authoring.Comment](t, after, "comments.json"); len(c) != 1 || c[0].AuthorID != f.owner.body.UserID {
+		t.Errorf("the member's comment is by %+v", c)
+	}
+
+	// Another account's workspace, of which the archive's author is no member.
+	newAccount(t, f.s.main, "elsewhere@example.com")
+	stranger := signIn(t, f.s.main, "elsewhere@example.com")
+	res := call(f.s.main, http.MethodPost, "/api/v1/workspaces", jsonBody(t, map[string]any{"name": "Elsewhere"}),
+		stranger.header(true))
+	if res.status != http.StatusCreated {
+		t.Fatalf("create a workspace: %d %s", res.status, res.body)
+	}
+	var other struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(res.body, &other); err != nil {
+		t.Fatal(err)
+	}
+	moved := mustImport(t, f.s, stranger, other.ID, zipOf(t, files), "remap")
+	if moved.Report.ImportedUsers != 1 {
+		t.Fatalf("the report is %+v", *moved.Report)
+	}
+	view := exportOf(t, f.s, stranger, moved.ProjectID)
+	people := items[authoring.Person](t, view, "people.json")
+	want := items[authoring.Person](t, files, "people.json")
+	if len(people) != 1 || people[0].ID == f.owner.body.UserID || people[0].DisplayName != want[0].DisplayName {
+		t.Errorf("the imported identity is %+v, want a new ID with the name of %+v", people, want)
+	}
+	var status string
+	if err := f.d.Admin(t).QueryRow(t.Context(), `SELECT status FROM "user" WHERE id = $1`,
+		decode(t, ids.User, people[0].ID)).Scan(&status); err != nil || status != "imported" {
+		t.Errorf("the identity's account has the status %q: %v", status, err)
+	}
+}

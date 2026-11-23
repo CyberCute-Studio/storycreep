@@ -24,6 +24,17 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/variable"
 )
 
+// importedTables are the tables that an import writes, each through the
+// commands of its entity or its own writer, which the section registry's test
+// holds to the tables of the registry's sections, so that a table of authoring
+// data is registered in both directions (plan item 84, standing checklist).
+var importedTables = map[string]bool{
+	"project": true, "folder": true, "board": true, "variable": true, "component_type": true, "attribute_def": true,
+	"component": true, "attribute_value": true, "node": true, "branch_output": true, "connection": true,
+	"expression": true, "validation_mute": true, "comment": true, "play_state": true, "snapshot": true,
+	"snapshot_file": true, "asset": true,
+}
+
 // archivedSettings are the settings that a draft's project section holds.
 type archivedSettings struct {
 	DefaultLocale  string               `json:"default_locale"`
