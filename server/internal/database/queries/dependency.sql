@@ -206,51 +206,56 @@ WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id AND n.id = A
 -- graph's nodes, each with its name, in the order of their IDs.
 SELECT id, name FROM live_board WHERE workspace_id = @workspace_id AND project_id = @project_id ORDER BY id;
 
+-- name: GraphNodeBoards :many
+-- GraphNodeBoards returns the board of each of the project's nodes that are
+-- not in its trash, by which package dependency finds the board of a node
+-- that a site reads as visited.
+SELECT id, board_id FROM live_node WHERE workspace_id = @workspace_id AND project_id = @project_id;
+
 -- name: GraphReferences :many
 -- GraphReferences returns how many sites of each board of the project read,
 -- or write, each variable and each component's attribute, and read whether
--- each node was visited, with the node's board, of the sites and the nodes
--- that are not in its trash: the rows of the index of those kinds of the
--- sites on its boards, grouped by their boards, their targets, their
--- attributes' definitions, and their accesses. A component's description
--- belongs to no board, and a mention is no dependency.
-WITH live_site AS (
-    -- The sites of the project that are not in its trash, each by its kind
-    -- and its ID: the expressions whose owners are not, and the nodes and
-    -- the connections, whose texts are sites by their IDs. A site is matched
-    -- by its kind too, since an expression, a node, and a connection may
-    -- share a UUID, as a client chooses a node's and a connection's, so that
-    -- a site in the trash is not live by another kind's live entity.
-    SELECT 'expression' AS kind, e.id FROM expression e
-    JOIN live_node n ON n.workspace_id = e.workspace_id AND n.project_id = e.project_id AND n.id = e.node_id
+-- each node was visited, of the sites that are not in its trash: the rows of
+-- the index of those kinds of the sites on its boards, grouped by their
+-- boards, their targets, their attributes' definitions, and their accesses. A
+-- component's description belongs to no board, and a mention is no
+-- dependency. A site is matched by its kind, since an expression, a node, and
+-- a connection may share a UUID, as a client chooses a node's and a
+-- connection's, so that a site in the trash is not live by another kind's live
+-- entity.
+--
+-- The live entities are each read once, and a row is checked against them by
+-- IN within a CASE or an OR, which PostgreSQL cannot turn into a join and
+-- answers from a hash table, rather than by joins. A project newer than the
+-- tables' statistics is estimated at one row of each, and joins of them by the
+-- project were then nested loops that read every row of one for each row of
+-- another: 4 million pages for the 192 rows of a project of 60 boards. With
+-- the default work_mem, PostgreSQL hashes up to some 200,000 entities of a
+-- kind, 20 times the nodes of the large fixture (PRD §9.1).
+WITH site_node AS MATERIALIZED (
+    SELECT id FROM live_node WHERE workspace_id = @workspace_id AND project_id = @project_id
+), site_connection AS MATERIALIZED (
+    SELECT id FROM live_connection WHERE workspace_id = @workspace_id AND project_id = @project_id
+), site_output AS MATERIALIZED (
+    SELECT id FROM live_branch_output WHERE workspace_id = @workspace_id AND project_id = @project_id
+), site_expression AS MATERIALIZED (
+    SELECT e.id FROM expression e
     WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id
-    UNION ALL
-    SELECT 'expression', e.id FROM expression e
-    JOIN live_connection c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id
-        AND c.id = e.connection_id
-    WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id
-    UNION ALL
-    SELECT 'expression', e.id FROM expression e
-    JOIN live_branch_output o ON o.workspace_id = e.workspace_id AND o.project_id = e.project_id
-        AND o.id = e.branch_output_id
-    WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id
-    UNION ALL
-    SELECT 'node', n.id FROM live_node n WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id
-    UNION ALL
-    SELECT 'connection', c.id FROM live_connection c
-    WHERE c.workspace_id = @workspace_id AND c.project_id = @project_id
+        AND (e.node_id IN (SELECT id FROM site_node)
+            OR e.connection_id IN (SELECT id FROM site_connection)
+            OR e.branch_output_id IN (SELECT id FROM site_output))
 )
 SELECT r.board_id::uuid AS board_id, r.target_kind, r.target_id, r.attribute_def_id, r.access,
-    v.board_id AS visited_board_id, count(*)::bigint AS sites
+    count(*)::bigint AS sites
 FROM expression_ref r
-LEFT JOIN live_node v ON r.target_kind = 'node' AND v.workspace_id = r.workspace_id AND v.project_id = r.project_id
-    AND v.id = r.target_id
 WHERE r.workspace_id = @workspace_id AND r.project_id = @project_id AND r.board_id IS NOT NULL
-    AND r.target_kind IN ('variable', 'attribute', 'node') AND (r.target_kind <> 'node' OR v.id IS NOT NULL)
-    AND (CASE WHEN r.expression_id IS NOT NULL THEN 'expression' WHEN r.node_id IS NOT NULL THEN 'node'
-        ELSE 'connection' END, coalesce(r.expression_id, r.node_id, r.connection_id))
-        IN (SELECT kind, id FROM live_site)
-GROUP BY r.board_id, r.target_kind, r.target_id, r.attribute_def_id, r.access, v.board_id;
+    AND r.target_kind IN ('variable', 'attribute', 'node')
+    AND CASE
+        WHEN r.expression_id IS NOT NULL THEN r.expression_id IN (SELECT id FROM site_expression)
+        WHEN r.node_id IS NOT NULL THEN r.node_id IN (SELECT id FROM site_node)
+        ELSE r.connection_id IN (SELECT id FROM site_connection)
+    END
+GROUP BY r.board_id, r.target_kind, r.target_id, r.attribute_def_id, r.access;
 
 -- name: GraphJumpers :many
 -- GraphJumpers returns how many jumpers of each board of the project target
