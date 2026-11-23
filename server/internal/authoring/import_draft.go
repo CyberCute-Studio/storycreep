@@ -285,7 +285,7 @@ func (p parts) apply(section, id string, typ commands.Type, payload any) error {
 			Detail: fmt.Sprintf("%s: %s %s", id, field, message),
 			unique: errors.Is(commands.PartReason(err), commands.ErrIDTaken)}
 	}
-	return fmt.Errorf("authoring: apply %s of the section %s: %w", id, section, err)
+	return sectionError(section, id, err)
 }
 
 // docOf parses a rich text of the archive, as commands read it, or returns nil

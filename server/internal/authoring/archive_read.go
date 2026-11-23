@@ -306,7 +306,8 @@ func (a *archive) has(name string) bool {
 }
 
 // maxInitialRead is the most memory that reading a member sets aside on its
-// header's word alone: past it, the buffer grows with what the member holds.
+// header's word alone: a member that holds more than that then takes the size
+// that its header says, which its limit bounds.
 const maxInitialRead = 16 << 20
 
 // read returns the member of the path, whole, of at most limit bytes, and
@@ -335,6 +336,12 @@ func (a *archive) read(name string, limit int64) ([]byte, error) {
 		if int64(len(data)+n) > int64(f.UncompressedSize64) {
 			return nil, invalidArchive("size", "the member %q holds more than its header says", name)
 		}
+		// Past what was set aside on the header's word alone, the rest at once:
+		// growing by steps would hold each old buffer beside its copy, some
+		// twice what the member takes.
+		if len(data)+n > cap(data) {
+			data = slices.Grow(data, int(f.UncompressedSize64)-len(data))
+		}
 		data = append(data, buf[:n]...)
 		if errors.Is(err, io.EOF) {
 			break
@@ -350,6 +357,25 @@ func (a *archive) read(name string, limit int64) ([]byte, error) {
 		return nil, invalidArchive("ratio", "the member %q expands more than %d times", name, maxCompressionRatio)
 	}
 	return data, nil
+}
+
+// reserve adds the member of the path to held, the bytes of the JSON files held
+// in memory together, by the size that its header says, which read holds it to,
+// and refuses it before any of it is read if that takes them past maxJSONTotal.
+// what names those files in the refusal. A path that the archive does not have
+// adds nothing, and read refuses it.
+func (a *archive) reserve(held *int64, name, what string) error {
+	f, ok := a.files[name]
+	if !ok {
+		return nil
+	}
+	// Against what is left, as a size that the header claims near 2^64 would
+	// wrap a sum back to a small one.
+	if f.UncompressedSize64 > uint64(maxJSONTotal-*held) {
+		return invalidArchive("size", "%s hold more than the %d bytes that an import reads", what, maxJSONTotal)
+	}
+	*held += int64(f.UncompressedSize64)
+	return nil
 }
 
 // readJSON returns the JSON file of the path, whole, once it is within the

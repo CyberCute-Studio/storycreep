@@ -1033,6 +1033,20 @@ func TestImportHoldsDirectRowsToTheirChecks(t *testing.T) {
 			}
 			resealSection(t, files, "draft/components.json", data, len(components))
 		}, authoring.FailContentInvalid, "components", "attributes."},
+		"a variable's default past its type's length, which only the database holds": {func(files map[string][]byte) {
+			list := items[authoring.Variable](t, files, "draft/variables.json")
+			long, err := json.Marshal(strings.Repeat("a", value.MaxStringLength+1))
+			if err != nil {
+				t.Fatal(err)
+			}
+			list = append(list, authoring.Variable{ID: ids.Encode(ids.Variable, ids.New()), Scope: "global", Order: "V",
+				Key: "motto", Type: value.String, Default: authoring.Value(long)})
+			data, err := json.Marshal(authoring.Items[authoring.Variable]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "draft/variables.json", data, len(list))
+		}, authoring.FailContentInvalid, "variables", "variable_check2"},
 		"a release's report that the API cannot read": {func(files map[string][]byte) {
 			list := items[authoring.Release](t, files, "releases/index.json")
 			list[0].ValidationReport = authoring.Value(`{"findings": "none"}`)

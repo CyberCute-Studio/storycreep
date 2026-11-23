@@ -175,13 +175,12 @@ func readArchived(a *archive) (*archived, error) {
 			return nil, &ImportError{Code: FailSchemaInvalid, Section: entry.Name, Check: "source",
 				Detail: "only an archive of a draft holds the section"}
 		}
+		if err := a.reserve(&held, sec.Path, "its sections"); err != nil {
+			return nil, err
+		}
 		file, err := a.readJSON(sec.Path)
 		if err != nil {
 			return nil, err
-		}
-		if held += int64(len(file)); held > maxJSONTotal {
-			return nil, invalidArchive("size", "its sections hold more than the %d bytes that an import reads",
-				maxJSONTotal)
 		}
 		sum := sha256.Sum256(file)
 		if hex.EncodeToString(sum[:]) != entry.SHA256 {

@@ -87,6 +87,74 @@ func TestJSONValuesGuard(t *testing.T) {
 	wantRefused(t, err, "json_values")
 }
 
+// TestJSONTotalHoldsBeforeARead checks that a member that would take the JSON
+// files held at once past maxJSONTotal is refused by the size that its header
+// says, before any of it is read, among a release's files and an archive's
+// sections, so that the guard bounds what is in memory rather than report it.
+//
+// Verifies: NFR-SEC-13
+func TestJSONTotalHoldsBeforeARead(t *testing.T) {
+	t.Parallel()
+	sized := func(n uint64) *zip.File { return &zip.File{FileHeader: zip.FileHeader{UncompressedSize64: n}} }
+	a := &archive{files: map[string]*zip.File{"a.json": sized(maxJSONMember),
+		"b.json": sized(maxJSONTotal - maxJSONMember), "c.json": sized(1), "wraps.json": sized(math.MaxUint64)}}
+	var held int64
+	for _, name := range []string{"a.json", "b.json", "absent.json"} {
+		if err := a.reserve(&held, name, "its files"); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	if held != maxJSONTotal {
+		t.Errorf("%d bytes are held, want %d", held, maxJSONTotal)
+	}
+	for _, name := range []string{"c.json", "wraps.json"} {
+		wantRefused(t, a.reserve(&held, name, "its files"), "size")
+	}
+	if held != maxJSONTotal {
+		t.Errorf("a refused member changed what is held to %d bytes", held)
+	}
+
+	// Each member below says more than it holds, and its data is not there to
+	// be read: a read would be refused for that rather than by the total.
+	archiveOf := func(manifest string, name string, size uint64) *archive {
+		var b bytes.Buffer
+		w := zip.NewWriter(&b)
+		if manifest != "" {
+			f, err := w.Create(ManifestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.Write([]byte(manifest)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := w.CreateRaw(&zip.FileHeader{Name: name, Method: zip.Deflate, UncompressedSize64: size,
+			CompressedSize64: size / maxCompressionRatio}); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		data := b.Bytes()
+		out, err := openArchive(bytes.NewReader(data), int64(len(data)), 1<<30)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	_, err := releaseFiles(archiveOf("", "releases/one/manifest.json", maxJSONTotal+1), "releases/one/")
+	wantRefused(t, err, "size")
+	if err == nil || !strings.Contains(err.Error(), "the files of") {
+		t.Errorf("the error is %v, want the refusal of the release's files by their total", err)
+	}
+	entry := ManifestSection{Name: "project", Path: "draft/project.json", Items: 1, SHA256: sha256Hex([]byte("{}"))}
+	_, err = readArchived(archiveOf(manifestOf(t, entry), entry.Path, maxJSONTotal))
+	wantRefused(t, err, "size")
+	if err == nil || !strings.Contains(err.Error(), "its sections") {
+		t.Errorf("the error is %v, want the refusal of the sections by their total", err)
+	}
+}
+
 // TestCheckReleaseNamesHoldsItsProject checks that a release sealed for another
 // project is refused.
 //

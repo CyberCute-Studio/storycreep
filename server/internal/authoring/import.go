@@ -1015,9 +1015,13 @@ func (s *Service) progress(ctx context.Context, run importRun, phase string, don
 func releaseFiles(a *archive, dir string) (schemaversion.Files, error) {
 	names := a.under(dir)
 	files := make(schemaversion.Files, len(names))
+	what := fmt.Sprintf("the files of %q", dir)
 	var held int64
 	for _, name := range names {
 		path := strings.TrimPrefix(name, dir)
+		if err := a.reserve(&held, name, what); err != nil {
+			return nil, err
+		}
 		var data []byte
 		var err error
 		if schemaversion.IsJSON(path) {
@@ -1027,10 +1031,6 @@ func releaseFiles(a *archive, dir string) (schemaversion.Files, error) {
 		}
 		if err != nil {
 			return nil, err
-		}
-		if held += int64(len(data)); held > maxJSONTotal {
-			return nil, invalidArchive("size", "the files of %q hold more than the %d bytes that an import reads", dir,
-				maxJSONTotal)
 		}
 		files[path] = data
 	}
