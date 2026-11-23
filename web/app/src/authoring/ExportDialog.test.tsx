@@ -180,7 +180,7 @@ describe("the authoring export's dialog", () => {
     serve({
       ...base,
       status: "ready",
-      size_bytes: 4096,
+      size_bytes: 1024,
       asset_count: 4001,
       exceeds_import_limit: true,
       file_name: "harbour-draft-authoring.zip",
