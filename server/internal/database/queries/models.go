@@ -443,6 +443,7 @@ type Project struct {
 	CreatedBy       pgtype.UUID
 	UpdatedBy       pgtype.UUID
 	Slug            string
+	DuplicatedFrom  pgtype.UUID
 }
 
 type ProjectGrant struct {

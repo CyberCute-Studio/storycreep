@@ -313,6 +313,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	// One budget of memory for the two routes that hold a file's bytes.
 	uploads := newSlots(uploadSlots(max(s.assets.MaxBytes(), authoring.ChunkBytes)))
 	registerProjectImports(s.main, s.authoring, uploads)
+	registerDuplicates(s.main, s.authoring)
 	registerSearch(s.main, s.search)
 	registerStatistics(s.main, s.statistics)
 	registerClipboard(s.main, s.clipboard)

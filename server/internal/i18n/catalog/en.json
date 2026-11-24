@@ -18,6 +18,7 @@
   "error.component_in_use": "Parts of the project use this component. Delete it anyway only if you mean to break them, which needs a role that may publish.",
   "error.component_type_in_use": "Components of this type are not all in the trash. Delete them first.",
   "error.csrf_failed": "The request lacks the session's CSRF token, or came from another origin.",
+  "error.duplicate_refused": "This project could not be duplicated, as it holds more than this server can copy. Nothing was created.",
   "error.email_configured": "This server emails its links to each account's own address, so it gives none as text.",
   "error.email_not_configured": "This server does not send email. Ask an instance admin for the link instead.",
   "error.email_unverified": "Verify your email address first, with the link that was emailed to you.",

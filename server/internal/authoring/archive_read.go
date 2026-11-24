@@ -246,6 +246,10 @@ type ImportError struct {
 	// unique marks a row that a unique constraint refused, which a row that
 	// came after the collision check may be the reason for.
 	unique bool
+	// cause is the error of a limit or of a role that the transaction that
+	// writes the project was refused for, which an import of the server's own
+	// archive answers its request with (plan note N92), or nil.
+	cause error
 }
 
 func (e *ImportError) Error() string {

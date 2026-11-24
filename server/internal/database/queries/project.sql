@@ -4,9 +4,10 @@
 -- after that, as though the purge job had deleted it already.
 
 -- name: InsertProject :one
--- InsertProject adds a project, and returns its timestamps.
-INSERT INTO project (id, workspace_id, name, slug, description, settings, created_by, updated_by)
-VALUES (@id, @workspace_id, @name, @slug, @description, @settings, @created_by, @created_by)
+-- InsertProject adds a project, and returns its timestamps. duplicated_from
+-- is the project that a copy was duplicated from, or null.
+INSERT INTO project (id, workspace_id, name, slug, description, settings, created_by, updated_by, duplicated_from)
+VALUES (@id, @workspace_id, @name, @slug, @description, @settings, @created_by, @created_by, @duplicated_from)
 RETURNING created_at, updated_at;
 
 -- name: Project :one

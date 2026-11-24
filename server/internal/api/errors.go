@@ -77,6 +77,7 @@ const (
 	CodeImportNotUploading     Code = "import_not_uploading"
 	CodeImportIncomplete       Code = "import_incomplete"
 	CodeChunkInvalid           Code = "chunk_invalid"
+	CodeDuplicateRefused       Code = "duplicate_refused"
 	CodeSchemaUnsupported      Code = "schema_unsupported"
 	CodeSchemaUnrepresentable  Code = "schema_unrepresentable"
 	CodeIdempotencyMismatch    Code = "idempotency_mismatch"
@@ -419,6 +420,12 @@ var codes = []codeSpec{
 	{CodeImportIncomplete, http.StatusConflict, i18n.K("error.import_incomplete"),
 		"The import's upload lacks chunks, so it was not handed to its job (PRD FR-DATA-01). " +
 			"`details.missing_chunks` lists the first of them, which a client sends and then completes the import."},
+	{CodeDuplicateRefused, http.StatusConflict, i18n.K("error.duplicate_refused"),
+		"The project could not be copied, and nothing was created: its copy is an import of its content with fresh " +
+			"IDs (PRD FR-PROJ-01), and the import refused it, as a project that holds more than an import takes, " +
+			"such as more than 4,000 assets, or an asset whose file the store no longer has. `details.failure` says " +
+			"what was refused, as an import's `failure` does: its `code`, and its `section`, `check`, and `detail` " +
+			"where it has them."},
 	{CodeChunkInvalid, http.StatusUnprocessableEntity, i18n.K("error.chunk_invalid"),
 		"The chunk is not of this upload: its index is past the last, or its size is not `chunk_bytes`, or the rest " +
 			"of the archive for the last chunk (PRD FR-DATA-01). `details.index` and `details.bytes` say which, with " +

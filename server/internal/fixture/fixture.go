@@ -190,8 +190,28 @@ func Generate(size Size, seed uint64) (*Fixture, error) {
 	if _, err := ParseSize(string(size)); err != nil {
 		return nil, err
 	}
+	f := generate(size.Spec(), seed)
+	f.Size, f.Name = size, fmt.Sprintf("Fixture %s, seed %d", size, seed)
+	return f, nil
+}
+
+// GenerateSpec returns a project of what spec says, which has a board at
+// least, and of the seed, as Generate makes one of a size, for a test that
+// needs a project of a size between the reference fixtures', as a duplication
+// of 1,000 entities (PRD FR-PROJ-01 AC1). Its Size is "".
+func GenerateSpec(spec Spec, seed uint64) (*Fixture, error) {
+	if spec.Boards < 1 || spec.Nodes < 0 || spec.Variables < 0 || spec.Components < 0 {
+		return nil, fmt.Errorf("fixture: a project of %+v cannot be made", spec)
+	}
+	f := generate(spec, seed)
+	f.Name = fmt.Sprintf("Fixture of %d nodes, seed %d", spec.Nodes, seed)
+	return f, nil
+}
+
+// generate returns the batches of the project of spec and the seed.
+func generate(spec Spec, seed uint64) *Fixture {
 	g := &gen{
-		spec: size.Spec(),
+		spec: spec,
 		// Two sources, so that the IDs do not move when what the content
 		// draws from its source changes, and the other way round.
 		r:   rand.New(rand.NewPCG(seed, 0x5eed_0001)),
@@ -205,8 +225,7 @@ func Generate(size Size, seed uint64) (*Fixture, error) {
 		g.board(b)
 	}
 	g.links()
-	return &Fixture{Size: size, Seed: seed, Name: fmt.Sprintf("Fixture %s, seed %d", size, seed),
-		Batches: g.batches}, nil
+	return &Fixture{Seed: seed, Batches: g.batches}
 }
 
 // gen is a fixture as it is generated: the batches so far, and what they
