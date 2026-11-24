@@ -914,7 +914,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-PROJ-05 AC1–AC2, FR-PROJ-01 AC1, FR-DEP-02 AC1, and FR-SNAP-03 AC2 pass.
 
 ### 86. Workspace export
-**Status:** todo · **Depends on:** 84
+**Status:** done ([#102](https://github.com/CyberCute-Studio/storycreep/pull/102)) · **Depends on:** 84
 **PRD:** FR-DATA-02
 - An owner-only job that exports all projects, the member list, comments, the audit log, and assets, into the asset store, as an authoring export is built: each project outside the trash as a full authoring export of its draft, nested under `projects/`, which the project import takes as it is, the members with their email addresses and grants, the audit log in pages, and the workspace's own assets, with the projects in the trash named in the manifest (`server/internal/authoring/workspace_export.go` and `workspace_archive.go`, migration 00040, N93).
 - A documented JSON format with a version and a JSON Schema of its own (`schema/workspace`, `authoring.WorkspaceSchema`, N93).
