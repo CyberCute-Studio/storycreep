@@ -905,7 +905,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-DATA-01 AC1–AC4 and AC7–AC12 pass, AC2 and AC3 against the synthetic schema version, and the registry test passes.
 
 ### 85. Sample project and project duplication
-**Status:** todo · **Depends on:** 49, 84
+**Status:** done ([#101](https://github.com/CyberCute-Studio/storycreep/pull/101)) · **Depends on:** 49, 84
 **PRD:** FR-PROJ-05, FR-PROJ-01 (AC1), FR-DEP-02 (AC1), FR-SNAP-03 (AC2)
 - *The Lighthouse Keeper* stored as an export archive in the repository: 3 boards, about 40 nodes, 6 variables, 4 components, cross-board gating, one quest, and at least one deliberate warning, `var_written_never_read` of `heard_rumour` (`server/internal/sample`, whose README says how to change it, N92). One-click import: `POST …/workspaces/{id}/sample-project` (`authoring.Service.ImportSample`), from a button on the workspace page, which its empty list offers (`web/app/src/authoring/SampleProject.tsx`, N92).
 - Duplication implemented as an internal `remap` copy with `duplicated_from`: an import of a content-only export of the draft with its assets, in the request, `POST …/projects/{id}/duplicate` (`authoring.Service.Duplicate`, `httpserver/duplicates.go`, migration 00039), from a section of the project's settings (`web/app/src/authoring/DuplicateProject.tsx`, N92).
