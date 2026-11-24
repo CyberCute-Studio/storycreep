@@ -62,6 +62,7 @@ var (
 	digest      = regexp.MustCompile(`\b[0-9a-f]{64}\b`)
 	assetFile   = regexp.MustCompile(`\bassets/([0-9A-Z]{26})\b`)
 	exportedAt  = regexp.MustCompile(`"exportedAt": "[^"]*"`)
+	pulledAt    = regexp.MustCompile(`"pulledAt": "[^"]*"`)
 	madeAt      = regexp.MustCompile(`It was made at \S+\.`)
 	generatorAt = regexp.MustCompile(`("generator": \{[^}]*"version": ")[^"]*(")`)
 )
@@ -73,7 +74,9 @@ var (
 // files' IDs, which an import's remap keeps, as it gives fresh IDs in the
 // order of those that they replace; each
 // SHA-256 digest, which is of what holds the IDs, as one mark; and when the
-// archive was made, and by which version of the server, as one mark each.
+// archive, or the published export of a draft (its generator's pulledAt), was
+// made, and by which version of the server, as one mark each, so that two
+// exports a second apart compare the same.
 // Whatever else differs is a difference of the files.
 func normalised(t *testing.T, files map[string][]byte) map[string]string {
 	t.Helper()
@@ -121,6 +124,7 @@ func normalised(t *testing.T, files map[string][]byte) map[string]string {
 		})
 		s = digest.ReplaceAllString(s, "<digest>")
 		s = exportedAt.ReplaceAllString(s, `"exportedAt": "<time>"`)
+		s = pulledAt.ReplaceAllString(s, `"pulledAt": "<time>"`)
 		s = madeAt.ReplaceAllString(s, "It was made at <time>.")
 		return generatorAt.ReplaceAllString(s, "${1}<version>${2}")
 	}
