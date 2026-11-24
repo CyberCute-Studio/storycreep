@@ -28,6 +28,7 @@ import {
   workspaceQuery,
 } from "../workspace/queries";
 import { UsageTable } from "../workspace/Usage";
+import { WorkspaceExport } from "../workspace/WorkspaceExport";
 
 export const Route = createFileRoute("/workspaces/$workspaceId/settings")({
   loader: async ({ context: { queryClient }, params }) => {
@@ -45,7 +46,8 @@ export const Route = createFileRoute("/workspaces/$workspaceId/settings")({
 
 // A workspace's settings (PRD FR-TEN-01): its name, its slug, and its
 // default locale, which its owners and admins change, and, to them alone,
-// how much it uses of each limit of its plan (FR-ENT-02 AC2).
+// how much it uses of each limit of its plan (FR-ENT-02 AC2), and, to its
+// owners alone, its export (FR-DATA-02).
 function Settings() {
   const { t } = useTranslation();
   const { workspaceId } = Route.useParams();
@@ -73,6 +75,9 @@ function Settings() {
         </dl>
       )}
       {manages && <Usage workspace={workspace} />}
+      {workspace.role === "owner" && (
+        <WorkspaceExport workspaceId={workspace.id} />
+      )}
     </Page>
   );
 }
