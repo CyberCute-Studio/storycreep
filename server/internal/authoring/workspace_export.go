@@ -56,7 +56,9 @@ func workspaceExportOf(row queries.WorkspaceExport) WorkspaceExport {
 
 // workspaceStorageKey returns the key of the archive of the workspace export
 // id of the workspace ws, as storageKey does an authoring export's, which no
-// other row's key shares.
+// other row's key shares, and whose ending the orphan reconciliation reads
+// (package asset's workspaceKey), so that it deletes the file of a row that is
+// gone.
 func workspaceStorageKey(ws, id ids.UUID) string {
 	sum := sha256.Sum256(id[:])
 	return ws.String() + "/" + hex.EncodeToString(sum[:]) + ".workspace-export.zip"
@@ -320,7 +322,7 @@ func (s *Service) failWorkspaceExport(ctx context.Context, ws, id ids.UUID, why 
 			"export_id", ids.Encode(ids.Job, id))
 		return nil
 	}
-	s.dropFailed(ctx, id, key)
+	s.dropFailed(ctx, "workspace export", id, key)
 	s.log.ErrorContext(ctx, "the workspace export failed", "export_id", ids.Encode(ids.Job, id), "error", why)
 	return jobs.Cancel(why)
 }

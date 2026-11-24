@@ -3,8 +3,10 @@
 
 -- name: WorkspaceExportWorkspace :one
 -- WorkspaceExportWorkspace returns what the archive holds of the workspace
--- itself.
-SELECT id, name, slug, settings, created_at FROM workspace WHERE id = @id;
+-- itself, and when its transaction began, by the database's clock, which the
+-- audit log's entries are of, and before its first statement took its
+-- snapshot.
+SELECT id, name, slug, settings, created_at, now()::timestamptz AS read_at FROM workspace WHERE id = @id;
 
 -- name: WorkspaceExportProjects :many
 -- WorkspaceExportProjects returns the workspace's projects, those in its trash

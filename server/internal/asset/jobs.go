@@ -222,11 +222,12 @@ func (s *Service) makeThumbnail(ctx context.Context, args thumbnailJob) error {
 // workspaceKey matches the key of a blob of a workspace that the
 // reconciliation may delete once no row refers to it: a file of any of the
 // types (extensions) or a thumbnail, which this package writes, whose hash of
-// its content it captures, or the archive of an authoring export or a chunk of
-// an import's upload (package authoring), whose key holds a hash of its own in
-// its place.
+// its content it captures, or the archive of an authoring export or of a
+// workspace export, or a chunk of an import's upload (package authoring),
+// whose key holds a hash of its own in its place.
 var workspaceKey = regexp.MustCompile(`^[0-9a-f-]{36}/([0-9a-f]{64})\.(?:` +
-	strings.Join(slices.Sorted(maps.Values(extensions)), "|") + `|thumb\.png|export\.zip|import\.part)$`)
+	strings.Join(slices.Sorted(maps.Values(extensions)), "|") +
+	`|thumb\.png|export\.zip|workspace-export\.zip|import\.part)$`)
 
 // errSpent stops the listing of a workspace's blobs once the run has spent
 // its budget, or the listing its share of it (listBudget).
@@ -623,7 +624,8 @@ func (s *Service) reconcileWorkspace(ctx context.Context, store blob.Store, work
 	// where the listing has one.
 	var archives []string
 	for _, key := range l.keys {
-		if strings.HasSuffix(key, ".export.zip") || strings.HasSuffix(key, ".import.part") {
+		if strings.HasSuffix(key, ".export.zip") || strings.HasSuffix(key, ".workspace-export.zip") ||
+			strings.HasSuffix(key, ".import.part") {
 			archives = append(archives, key)
 		}
 	}

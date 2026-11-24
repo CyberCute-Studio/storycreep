@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -51,15 +52,19 @@ type workspaceContent struct {
 // the workspace itself, in one transaction that reads as of one moment.
 func (s *Service) readWorkspace(ctx context.Context, row queries.WorkspaceExport) (*workspaceContent, error) {
 	c := &workspaceContent{}
-	// Before the snapshot, so that the archive holds whatever was committed
-	// by the time that the manifest names, as an authoring export's does.
-	exportedAt := time.Now().UTC()
 	err := s.db.InSnapshot(ctx, database.Scope{WorkspaceID: row.WorkspaceID.Bytes}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
 		ws, err := q.WorkspaceExportWorkspace(ctx, row.WorkspaceID)
 		if err != nil {
 			return fmt.Errorf("authoring: read the workspace: %w", err)
 		}
+		// When the transaction began, before its snapshot, so that the archive
+		// holds whatever was committed by the time that the manifest names, as
+		// an authoring export's does; and by the database's clock, which the
+		// audit log's entries are of, and which writeAudit reads them up to,
+		// so that a server whose clock is behind the database's leaves out
+		// none made before it.
+		exportedAt := ws.ReadAt.Time.UTC()
 		projects, err := q.WorkspaceExportProjects(ctx, row.WorkspaceID)
 		if err != nil {
 			return fmt.Errorf("authoring: read the workspace's projects: %w", err)
@@ -177,6 +182,10 @@ func (s *Service) writeWorkspace(ctx context.Context, w io.Writer, store blob.St
 		}
 		c.manifest.Projects = append(c.manifest.Projects, written)
 	}
+	// In the order of their IDs, as the format says, those that went to the
+	// trash meanwhile among those that were there: an encoded ID sorts as its
+	// UUID does.
+	slices.SortFunc(c.manifest.TrashedProjects, func(a, b TrashedProject) int { return strings.Compare(a.ID, b.ID) })
 	for _, a := range c.assets {
 		if err := copyAsset(ctx, zw, store, a); err != nil {
 			return err
@@ -400,7 +409,8 @@ func workspaceReadme(m WorkspaceManifest) string {
 	line("- `projects/<the project's ID>.zip`: each of the workspace's %d project(s) outside its trash, archived", len(m.Projects))
 	line("  ones too, as a full authoring export of its draft, with its comments, play states, release history,")
 	line("  and assets, in the format of `schema/authoring`, which a Storycreep project import takes as it is.")
-	line("  Each says in its own `authoring.json` when its content was read.")
+	line("  Each says in its own `authoring.json` when its content was read. An instance imports one within its")
+	line("  own limits, of an archive's size, which `workspace.json` gives each, and of %d assets.", maxImportAssets)
 	for _, s := range m.Sections {
 		line("- `%s`: %s, %d item(s)", s.Path, s.Name, s.Items)
 	}

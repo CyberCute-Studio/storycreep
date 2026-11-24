@@ -483,7 +483,7 @@ func (q *Queries) WorkspaceExportProjects(ctx context.Context, workspaceID pgtyp
 
 const workspaceExportWorkspace = `-- name: WorkspaceExportWorkspace :one
 
-SELECT id, name, slug, settings, created_at FROM workspace WHERE id = $1
+SELECT id, name, slug, settings, created_at, now()::timestamptz AS read_at FROM workspace WHERE id = $1
 `
 
 type WorkspaceExportWorkspaceRow struct {
@@ -492,12 +492,15 @@ type WorkspaceExportWorkspaceRow struct {
 	Slug      string
 	Settings  []byte
 	CreatedAt pgtype.Timestamptz
+	ReadAt    pgtype.Timestamptz
 }
 
 // The workspace exports (PRD FR-DATA-02, plan item 86, note N93), and what
 // their archive reads of a workspace beside its projects' authoring exports.
 // WorkspaceExportWorkspace returns what the archive holds of the workspace
-// itself.
+// itself, and when its transaction began, by the database's clock, which the
+// audit log's entries are of, and before its first statement took its
+// snapshot.
 func (q *Queries) WorkspaceExportWorkspace(ctx context.Context, id pgtype.UUID) (WorkspaceExportWorkspaceRow, error) {
 	row := q.db.QueryRow(ctx, workspaceExportWorkspace, id)
 	var i WorkspaceExportWorkspaceRow
@@ -507,6 +510,7 @@ func (q *Queries) WorkspaceExportWorkspace(ctx context.Context, id pgtype.UUID) 
 		&i.Slug,
 		&i.Settings,
 		&i.CreatedAt,
+		&i.ReadAt,
 	)
 	return i, err
 }

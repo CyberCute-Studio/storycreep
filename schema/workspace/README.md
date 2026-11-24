@@ -19,6 +19,8 @@ A workspace export is a zip of a whole workspace (PRD FR-DATA-02): every project
 
 The JSON files come after the projects' archives in the zip, and the manifest last, as it names what was written before it; a zip's reader finds them through its central directory wherever they are. A file's items are in a stable order: by ID, and the audit log's by when each entry was made.
 
+A project's archive imports as any authoring export does, so the instance that imports it holds it to its own limits: its size to that instance's `STORYCREEP_IMPORT_MAX_BYTES`, against which the size that `workspace.json` gives it can be checked, and its assets to 4,000, as [`../authoring/`](../authoring/README.md) says.
+
 ## What it leaves out
 
 - **The trash.** A project in the workspace's trash is not in the archive, as nothing in a trash is exported (FR-DATA-01). The manifest's `trashedProjects` names each, with when it went there, and so a project that went to the trash, or was deleted for good, while the archive was being made, without that time.

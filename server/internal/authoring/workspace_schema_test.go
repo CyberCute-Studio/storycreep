@@ -2,6 +2,7 @@ package authoring
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,7 +47,8 @@ func TestWorkspaceSchemaFile(t *testing.T) {
 }
 
 // TestWorkspaceReadme checks that the README of a workspace's archive says
-// that it holds personal data, what it holds, and what it leaves out.
+// that it holds personal data, what it holds, the limits that an import holds
+// its projects' archives to, and what it leaves out.
 //
 // Verifies: FR-DATA-02/AC3
 func TestWorkspaceReadme(t *testing.T) {
@@ -59,7 +61,8 @@ func TestWorkspaceReadme(t *testing.T) {
 	got := workspaceReadme(m)
 	for _, want := range []string{"**This archive contains personal data.**", `"Harbour"`, "2026-11-24T09:00:00Z",
 		"each of the workspace's 2 project(s)", "`members.json`: members, 3 item(s)",
-		"1 project(s) in the workspace's trash", "schema/workspace/v1/archive.schema.json"} {
+		"1 project(s) in the workspace's trash", "schema/workspace/v1/archive.schema.json",
+		fmt.Sprintf("of %d assets", maxImportAssets)} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the README lacks %q:\n%s", want, got)
 		}

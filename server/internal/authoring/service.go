@@ -83,14 +83,15 @@ const (
 var ErrNotFound = errors.New("authoring: no such export of the user's")
 
 // InProgressError is Create's error for a user who has an export of the
-// project on its way, each of which reads the project whole.
+// project on its way, and CreateWorkspaceExport's for one who has an export of
+// the workspace on its way, each of which reads what it exports whole.
 type InProgressError struct {
 	// ID is that export's public ID.
 	ID string
 }
 
 func (e *InProgressError) Error() string {
-	return "authoring: the user has an export of the project on its way: " + e.ID
+	return "authoring: the user has an export on its way: " + e.ID
 }
 
 // NotReadyError is Open's error for an export that has no file to download.
@@ -534,21 +535,22 @@ func (s *Service) fail(ctx context.Context, ws, id ids.UUID, why error) error {
 			"export_id", ids.Encode(ids.Job, id))
 		return nil
 	}
-	s.dropFailed(ctx, id, key)
+	s.dropFailed(ctx, "authoring export", id, key)
 	s.log.ErrorContext(ctx, "the authoring export failed", "export_id", ids.Encode(ids.Job, id), "error", why)
 	return jobs.Cancel(why)
 }
 
 // dropFailed deletes the archive of a failed export, which an attempt may have
 // stored before it could record that, and which nobody can download. A store
-// that does not take that leaves it to the export's expiry, so it only logs.
-func (s *Service) dropFailed(ctx context.Context, id ids.UUID, key string) {
+// that does not take that leaves it to the export's expiry, so it only logs,
+// naming the export as kind, an authoring export or a workspace export.
+func (s *Service) dropFailed(ctx context.Context, kind string, id ids.UUID, key string) {
 	store, err := s.storage.Store(ctx)
 	if err == nil {
 		err = store.Delete(ctx, key)
 	}
 	if err != nil {
-		s.log.WarnContext(ctx, "the archive of a failed authoring export stays until the export expires",
+		s.log.WarnContext(ctx, "the archive of a failed "+kind+" stays until the export expires",
 			"export_id", ids.Encode(ids.Job, id), "error", err)
 	}
 }

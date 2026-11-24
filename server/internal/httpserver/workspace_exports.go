@@ -20,11 +20,11 @@ import (
 // workspaceExportDoc says who exports a workspace and reads an export of it,
 // and what the archive holds of people, in each route's description.
 const workspaceExportDoc = " Only an owner of the workspace may export it: an admin is answered with 403 " +
-	"owner_required, and anyone else with a role in it with 403 insufficient_role. Only the owner who asked for an " +
-	"export reads it, while they are an owner, and an export of anyone else, or one that has expired, is answered " +
-	"with 404 not_found. **The archive contains personal data**: the members' display names and email addresses, " +
-	"the audit log's IP addresses and user agents, and each project's comments and the names of the people " +
-	"involved." + notFoundDoc
+	"owner_required, and an editor, a commenter, or a viewer with 403 insufficient_role. Only the owner who asked " +
+	"for an export reads it, while they are an owner, and an export of anyone else, or one that has expired, is " +
+	"answered with 404 not_found. **The archive contains personal data**: the members' display names and email " +
+	"addresses, the audit log's IP addresses and user agents, and each project's comments and the names of the " +
+	"people involved." + notFoundDoc
 
 // WorkspaceExportBody is an export of a workspace, as the API shows it.
 type WorkspaceExportBody struct {
