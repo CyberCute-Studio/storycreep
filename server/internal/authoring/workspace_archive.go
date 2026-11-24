@@ -30,6 +30,12 @@ import (
 // neither the whole log in memory nor a transaction open while it writes.
 const auditPage = 1000
 
+// errWorkspaceGone is the error of a workspace export whose workspace is no
+// longer active, as one pending its deletion, by the time that the job reads
+// it: the owner who asked can no longer read the export, and another attempt
+// would find the workspace so again.
+var errWorkspaceGone = errors.New("authoring: the workspace is no longer active")
+
 // workspaceContent is what a workspace's build read of it at the start, as of
 // one moment: all but its projects' content and its audit log, which it reads
 // as it writes them.
@@ -55,6 +61,9 @@ func (s *Service) readWorkspace(ctx context.Context, row queries.WorkspaceExport
 	err := s.db.InSnapshot(ctx, database.Scope{WorkspaceID: row.WorkspaceID.Bytes}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
 		ws, err := q.WorkspaceExportWorkspace(ctx, row.WorkspaceID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errWorkspaceGone
+		}
 		if err != nil {
 			return fmt.Errorf("authoring: read the workspace: %w", err)
 		}
@@ -153,8 +162,9 @@ func (s *Service) readMembers(ctx context.Context, q *queries.Queries, ws pgtype
 // and the workspace's own assets, then the members, the audit log, which it
 // reads a page at a time, the README, and last the manifest, as the format
 // says, since it names what was written before it. A project that went to the
-// trash, or was deleted for good, after c was read joins the manifest's
-// trashed projects rather than the archive.
+// trash, or was deleted for good, after c was read and before writeProject
+// read it joins the manifest's trashed projects rather than the archive; one
+// that goes there once writeProject has read it is held as it was read.
 func (s *Service) writeWorkspace(ctx context.Context, w io.Writer, store blob.Store, row queries.WorkspaceExport,
 	c *workspaceContent) error {
 	zw := zip.NewWriter(w)
@@ -419,8 +429,9 @@ func workspaceReadme(m WorkspaceManifest) string {
 	if len(m.TrashedProjects) == 0 {
 		line("The workspace's trash held no project, so the archive leaves none out.")
 	} else {
-		line("%d project(s) in the workspace's trash, or that went there or were deleted for good while the", len(m.TrashedProjects))
-		line("archive was made, are not in it. `workspace.json` names them, under `trashedProjects`.")
+		line("%d project(s) in the workspace's trash, or that went there or were deleted for good before the", len(m.TrashedProjects))
+		line("archive came to read them, are not in it. `workspace.json` names them, under `trashedProjects`.")
+		line("One that went there once its reading had begun is in it, as that reading found it.")
 	}
 	line("")
 	line("The audit log is the one that the workspace keeps, for as long as its retention keeps each entry.")

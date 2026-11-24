@@ -5,8 +5,10 @@
 -- WorkspaceExportWorkspace returns what the archive holds of the workspace
 -- itself, and when its transaction began, by the database's clock, which the
 -- audit log's entries are of, and before its first statement took its
--- snapshot.
-SELECT id, name, slug, settings, created_at, now()::timestamptz AS read_at FROM workspace WHERE id = @id;
+-- snapshot; or no row unless the workspace is active, as no owner can read an
+-- export of one pending its deletion.
+SELECT id, name, slug, settings, created_at, now()::timestamptz AS read_at FROM workspace
+WHERE id = @id AND status = 'active';
 
 -- name: WorkspaceExportProjects :many
 -- WorkspaceExportProjects returns the workspace's projects, those in its trash

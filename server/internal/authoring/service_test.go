@@ -60,6 +60,7 @@ func TestEndsTheExport(t *testing.T) {
 		{"the server stopping", stopped, transient, false},
 		{"the attempt's timeout", timedOut, transient, true},
 		{"a project in the trash", t.Context(), errProjectGone, true},
+		{"a workspace no longer active", t.Context(), errWorkspaceGone, true},
 		{"an asset's file gone", t.Context(), fmt.Errorf("%w: assets/a.png", errAssetMissing), true},
 	} {
 		if got := endsTheExport(c.ctx, c.err); got != c.want {

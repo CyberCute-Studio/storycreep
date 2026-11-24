@@ -23,7 +23,7 @@ A project's archive imports as any authoring export does, so the instance that i
 
 ## What it leaves out
 
-- **The trash.** A project in the workspace's trash is not in the archive, as nothing in a trash is exported (FR-DATA-01). The manifest's `trashedProjects` names each, with when it went there, and so a project that went to the trash, or was deleted for good, while the archive was being made, without that time.
+- **The trash.** A project in the workspace's trash is not in the archive, as nothing in a trash is exported (FR-DATA-01). The manifest's `trashedProjects` names each, with when it went there, and so a project that went to the trash, or was deleted for good, after the archive listed the projects and before it came to read that one, without that time. A project that goes there once its own reading has begun is in the archive as that reading found it, as of the moment that its `authoring.json` names.
 - **One moment.** The workspace, its members, and the list of its projects are read as of one moment, and the audit log is read up to it. Each project is then read as of a moment of its own, which its `authoring.json` names, as reading every project at once would hold a transaction open for as long as the whole archive takes.
 - **Accounts.** The archive holds who the members are, not their accounts: no password, session, API token, or other credential, and no member's other workspaces. Nor does it hold the workspace's open invitations, whose people are not members yet.
 

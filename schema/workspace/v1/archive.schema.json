@@ -206,7 +206,7 @@
       "additionalProperties": false,
       "properties": {
         "deletedAt": {
-          "description": "When it went to the trash, if it was there as the archive listed the projects. Without it, it went there, or was deleted for good, while the archive was made.",
+          "description": "When it went to the trash, if it was there as the archive listed the projects. Without it, it went there, or was deleted for good, after that and before the archive came to read it.",
           "format": "date-time",
           "type": "string"
         },
@@ -334,7 +334,7 @@
           "type": "boolean"
         },
         "projects": {
-          "description": "Each project that the archive holds, in the order of their IDs: every project of the workspace outside its trash, archived ones too.",
+          "description": "Each project that the archive holds, in the order of their IDs: every project of the workspace outside its trash as the archive came to read it, archived ones too.",
           "items": {
             "$ref": "#/$defs/WorkspaceProject"
           },
@@ -348,7 +348,7 @@
           "type": "array"
         },
         "trashedProjects": {
-          "description": "The projects that the archive does not hold, as they are in the workspace's trash, or went there or were deleted for good while the archive was made, in the order of their IDs.",
+          "description": "The projects that the archive does not hold, in the order of their IDs: those in the workspace's trash as the archive listed the projects, and those that went there, or were deleted for good, after that and before the archive came to read them. One that went there once its reading had begun is among the projects, as that reading found it.",
           "items": {
             "$ref": "#/$defs/TrashedProject"
           },

@@ -498,12 +498,13 @@ func (s *Service) withDB(db *database.DB) *Service {
 func onlyFails(attempt, snoozes int) bool { return attempt > buildAttempts || snoozes > 0 }
 
 // endsTheExport says whether err, of a build that ran under ctx, is a failure
-// that another attempt would repeat: a project in the trash, an asset whose
-// file is gone, or the attempt's own timeout. The server's stopping cancels
-// ctx instead, and the build then runs again after the restart.
+// that another attempt would repeat: a project in the trash, a workspace that
+// is no longer active, an asset whose file is gone, or the attempt's own
+// timeout. The server's stopping cancels ctx instead, and the build then runs
+// again after the restart.
 func endsTheExport(ctx context.Context, err error) bool {
-	return errors.Is(err, errProjectGone) || errors.Is(err, errAssetMissing) ||
-		(err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded))
+	return errors.Is(err, errProjectGone) || errors.Is(err, errWorkspaceGone) ||
+		errors.Is(err, errAssetMissing) || (err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded))
 }
 
 // fail fails the export, deletes what an attempt of it stored, and ends its

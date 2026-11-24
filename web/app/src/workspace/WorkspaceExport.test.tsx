@@ -24,20 +24,26 @@ const base: WorkspaceExportBody = {
 };
 
 /**
- * Answers the section's requests, with newest as the newest export, created
- * as the answer of asking for one, and read as the answer of reading one.
+ * Answers the section's requests, with newest as the newest export, or the
+ * refusal of the list, created as the answer of asking for one, and read as
+ * the answer of reading one.
  */
 function serve(
-  newest: WorkspaceExportBody | null,
+  newest: WorkspaceExportBody | null | Error,
   created?: unknown,
   read?: WorkspaceExportBody,
 ) {
   return vi.spyOn(api, "call").mockImplementation((async (op: string) => {
     switch (op) {
       case "listWorkspaceExports":
+        if (newest instanceof Error) {
+          throw newest;
+        }
         return { body: { items: newest === null ? [] : [newest] } };
       case "getWorkspaceExport":
-        return { body: read ?? newest ?? base };
+        return {
+          body: read ?? (newest instanceof Error ? null : newest) ?? base,
+        };
       case "createWorkspaceExport":
         if (created instanceof Error) {
           throw created;
@@ -155,5 +161,13 @@ describe("the workspace's export", () => {
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(false);
+  });
+
+  it("says why it shows no export when the server refuses the list", async () => {
+    serve(refused(429, { code: "rate_limited" }));
+    await show();
+    expect(
+      await screen.findByText("Too many requests. Try again in a moment."),
+    ).toBeTruthy();
   });
 });

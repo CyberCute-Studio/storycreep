@@ -44,8 +44,8 @@ type WorkspaceManifest struct {
 	ExportedAt             time.Time               `json:"exportedAt" doc:"When the archive's reading of the workspace began. Each project's archive says when its own content was read, as each is read as of a moment of its own."`
 	Workspace              ManifestWorkspace       `json:"workspace" doc:"The workspace."`
 	PersonalData           bool                    `json:"personalData" enum:"true" doc:"Whether the archive holds personal data, which it always does: the members' display names and email addresses, the audit log's IP addresses and user agents, and each project's comments and the names of the people involved."`
-	Projects               []WorkspaceProject      `json:"projects" nullable:"false" doc:"Each project that the archive holds, in the order of their IDs: every project of the workspace outside its trash, archived ones too."`
-	TrashedProjects        []TrashedProject        `json:"trashedProjects" nullable:"false" doc:"The projects that the archive does not hold, as they are in the workspace's trash, or went there or were deleted for good while the archive was made, in the order of their IDs."`
+	Projects               []WorkspaceProject      `json:"projects" nullable:"false" doc:"Each project that the archive holds, in the order of their IDs: every project of the workspace outside its trash as the archive came to read it, archived ones too."`
+	TrashedProjects        []TrashedProject        `json:"trashedProjects" nullable:"false" doc:"The projects that the archive does not hold, in the order of their IDs: those in the workspace's trash as the archive listed the projects, and those that went there, or were deleted for good, after that and before the archive came to read them. One that went there once its reading had begun is among the projects, as that reading found it."`
 	Sections               []ManifestSection       `json:"sections" nullable:"false" doc:"The archive's JSON files beside this one: the members, the audit log, and the workspace's own assets."`
 }
 
@@ -74,7 +74,7 @@ type TrashedProject struct {
 	ID        string     `json:"id" doc:"The project's ID."`
 	Name      string     `json:"name" doc:"The project's name."`
 	Slug      string     `json:"slug" doc:"The project's slug."`
-	DeletedAt *time.Time `json:"deletedAt,omitempty" doc:"When it went to the trash, if it was there as the archive listed the projects. Without it, it went there, or was deleted for good, while the archive was made."`
+	DeletedAt *time.Time `json:"deletedAt,omitempty" doc:"When it went to the trash, if it was there as the archive listed the projects. Without it, it went there, or was deleted for good, after that and before the archive came to read it."`
 }
 
 // WorkspaceMember is a member of the workspace, as members.json holds them.

@@ -483,7 +483,8 @@ func (q *Queries) WorkspaceExportProjects(ctx context.Context, workspaceID pgtyp
 
 const workspaceExportWorkspace = `-- name: WorkspaceExportWorkspace :one
 
-SELECT id, name, slug, settings, created_at, now()::timestamptz AS read_at FROM workspace WHERE id = $1
+SELECT id, name, slug, settings, created_at, now()::timestamptz AS read_at FROM workspace
+WHERE id = $1 AND status = 'active'
 `
 
 type WorkspaceExportWorkspaceRow struct {
@@ -500,7 +501,8 @@ type WorkspaceExportWorkspaceRow struct {
 // WorkspaceExportWorkspace returns what the archive holds of the workspace
 // itself, and when its transaction began, by the database's clock, which the
 // audit log's entries are of, and before its first statement took its
-// snapshot.
+// snapshot; or no row unless the workspace is active, as no owner can read an
+// export of one pending its deletion.
 func (q *Queries) WorkspaceExportWorkspace(ctx context.Context, id pgtype.UUID) (WorkspaceExportWorkspaceRow, error) {
 	row := q.db.QueryRow(ctx, workspaceExportWorkspace, id)
 	var i WorkspaceExportWorkspaceRow

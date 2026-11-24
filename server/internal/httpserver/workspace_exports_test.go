@@ -564,6 +564,52 @@ func TestWorkspaceExportFails(t *testing.T) {
 	}
 }
 
+// TestWorkspaceExportOfInactiveWorkspace checks that an export of a workspace
+// that is no longer active by the time its job reads it, as one pending its
+// deletion, which its owner can no longer read, fails at once, and stores
+// nothing.
+func TestWorkspaceExportOfInactiveWorkspace(t *testing.T) {
+	t.Parallel()
+	f := newRolesFixture(t)
+	e := askWorkspaceExport(t, f.s.main, f.as["owner"], f.ws)
+	id := decode(t, ids.Job, e.ID)
+	var key string
+	if err := f.admin.QueryRow(t.Context(), `SELECT storage_key FROM workspace_export WHERE id = $1`, id).
+		Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.admin.Exec(t.Context(), `UPDATE workspace SET status = 'pending_deletion', deleted_at = now()
+		WHERE id = $1`, decode(t, ids.Workspace, f.ws)); err != nil {
+		t.Fatal(err)
+	}
+	startWorkers(t, f.s, f.d)
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		n := countRows(t, f.d, `SELECT count(*) FROM river_job WHERE kind = 'workspace_export_build'
+			AND args->>'export_id' = $1 AND attempt = 1 AND state = 'cancelled'`, id.String())
+		if n == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the build's job did not end after its one attempt")
+		}
+	}
+	var status string
+	if err := f.admin.QueryRow(t.Context(), `SELECT status FROM workspace_export WHERE id = $1`, id).
+		Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != authoring.StatusFailed {
+		t.Errorf("the export of the workspace pending its deletion is %s, want failed", status)
+	}
+	store, err := f.s.assets.Storage().Store(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Stat(t.Context(), key); !errors.Is(err, blob.ErrNotFound) {
+		t.Errorf("the archive of the workspace pending its deletion is stored: %v", err)
+	}
+}
+
 // TestWorkspaceExportBeforeSetup checks that an export of a workspace is
 // refused while first-run setup may yet choose the store, as an authoring
 // export is.

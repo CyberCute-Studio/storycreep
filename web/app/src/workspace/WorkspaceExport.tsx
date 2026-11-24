@@ -37,6 +37,8 @@ function onItsWay(e: WorkspaceExportBody | undefined): boolean {
 function newestExportQuery(workspaceId: string) {
   return queryOptions({
     queryKey: [...exportsKey(workspaceId), "newest"] as const,
+    // The section shows a refusal of it.
+    meta: { showsRefusals: true },
     queryFn: async ({ signal }) =>
       (
         await api.call(
@@ -128,10 +130,14 @@ export function WorkspaceExport({ workspaceId }: { workspaceId: string }) {
       }
     },
   });
+  // A refusal of the read of the newest export, as the rate limit's, is shown
+  // too, as the section would otherwise show none without saying why.
   const refusal =
     (inProgressId(start.error) === undefined
       ? refusalOf(start.error, t)
-      : undefined) ?? (gone ? refusalOf(current.error, t) : undefined);
+      : undefined) ??
+    (gone ? refusalOf(current.error, t) : undefined) ??
+    (refusedByServer(newest.error) ? refusalOf(newest.error, t) : undefined);
   return (
     <section className="space-y-3" aria-labelledby="workspace-export">
       <h2 id="workspace-export" className="text-lg font-semibold">
