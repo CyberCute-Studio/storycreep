@@ -138,6 +138,8 @@ type server struct {
 	email *email.Service
 	// queue is the job queue, once Run has opened it.
 	queue *queueRef
+	// maintenance is the maintenance path, which opens when it is first used.
+	maintenance *maintenanceRef
 }
 
 // newCommandRegistry returns the registry of every type of command that the
@@ -178,6 +180,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		RequireVerifiedEmail: cfg.Capabilities.EmailRequired,
 	})
 	s.queue = &queueRef{}
+	s.maintenance = &maintenanceRef{cfg: cfg}
 	s.commands = commands.New(readyDB{s.ready}, commands.Options{
 		Registry:     newCommandRegistry(),
 		Policy:       role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},
@@ -220,7 +223,8 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		Log:          log,
 	})
 	s.authoring = authoring.New(readyDB{s.ready}, authoring.Options{Projects: s.projects, Queue: s.queue,
-		Storage: s.assets.Storage(), ImportMaxBytes: cfg.ImportMaxBytes, Log: log})
+		Storage: s.assets.Storage(), ImportMaxBytes: cfg.ImportMaxBytes, Assets: s.assets, Pipeline: s.commands,
+		IDsInUse: s.maintenance.AnyIDInUse, Log: log})
 	s.tokens = apitoken.New(readyDB{s.ready}, apitoken.Options{
 		Policy: role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},
 	})
@@ -306,6 +310,9 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerDiffs(s.main, s.snapshots)
 	registerTextExport(s.main, s.snapshots)
 	registerAuthoringExports(s.main, s.authoring)
+	// One budget of memory for the two routes that hold a file's bytes.
+	uploads := newSlots(uploadSlots(max(s.assets.MaxBytes(), authoring.ChunkBytes)))
+	registerProjectImports(s.main, s.authoring, uploads)
 	registerSearch(s.main, s.search)
 	registerStatistics(s.main, s.statistics)
 	registerClipboard(s.main, s.clipboard)
@@ -314,7 +321,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerNotifications(s.main, s.notifications)
 	registerRenames(s.main, s.variables, s.components)
 	registerTrash(s.main, s.trash)
-	registerAssets(s.main, s.assets)
+	registerAssets(s.main, s.assets, uploads)
 	registerGrants(s.main, s.projects)
 	registerTokens(s.main, s.tokens)
 	registerInvites(s.main, s.workspaces, s.invites, s.accounts)

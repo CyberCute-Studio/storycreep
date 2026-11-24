@@ -170,6 +170,14 @@ func (t *Tx) ProjectID() ids.UUID {
 	return t.project
 }
 
+// Populating says whether what applies is a part of Populate, whose values are
+// the stored ones of an archive: an Apply that checks a value's characters
+// itself, as it needs the project to know its type, leaves them unchecked then,
+// as CheckNew's rules are (ApplyPart).
+func (t *Tx) Populating() bool {
+	return t.current != nil && t.current.populates
+}
+
 // WorkspaceID returns the workspace of the batch's project, which the
 // transaction is scoped to (database.Scope).
 func (t *Tx) WorkspaceID() ids.UUID {
@@ -344,7 +352,10 @@ func (t *Tx) Carried() any {
 // connection.create for what it pastes, so that a command that does what
 // several of another type would does it through their Apply, with their
 // checks, rather than a copy of them. The part's payload is held to its
-// type's schema, Check, and CheckNew, as a command of a batch's is, and its
+// type's schema, Check, and CheckNew, as a command of a batch's is, but for a
+// part of Populate, whose values are the stored ones of an archive, and which
+// is held to its schema and Check, as a step of an inverse is, since a stored
+// value may break CheckNew's rules (Spec.CheckNew). Its
 // Apply runs as the command's own: what it reports (Changed, Restored,
 // AddUsage, Leave) is the command's, by the command's type, which the
 // derivations read, and the command's undo is its own Inverse's steps, which
@@ -376,7 +387,7 @@ func (t *Tx) ApplyPart(ctx context.Context, typ Type, payload any, at func(field
 		return fmt.Errorf("commands: %s applies a part of the type %s, which is not registered", parent.typ, typ)
 	case part == parent:
 		return fmt.Errorf("commands: %s applies a part of its own type", parent.typ)
-	case part.capability != parent.capability || part.scope != parent.scope:
+	case !parent.populates && (part.capability != parent.capability || part.scope != parent.scope):
 		return fmt.Errorf("commands: %s applies a part of the type %s, which needs %s and %s, where the command "+
 			"was authorised for %s and %s", parent.typ, typ, part.capability, part.scope, parent.capability,
 			parent.scope)
@@ -406,7 +417,7 @@ func (t *Tx) ApplyPart(ctx context.Context, typ Type, payload any, at func(field
 	problems := t.pipeline.registry.validate(part.schema, raw)
 	var decoded any
 	if len(problems) == 0 {
-		decoded, problems = part.decode(raw, false)
+		decoded, problems = part.decode(raw, parent.populates)
 	}
 	if len(problems) > 0 {
 		return Refuse(at(problems[0].Field), problems[0].Message, nil)

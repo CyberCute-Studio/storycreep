@@ -310,11 +310,13 @@ export interface AttributeSetRuntimePayload {
 }
 
 export interface AuthoringExportBody {
+  /** How many assets a ready archive holds, if it was counted. */
+  asset_count?: number;
   /** Whether the archive holds personal data, as a full export does. */
   contains_personal_data: boolean;
   /** When the export was asked for. */
   created_at: string;
-  /** Whether the archive is larger than import_max_bytes, so that this instance could not import it. */
+  /** Whether this instance could not import the archive: it is larger than import_max_bytes, or holds more than import_max_assets. */
   exceeds_import_limit: boolean;
   /** When the export and its file are deleted. */
   expires_at: string;
@@ -324,6 +326,8 @@ export interface AuthoringExportBody {
   finished_at?: string;
   /** The export's ID, a job's. */
   id: string;
+  /** The most assets that an archive may hold for this instance to import it. */
+  import_max_assets: number;
   /** The largest archive that this instance imports (STORYCREEP_IMPORT_MAX_BYTES). */
   import_max_bytes: number;
   /** Whether the archive holds the project's assets, node cover images among them. */
@@ -1749,6 +1753,15 @@ export interface CreateProjectBody {
   name: string;
 }
 
+export interface CreateProjectImportInputBody {
+  /** The archive's file name, which the import shows. */
+  file_name: string;
+  /** auto, the default, keeps the archive's IDs unless one is in use on this instance, and remap gives everything fresh IDs (PRD §5.2). */
+  id_policy?: "auto" | "remap";
+  /** The archive's size in bytes, at most the instance's STORYCREEP_IMPORT_MAX_BYTES. */
+  size_bytes: number;
+}
+
 export interface CreateTokenBody {
   /** When the token expires, in RFC 3339, which must be in the future, and which the server keeps to the microsecond, as the answer gives it; without it, the token does not expire */
   expires_at?: string;
@@ -2757,6 +2770,12 @@ export interface PageProjectBody {
   next_cursor: string | null;
 }
 
+export interface PageProjectImportBody {
+  items: Array<ProjectImportBody>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
 export interface PageRenameSite {
   items: Array<RenameSite>;
   /** The cursor of the next page, or null if this is the last page */
@@ -3104,6 +3123,87 @@ export interface ProjectEntry {
   board_id?: string;
   /** The ID of the entry node on the entry board, if it has one */
   node_id?: string;
+}
+
+export interface ProjectImportBody {
+  /** The size of every chunk but the last. */
+  chunk_bytes: number;
+  /** How many chunks the upload has. */
+  chunk_count: number;
+  /** When the import was asked for. */
+  created_at: string;
+  /** When the import is deleted, with what is left of its upload. The project stays. */
+  expires_at: string;
+  /** Why a failed import was refused. Nothing of the archive was imported. */
+  failure?: ProjectImportFailure;
+  /** The archive's file name. */
+  file_name: string;
+  /** When it ended. */
+  finished_at?: string;
+  /** The import's ID, a job's. */
+  id: string;
+  /** auto keeps the archive's IDs unless one is in use on this instance, and remap gives everything fresh IDs. */
+  id_policy: "auto" | "remap";
+  /** What the import is doing: upload, queued, checking, verifying, assets, writing, done, or failed. */
+  phase: string;
+  /** How much of the phase is done. */
+  progress_done: number;
+  /** How much of it there is, or 0 where it is not counted. */
+  progress_total: number;
+  /** The project that a ready import created, unless it has been purged since. */
+  project_id?: string;
+  /** The indexes of the chunks that are stored, while the import is uploading, for a client to resume from. */
+  received_chunks: Array<number>;
+  /** What a ready import did. */
+  report?: ProjectImportReport;
+  /** The archive's size. */
+  size_bytes: number;
+  /** Where the import is: uploading, which takes chunks; queued, whose upload is whole; importing; ready, with a report; or failed, with why. */
+  status: "uploading" | "queued" | "importing" | "ready" | "failed";
+  /** The workspace that it imports into. */
+  workspace_id: string;
+}
+
+export interface ProjectImportFailure {
+  /** The check that failed, as hashes, content_hash, schema, references_and_asts, or ast_version for a release. */
+  check?: string;
+  /** What failed: archive_invalid (not an archive that the import's guards take), format_unsupported (a format or a version that this server does not read), schema_invalid, section_unsupported (a section that this server cannot import, which section names), content_invalid, release_invalid (a release that fails its verification, which version and check name), asset_invalid, workspace_limit, forbidden, canceled, expired, or internal. */
+  code: string;
+  /** More about it, in English, for a log or a support request. */
+  detail?: string;
+  /** The section of the archive that is at fault, if one is. */
+  section?: string;
+  /** The version of the release that is at fault, if one is. */
+  version?: string;
+}
+
+export interface ProjectImportReport {
+  /** How many assets it imported. */
+  assets: number;
+  /** How many boards it imported. */
+  boards: number;
+  /** How many comments it imported. */
+  comments: number;
+  /** How many components it imported. */
+  components: number;
+  /** How many of the people whom the archive names are not members of the workspace, and are shown as imported users, with the display names from the archive. */
+  imported_users: number;
+  /** How many references to assets it could not keep, as the archive holds no assets. */
+  missing_assets: number;
+  /** How many nodes it imported. */
+  nodes: number;
+  /** How many play states it imported. */
+  play_states: number;
+  /** The ID policy that was applied: preserve kept the archive's IDs, and remap gave everything fresh ones, as at least one was in use on this instance, or it was asked for (PRD §5.2). It says nothing else of what is on the instance. */
+  policy: "preserve" | "remap";
+  /** The new project's ID. */
+  project_id: string;
+  /** The new project's name. */
+  project_name: string;
+  /** How many releases it imported, each verified. */
+  releases: number;
+  /** How many variables it imported. */
+  variables: number;
 }
 
 /** A command of the type project.rename. */
@@ -4202,6 +4302,28 @@ export interface Operations {
     };
   };
   /**
+   * Cancel an import
+   *
+   * Ends an import that is uploading or queued, deletes what its upload stored, and answers 204. An import that its job has begun runs to its end, as it is all or nothing, and one that is importing or has ended is answered with 409 import_not_uploading. Only the user who asked for an import reads it, and an import of anyone else, or one that has expired, is answered with 404 not_found. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Requests that change something share a rate limit of 600 a minute for each IP address, and 300 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
+   */
+  cancelProjectImport: {
+    input: {
+      path: {
+        /** The import's ID */
+        import_id: string;
+        /** The workspace's ID */
+        workspace_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+    };
+    responses: {
+      204: undefined;
+    };
+  };
+  /**
    * Change a member's role
    *
    * Changes the role of a membership of a workspace, and returns the member, with their email address. A membership that has the role already stays as it is. Only an owner grants the role owner, or changes an owner's role, and an admin is answered with 403 owner_required (FR-TEN-03 AC4). A workspace keeps an owner whose account is active, so changing the role of its last one is answered with 409 last_owner (FR-TEN-02 AC2). An owner or an admin may change their own role, as long as the workspace keeps an owner. The change also revokes the workspace's open invitations, expired or not, that the member made, and those whose link the member was last given as text, as by sending one anew, whose role the new role may not give: every one, for a role below admin, and those as owner, for admin, so that no link that they hold gives what their role no longer may. Only an owner or an admin of the workspace may, and anyone else with a role in it is answered with 403 insufficient_role. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a membership that the workspace does not have. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Requests that change something share a rate limit of 600 a minute for each IP address, and 300 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
@@ -4239,6 +4361,28 @@ export interface Operations {
     };
     responses: {
       200: SignedInBody;
+    };
+  };
+  /**
+   * Import an uploaded archive
+   *
+   * Hands a whole upload to the import's job, and answers 202 with the import, queued. The job checks the archive before it writes anything: its members against the zip guards, each file against its hash and its schema, every release's files, hashes, references, and ASTs, and the sections that this server can import. It then creates the project, keeping the archive's IDs unless one is in use on this instance or remap was asked for, all or nothing, and the import's report or failure says what became of it. An upload that lacks chunks is answered with 409 import_incomplete, whose details.missing_chunks lists the first of them. Only the user who asked for an import reads it, and an import of anyone else, or one that has expired, is answered with 404 not_found. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Exports share a rate limit of 60 an hour for each IP address, and 30 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.
+   */
+  completeProjectImport: {
+    input: {
+      path: {
+        /** The import's ID */
+        import_id: string;
+        /** The workspace's ID */
+        workspace_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+    };
+    responses: {
+      202: ProjectImportBody;
     };
   };
   /**
@@ -4371,6 +4515,27 @@ export interface Operations {
     };
     responses: {
       201: ProjectBody;
+    };
+  };
+  /**
+   * Begin importing a project
+   *
+   * Begins the import of an authoring export (schema/authoring/v1) as a new project of the workspace, and answers 201 with the import, uploading. Send its chunks with PUT …/chunks/{index}, each of chunk_bytes but the last, in any order, and again after an interruption, which GET of the import, whose received_chunks lists those that are stored, resumes from. Then POST …/complete hands it to a job. Only an owner or an admin of the workspace may, and anyone else with a role in it is answered with 403 insufficient_role; a workspace at its projects limit is answered with 409 limit_exceeded, before anything is uploaded. An archive past STORYCREEP_IMPORT_MAX_BYTES is answered with 413 request_too_large. A user has one import of a workspace on its way at a time, and another request is answered with 409 import_in_progress, whose details.import_id names it. Until the instance's first-run setup has completed, the answer is 403 setup_required, unless STORYCREEP_ASSET_STORAGE names where files are stored. Only the user who asked for an import reads it, and an import of anyone else, or one that has expired, is answered with 404 not_found. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Exports share a rate limit of 60 an hour for each IP address, and 30 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.
+   */
+  createProjectImport: {
+    input: {
+      path: {
+        /** The workspace's ID */
+        workspace_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+      body: CreateProjectImportInputBody;
+    };
+    responses: {
+      201: ProjectImportBody;
     };
   };
   /**
@@ -4893,6 +5058,24 @@ export interface Operations {
     };
     responses: {
       200: ProjectBody;
+    };
+  };
+  /**
+   * Read an import
+   *
+   * Returns the import: which chunks of its upload are stored, how far its job is, and what it did or why it was refused. Only the user who asked for an import reads it, and an import of anyone else, or one that has expired, is answered with 404 not_found. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). Requests that read share a rate limit of 1,200 a minute for each IP address, and 600 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getProjectImport: {
+    input: {
+      path: {
+        /** The import's ID */
+        import_id: string;
+        /** The workspace's ID */
+        workspace_id: string;
+      };
+    };
+    responses: {
+      200: ProjectImportBody;
     };
   };
   /**
@@ -5526,6 +5709,28 @@ export interface Operations {
     };
   };
   /**
+   * List your imports of a workspace
+   *
+   * Lists the imports of the workspace that the user asked for and that have not expired, newest first. Only the user who asked for an import reads it, and an import of anyone else, or one that has expired, is answered with 404 not_found. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). Requests that read share a rate limit of 1,200 a minute for each IP address, and 600 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listProjectImports: {
+    input: {
+      path: {
+        /** The workspace's ID */
+        workspace_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageProjectImportBody;
+    };
+  };
+  /**
    * List the members whom a project's comments may mention
    *
    * Lists the users whom a comment of the project may mention (PRD FR-COMMENT-02), each with their display name, in the order of their IDs, by which a client offers whom to mention: the members of the project's workspace who read the project, by any role of their membership, or by a grant of the project, a viewer's and a guest's with a grant too, whose accounts are active. A comment's body that mentions anyone else is refused with 422 mention_no_access. Reading it is reading the project, which every role does, a member who may not list the workspace's members, as a guest, too. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
@@ -5945,6 +6150,32 @@ export interface Operations {
     };
     responses: {
       202: Snapshot;
+    };
+  };
+  /**
+   * Upload a chunk of an import
+   *
+   * Stores a chunk of the archive, and answers 204. Sending a chunk again replaces it, so an upload that an interruption cut off goes on from the chunks that GET of the import does not list. A chunk has chunk_bytes, or the rest of the archive if it is the last, and another size or an index past the last is answered with 422 chunk_invalid. An import that is not uploading is answered with 409 import_not_uploading, whose details.status says where it is. Only the user who asked for an import reads it, and an import of anyone else, or one that has expired, is answered with 404 not_found. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Requests that change something share a rate limit of 600 a minute for each IP address, and 300 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
+   */
+  putProjectImportChunk: {
+    input: {
+      path: {
+        /** The import's ID */
+        import_id: string;
+        /** The chunk's index, from 0 */
+        index: number;
+        /** The workspace's ID */
+        workspace_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+      /** The chunk's bytes. */
+      body: Blob;
+    };
+    responses: {
+      204: undefined;
     };
   };
   /**
@@ -6448,8 +6679,10 @@ export const routes = {
   acceptInvite: { method: "POST", path: "/api/v1/invites/accept" },
   applyCommands: { method: "POST", path: "/api/v1/projects/{project_id}/commands" },
   archiveProject: { method: "POST", path: "/api/v1/projects/{project_id}/archive" },
+  cancelProjectImport: { method: "DELETE", path: "/api/v1/workspaces/{workspace_id}/project-imports/{import_id}" },
   changeMemberRole: { method: "PATCH", path: "/api/v1/workspaces/{workspace_id}/members/{membership_id}" },
   changePassword: { method: "POST", path: "/api/v1/auth/password" },
+  completeProjectImport: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/project-imports/{import_id}/complete" },
   completeSetup: { method: "POST", path: "/api/v1/setup" },
   copyNodes: { method: "POST", path: "/api/v1/projects/{project_id}/clipboard/copy" },
   countComments: { method: "GET", path: "/api/v1/projects/{project_id}/comments/counts" },
@@ -6457,6 +6690,7 @@ export const routes = {
   createAuthoringExport: { method: "POST", path: "/api/v1/projects/{project_id}/authoring-exports" },
   createInvite: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/invites" },
   createProject: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/projects" },
+  createProjectImport: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/project-imports" },
   createProjectToken: { method: "POST", path: "/api/v1/projects/{project_id}/tokens" },
   createWorkspace: { method: "POST", path: "/api/v1/workspaces" },
   createWorkspaceToken: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/tokens" },
@@ -6485,6 +6719,7 @@ export const routes = {
   getOpenAPIDocument: { method: "GET", path: "/api/v1/openapi.json" },
   getPlayState: { method: "GET", path: "/api/v1/projects/{project_id}/play-states/{play_state_id}" },
   getProject: { method: "GET", path: "/api/v1/projects/{project_id}" },
+  getProjectImport: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/project-imports/{import_id}" },
   getProjectStatistics: { method: "GET", path: "/api/v1/projects/{project_id}/statistics" },
   getReadiness: { method: "GET", path: "/readyz" },
   getSession: { method: "GET", path: "/api/v1/auth/session" },
@@ -6516,6 +6751,7 @@ export const routes = {
   listNotifications: { method: "GET", path: "/api/v1/notifications" },
   listPlayStates: { method: "GET", path: "/api/v1/projects/{project_id}/play-states" },
   listProjectGrants: { method: "GET", path: "/api/v1/projects/{project_id}/grants" },
+  listProjectImports: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/project-imports" },
   listProjectMembers: { method: "GET", path: "/api/v1/projects/{project_id}/members" },
   listProjectTokens: { method: "GET", path: "/api/v1/projects/{project_id}/tokens" },
   listProjects: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/projects" },
@@ -6536,6 +6772,7 @@ export const routes = {
   previewComponentRename: { method: "GET", path: "/api/v1/projects/{project_id}/components/{component_id}/rename-preview" },
   previewVariableRename: { method: "GET", path: "/api/v1/projects/{project_id}/variables/{variable_id}/rename-preview" },
   publishSnapshot: { method: "POST", path: "/api/v1/projects/{project_id}/snapshots" },
+  putProjectImportChunk: { method: "PUT", path: "/api/v1/workspaces/{workspace_id}/project-imports/{import_id}/chunks/{index}" },
   readAllNotifications: { method: "POST", path: "/api/v1/notifications/read-all" },
   readNotification: { method: "POST", path: "/api/v1/notifications/{notification_id}/read" },
   registerAccount: { method: "POST", path: "/api/v1/auth/register" },

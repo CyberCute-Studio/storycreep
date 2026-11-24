@@ -146,6 +146,12 @@ const (
 	// draft or a snapshot's ID, profile whether it is full or content, and
 	// include_assets and include_releases what else it holds.
 	ActionProjectExport Action = "project.export"
+	// ActionProjectImport is the import of a project from an archive
+	// (FR-DATA-01), by its actor, recorded in the transaction that creates the
+	// project. It belongs to the workspace, its subject is the new project, and
+	// its metadata's import_id names the import, and id_policy says whether it
+	// kept the archive's IDs (preserve) or gave fresh ones (remap).
+	ActionProjectImport Action = "project.import"
 	// ActionProjectGrantCreate is a member's new grant on a project, with the
 	// role that its metadata's role names, which replaces the member's role
 	// in the workspace on that project, by an owner or admin of the
@@ -277,6 +283,8 @@ var events = []eventSpec{
 		metadata: []string{"project_id", "version"}},
 	{action: ActionProjectExport, inWorkspace: true, subject: "project", results: []Result{ResultSuccess},
 		metadata: []string{"export_id", "source", "profile", "include_assets", "include_releases"}},
+	{action: ActionProjectImport, inWorkspace: true, subject: "project", results: []Result{ResultSuccess},
+		metadata: []string{"import_id", "id_policy"}},
 	{action: ActionProjectGrantCreate, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},
 		metadata: []string{"project_id", "role"}},
 	{action: ActionProjectGrantChange, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},

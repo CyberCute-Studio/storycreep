@@ -114,7 +114,14 @@ type Options struct {
 	// ImportMaxBytes is the instance's import limit, which an export is
 	// compared with (FR-DATA-01).
 	ImportMaxBytes int64
-	Log            *slog.Logger
+	// Assets store an import's assets as uploads are stored, and Pipeline
+	// applies its draft through the commands (plan item 84).
+	Assets   *asset.Service
+	Pipeline *commands.Pipeline
+	// IDsInUse is the import's collision check, of the maintenance path
+	// (PRD §5.2), which answers one boolean.
+	IDsInUse func(ctx context.Context, list []ids.UUID) (bool, error)
+	Log      *slog.Logger
 }
 
 // Service keeps the authoring exports.
@@ -124,6 +131,9 @@ type Service struct {
 	queue          commands.Enqueuer
 	storage        *asset.Storage
 	importMaxBytes int64
+	assets         *asset.Service
+	pipeline       *commands.Pipeline
+	idsInUse       func(ctx context.Context, list []ids.UUID) (bool, error)
 	log            *slog.Logger
 }
 
@@ -134,7 +144,7 @@ func New(db DB, o Options) *Service {
 		log = slog.New(slog.DiscardHandler)
 	}
 	return &Service{db: db, projects: o.Projects, queue: o.Queue, storage: o.Storage,
-		importMaxBytes: o.ImportMaxBytes, log: log}
+		importMaxBytes: o.ImportMaxBytes, assets: o.Assets, pipeline: o.Pipeline, idsInUse: o.IDsInUse, log: log}
 }
 
 // Request is what an export is asked for.
@@ -157,17 +167,24 @@ type Export struct {
 	IncludeReleases bool
 	PersonalData    bool
 	SizeBytes       *int64
-	ImportMaxBytes  int64
-	FileName        string
-	CreatedAt       time.Time
-	FinishedAt      *time.Time
-	ExpiresAt       time.Time
+	// AssetCount is how many assets a ready archive holds, if it was counted.
+	AssetCount     *int32
+	ImportMaxBytes int64
+	FileName       string
+	CreatedAt      time.Time
+	FinishedAt     *time.Time
+	ExpiresAt      time.Time
 }
 
-// ExceedsImportLimit says whether the archive is larger than the instance's
-// import limit, so that this instance could not import it again.
+// MaxImportAssets is the most assets that an archive may hold for an import
+// to take it (maxImportAssets), which an export warns of.
+const MaxImportAssets = maxImportAssets
+
+// ExceedsImportLimit says whether this instance could not import the archive
+// again: it is larger than the instance's import limit, or holds more assets
+// than an import takes.
 func (e Export) ExceedsImportLimit() bool {
-	return e.SizeBytes != nil && *e.SizeBytes > e.ImportMaxBytes
+	return e.SizeBytes != nil && *e.SizeBytes > e.ImportMaxBytes || e.AssetCount != nil && *e.AssetCount > MaxImportAssets
 }
 
 func (s *Service) exportOf(row queries.AuthoringExport) Export {
@@ -179,6 +196,9 @@ func (s *Service) exportOf(row queries.AuthoringExport) Export {
 		ExpiresAt: row.ExpiresAt.Time.UTC()}
 	if row.SizeBytes.Valid {
 		e.SizeBytes = &row.SizeBytes.Int64
+	}
+	if row.AssetCount.Valid {
+		e.AssetCount = &row.AssetCount.Int32
 	}
 	return e
 }
@@ -199,6 +219,13 @@ func storageKey(ws, id ids.UUID) string {
 // one on its way, and, for a release, snapshot.ErrNotFound or a
 // *snapshot.NotReadyError. The token's export:read is the route's to check.
 func (s *Service) Create(ctx context.Context, actor commands.Actor, projectID ids.UUID, req Request) (Export, error) {
+	return s.create(ctx, actor, projectID, req, time.Time{})
+}
+
+// create is Create, whose build job is due at buildAt, or at once for the zero
+// time.
+func (s *Service) create(ctx context.Context, actor commands.Actor, projectID ids.UUID, req Request,
+	buildAt time.Time) (Export, error) {
 	// Outside the transaction, as reading the store's settings takes a
 	// connection of its own, and after the project, so that who may not read
 	// it learns nothing of the instance.
@@ -248,7 +275,7 @@ func (s *Service) Create(ctx context.Context, actor commands.Actor, projectID id
 			return err
 		}
 		args := jobArgs{WorkspaceID: ws.String(), ExportID: id.String()}
-		if _, err := s.queue.Enqueue(ctx, tx, buildJob(args), &jobs.EnqueueOptions{
+		if _, err := s.queue.Enqueue(ctx, tx, buildJob(args), &jobs.EnqueueOptions{At: buildAt,
 			MaxAttempts: buildAttempts + failAttempts}); err != nil {
 			return fmt.Errorf("authoring: enqueue the build: %w", err)
 		}
@@ -436,6 +463,7 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 		}
 		return err
 	})
+	s.registerImportJobs(r)
 }
 
 func parseArgs(a jobArgs) (ws, id ids.UUID, err error) {
@@ -448,13 +476,15 @@ func parseArgs(a jobArgs) (ws, id ids.UUID, err error) {
 	return ws, id, nil
 }
 
-// withDB returns a Service like s on db, the workers' pool of a job.
+// withDB returns a Service like s on db, the workers' pool of a job, and its
+// assets' service too, whose transactions an import's job then runs there.
 func (s *Service) withDB(db *database.DB) *Service {
 	if db == nil {
 		return s
 	}
 	c := *s
 	c.db = db
+	c.assets = s.assets.WithDB(db)
 	return &c
 }
 
@@ -591,7 +621,8 @@ func (s *Service) Build(ctx context.Context, ws, id ids.UUID) (err error) {
 		var err error
 		finished, err = queries.New(tx).FinishAuthoringExport(ctx, queries.FinishAuthoringExportParams{
 			WorkspaceID: uuid(ws), ID: uuid(id), SizeBytes: pgtype.Int8{Int64: counted.n, Valid: true},
-			FileName: pgtype.Text{String: c.fileName, Valid: true}})
+			AssetCount: pgtype.Int4{Int32: int32(len(c.assets)), Valid: true},
+			FileName:   pgtype.Text{String: c.fileName, Valid: true}})
 		return err
 	})
 	if err != nil {

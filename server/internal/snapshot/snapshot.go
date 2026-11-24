@@ -400,6 +400,14 @@ func checkRequest(r Request) (Version, error) {
 	return v, nil
 }
 
+// CheckImportedNote says what is wrong with the note of a release of an
+// imported archive, or returns "": a note of the length that the database
+// holds. A stored note may break the text rules of a new one (checkRequest),
+// and is kept as it is.
+func CheckImportedNote(note string) string {
+	return input.CheckStoredLength(note, 1, MaxNoteLength)
+}
+
 // authorise returns nil if the actor may publish a snapshot of the project
 // projectID, read in tx, a transaction of its workspace workspaceID, and the
 // error that Publish refuses it with otherwise: project.Service.GetIn's,

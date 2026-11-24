@@ -713,7 +713,7 @@ func checkNewConnection(ctx context.Context, q *queries.Queries, ws, project, id
 // connection with the ID of one that exists already, which may be another
 // workspace's, or another project's, whose rows the transaction does not see.
 func refuseTakenID() error {
-	return commands.Refuse("id", "is the ID of a connection that exists already", nil)
+	return commands.Refuse("id", "is the ID of a connection that exists already", commands.ErrIDTaken)
 }
 
 // anyConnection returns the connection of the batch's project whose ID is id,

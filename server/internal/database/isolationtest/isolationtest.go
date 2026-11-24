@@ -431,6 +431,42 @@ var Tables = []Table{
 			"VALUES ($1, $2, $3, $4, 'full', true, true, 'failed', $5, now(), now() + interval '7 days')",
 			[]any{id, w.ID, w.Rows["project"], user, id.String()}}, nil
 	}},
+	{Name: "project_import", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+		// A failed import, by a user of its own, as a user has one import of
+		// a workspace on its way at a time.
+		user, err := NewUser(ctx, admin)
+		if err != nil {
+			return Statement{}, err
+		}
+		id := ids.New()
+		return Statement{id, "INSERT INTO project_import (id, workspace_id, requested_by, status, file_name, " +
+			"size_bytes, chunk_bytes, id_policy, failure, finished_at, expires_at) VALUES ($1, $2, $3, 'failed', " +
+			"'a.zip', 1, 1, 'auto', '{}', now(), now() + interval '7 days')", []any{id, w.ID, user}}, nil
+	}},
+	{Name: "project_import_chunk", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+		// A chunk of an import of its own.
+		user, err := NewUser(ctx, admin)
+		if err != nil {
+			return Statement{}, err
+		}
+		upload, id := ids.New(), ids.New()
+		if _, err := admin.Exec(ctx, "INSERT INTO project_import (id, workspace_id, requested_by, status, file_name, "+
+			"size_bytes, chunk_bytes, id_policy, failure, finished_at, expires_at) VALUES ($1, $2, $3, 'failed', "+
+			"'a.zip', 1, 1, 'auto', '{}', now(), now() + interval '7 days')", upload, w.ID, user); err != nil {
+			return Statement{}, fmt.Errorf("add an import: %w", err)
+		}
+		return Statement{id, "INSERT INTO project_import_chunk (id, workspace_id, import_id, chunk_index, bytes, " +
+			"storage_key) VALUES ($1, $2, $3, 0, 1, $4)", []any{id, w.ID, upload, id.String()}}, nil
+	}},
+	{Name: "imported_user", ID: "user_id", Insert: func(ctx context.Context, admin Querier,
+		w *Workspace) (Statement, error) {
+		user, err := NewUser(ctx, admin)
+		if err != nil {
+			return Statement{}, err
+		}
+		return Statement{user, "INSERT INTO imported_user (workspace_id, source_user_id, display_name, user_id) " +
+			"VALUES ($1, $2, 'Someone', $3)", []any{w.ID, ids.New(), user}}, nil
+	}},
 	{Name: "snapshot_file", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
 		// A file of a snapshot of the workspace's project of its own, building,
 		// to which alone a file is added.

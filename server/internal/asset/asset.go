@@ -283,7 +283,7 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 		if err := uploadable(p); err != nil {
 			return err
 		}
-		st, err = s.checkStorage(ctx, tx, workspaceID, projectID, sum[:], key, img)
+		st, err = s.checkStorage(ctx, tx, workspaceID, projectID, sum[:], key, int64(len(img.Data)))
 		return err
 	})
 	if err != nil {
@@ -313,7 +313,7 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 		}
 		// Another upload of the file to the project may have added its asset
 		// since, and another of the workspace its blob.
-		again, err := s.checkStorage(ctx, tx, workspaceID, projectID, sum[:], key, img)
+		again, err := s.checkStorage(ctx, tx, workspaceID, projectID, sum[:], key, int64(len(img.Data)))
 		switch {
 		case err != nil:
 			return err
@@ -351,47 +351,10 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 		if err := uploadable(p); err != nil {
 			return err
 		}
-		row := queries.Asset{ID: nullUUID(ids.New()), WorkspaceID: nullUUID(workspaceID),
-			ProjectID: nullUUID(projectID), Sha256: sum[:], Mime: img.Mime, Bytes: int64(len(img.Data)),
-			StorageKey: key, UploadedBy: nullUUID(actor.UserID)}
-		if img.Width > 0 {
-			row.Width = pgtype.Int4{Int32: int32(img.Width), Valid: true}
-			row.Height = pgtype.Int4{Int32: int32(img.Height), Valid: true}
-		}
-		enqueue := thumbnail
-		if !thumbnail {
-			row.ThumbnailKey = textOf(key)
-		} else {
-			// An asset of the same content in the workspace shares its
-			// thumbnail, once its job has made it, which this one then needs
-			// no job of its own for. The thumbnail job records a thumbnail
-			// under the blob's lock, which this transaction holds.
-			shared, err := q.ContentThumbnail(ctx, queries.ContentThumbnailParams{
-				WorkspaceID: nullUUID(workspaceID), Sha256: sum[:]})
-			switch {
-			case err == nil:
-				row.ThumbnailKey, enqueue = textOf(shared), false
-			case !errors.Is(err, pgx.ErrNoRows):
-				return fmt.Errorf("asset: read the thumbnail of the content: %w", err)
-			}
-		}
-		createdAt, err := q.InsertAsset(ctx, queries.InsertAssetParams{ID: row.ID, WorkspaceID: row.WorkspaceID,
-			ProjectID: row.ProjectID, Sha256: row.Sha256, Mime: row.Mime, Bytes: row.Bytes, Width: row.Width,
-			Height: row.Height, StorageKey: row.StorageKey, ThumbnailKey: row.ThumbnailKey,
-			UploadedBy: row.UploadedBy})
+		row, err := s.addRow(ctx, tx, workspaceID, projectID, ids.New(), actor.UserID, img, int64(len(img.Data)), sum[:],
+			key, thumbnail, again.referenced)
 		if err != nil {
-			return fmt.Errorf("asset: add the asset: %w", err)
-		}
-		row.CreatedAt = createdAt
-		if !again.referenced {
-			if err := usage.Record(ctx, tx, workspaceID, usage.StorageBytes, row.Bytes); err != nil {
-				return err
-			}
-		}
-		if enqueue {
-			if err := s.enqueueThumbnail(ctx, tx, workspaceID, ids.UUID(row.ID.Bytes)); err != nil {
-				return err
-			}
+			return err
 		}
 		out, created = assetOf(row), true
 		return nil
@@ -400,6 +363,59 @@ func (s *Service) Upload(ctx context.Context, actor commands.Actor, projectID id
 		return Asset{}, false, err
 	}
 	return out, created, nil
+}
+
+// addRow adds the asset assetID of the blob of key, of size bytes, whose type
+// and dimensions img has, in tx, which holds the blob's lock: with the
+// thumbnail that an asset of the same content shares, or the job that makes one
+// if it needs one (thumbnail), and what the blob adds to the workspace's storage
+// unless a row refers to it already (referenced).
+func (s *Service) addRow(ctx context.Context, tx pgx.Tx, workspaceID, projectID, assetID, uploadedBy ids.UUID,
+	img Image, size int64, sum []byte, key string, thumbnail, referenced bool) (queries.Asset, error) {
+	q := queries.New(tx)
+	row := queries.Asset{ID: nullUUID(assetID), WorkspaceID: nullUUID(workspaceID),
+		ProjectID: nullUUID(projectID), Sha256: sum, Mime: img.Mime, Bytes: size,
+		StorageKey: key, UploadedBy: nullUUID(uploadedBy)}
+	if img.Width > 0 {
+		row.Width = pgtype.Int4{Int32: int32(img.Width), Valid: true}
+		row.Height = pgtype.Int4{Int32: int32(img.Height), Valid: true}
+	}
+	enqueue := thumbnail
+	if !thumbnail {
+		row.ThumbnailKey = textOf(key)
+	} else {
+		// An asset of the same content in the workspace shares its
+		// thumbnail, once its job has made it, which this one then needs
+		// no job of its own for. The thumbnail job records a thumbnail
+		// under the blob's lock, which this transaction holds.
+		shared, err := q.ContentThumbnail(ctx, queries.ContentThumbnailParams{
+			WorkspaceID: nullUUID(workspaceID), Sha256: sum})
+		switch {
+		case err == nil:
+			row.ThumbnailKey, enqueue = textOf(shared), false
+		case !errors.Is(err, pgx.ErrNoRows):
+			return row, fmt.Errorf("asset: read the thumbnail of the content: %w", err)
+		}
+	}
+	createdAt, err := q.InsertAsset(ctx, queries.InsertAssetParams{ID: row.ID, WorkspaceID: row.WorkspaceID,
+		ProjectID: row.ProjectID, Sha256: row.Sha256, Mime: row.Mime, Bytes: row.Bytes, Width: row.Width,
+		Height: row.Height, StorageKey: row.StorageKey, ThumbnailKey: row.ThumbnailKey,
+		UploadedBy: row.UploadedBy})
+	if err != nil {
+		return row, fmt.Errorf("asset: add the asset: %w", err)
+	}
+	row.CreatedAt = createdAt
+	if !referenced {
+		if err := usage.Record(ctx, tx, workspaceID, usage.StorageBytes, row.Bytes); err != nil {
+			return row, err
+		}
+	}
+	if enqueue {
+		if err := s.enqueueThumbnail(ctx, tx, workspaceID, ids.UUID(row.ID.Bytes)); err != nil {
+			return row, err
+		}
+	}
+	return row, nil
 }
 
 // enqueueThumbnail enqueues the job that makes the thumbnail of the asset
@@ -452,7 +468,7 @@ func (st stored) mendsThumbnail(needs bool) bool {
 // which img is, unless an asset of the workspace refers to it already
 // (entitlements), in tx.
 func (s *Service) checkStorage(ctx context.Context, tx pgx.Tx, workspaceID, projectID ids.UUID, sum []byte,
-	key string, img Image) (stored, error) {
+	key string, size int64) (stored, error) {
 	q := queries.New(tx)
 	existing, err := q.ProjectAsset(ctx, queries.ProjectAssetParams{WorkspaceID: nullUUID(workspaceID),
 		ProjectID: nullUUID(projectID), Sha256: sum})
@@ -470,7 +486,7 @@ func (s *Service) checkStorage(ctx context.Context, tx pgx.Tx, workspaceID, proj
 	referenced := len(refs) > 0
 	if !referenced {
 		// The blob is new to the workspace, so it adds to its storage.
-		if err := s.ent.Check(ctx, tx, workspaceID, entitlements.StorageBytes, int64(len(img.Data))); err != nil {
+		if err := s.ent.Check(ctx, tx, workspaceID, entitlements.StorageBytes, size); err != nil {
 			return stored{}, err
 		}
 	}
@@ -497,17 +513,28 @@ const refreshAge = orphanAge / 2
 // unreferenced is set, as no row of the workspace refers to the blob, says
 // that it was stored less than refreshAge ago.
 func ensureBlob(ctx context.Context, store blob.Store, key string, img Image, unreferenced bool) error {
-	info, err := store.Stat(ctx, key)
-	switch {
-	case err == nil && (!unreferenced || time.Since(info.Modified) < refreshAge):
-		return nil
-	case err != nil && !errors.Is(err, blob.ErrNotFound):
-		return fmt.Errorf("asset: %w", err)
+	current, err := blobCurrent(ctx, store, key, unreferenced)
+	if err != nil || current {
+		return err
 	}
 	if err := store.Put(ctx, key, img.Data, img.Mime); err != nil {
 		return fmt.Errorf("asset: %w", err)
 	}
 	return nil
+}
+
+// blobCurrent says whether the store has the blob of key and need not be given
+// it again: it has it, and, if unreferenced is set, as no row of the workspace
+// refers to the blob, says that it was stored less than refreshAge ago.
+func blobCurrent(ctx context.Context, store blob.Store, key string, unreferenced bool) (bool, error) {
+	info, err := store.Stat(ctx, key)
+	switch {
+	case err == nil:
+		return !unreferenced || time.Since(info.Modified) < refreshAge, nil
+	case errors.Is(err, blob.ErrNotFound):
+		return false, nil
+	}
+	return false, fmt.Errorf("asset: %w", err)
 }
 
 // Get returns the asset assetID of the project projectID, which the actor

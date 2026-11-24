@@ -190,6 +190,36 @@ func (d *Doc) Members() iter.Seq2[string, *Member] {
 	}
 }
 
+// MapMembers sets the user of each mention of a member of the document to what
+// fn returns for it, as an import does, which attributes a comment's mentions
+// to the accounts of the workspace that it imports into.
+func (d *Doc) MapMembers(fn func(user string) string) {
+	var blocks func(bs []Block)
+	blocks = func(bs []Block) {
+		for _, b := range bs {
+			switch b := b.(type) {
+			case *Paragraph:
+				if b == nil {
+					continue
+				}
+				for _, in := range b.Inlines {
+					if m, ok := in.(*Member); ok && m != nil {
+						m.User = fn(m.User)
+					}
+				}
+			case *List:
+				if b == nil {
+					continue
+				}
+				for _, item := range b.Items {
+					blocks(item.Blocks)
+				}
+			}
+		}
+	}
+	blocks(d.Blocks)
+}
+
 // Inline is the content of a paragraph: a *Text, a *Break, a *Mention, a
 // *Member, or a *Value.
 type Inline interface {

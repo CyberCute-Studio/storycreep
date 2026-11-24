@@ -30,6 +30,20 @@ A section that the manifest does not list is not in the archive. A file's items 
 
 A release holds only what a game needs, so an archive of one has no folders, no component descriptions, and none of the other data that only the draft holds. Its comments and play states are those of the project when the archive was made: a comment whose thread's target is in the release, and a play state with no cursor or whose cursor's node is in the release. The others are left out, and `leftOut` in the manifest and the README count them, so that nothing goes missing silently. What is in the project's trash is neither exported nor counted, and the README says so: that includes a thread whose target the draft has deleted since, even where the release still has that target.
 
+## Importing
+
+`POST /api/v1/workspaces/{workspace_id}/project-imports` begins an import, or `storycreep import` runs one from a file. An import creates a new project, all or nothing, and its failure names what it refused. It:
+
+- refuses a zip with a member outside the archive, a link, an encrypted member, a path twice, or more than the guards allow (PRD NFR-SEC-13), and any member that no section of the manifest accounts for;
+- refuses an archive of more than 4,000 assets, as its one transaction holds a database lock for each, and a release that holds an asset's file, which no build writes;
+- refuses a format or a schema version newer than the server reads, and any section that it cannot import, naming it, as a non-empty `annotations` section until FR-EDIT-12;
+- refuses a section or manifest whose object holds one key twice, as what was validated would not be what is read;
+- checks each file against its SHA-256 and the schema above, and verifies every release: its files' hashes, its content hash, its schema, its references, and its ASTs, naming the release's version and the check that failed;
+- keeps the archive's IDs unless one is in use on the instance, or fresh IDs are asked for, and then writes every reference to them anew;
+- compiles every expression from its source, as the archive holds no AST of the draft's;
+- attributes what a member of the workspace wrote to them, and what anyone else wrote to an imported user with the name in `people.json`;
+- imports an archive of a release as a project whose draft is that release, and one without its assets without the references to them, which its report counts.
+
 ## Versions
 
 `formatVersion` changes with any change that an importer could misread, and each version has a schema of its own at its path. The section registry, `authoring.Sections`, is the one list of what the format holds: a table of authoring data joins a section there, or `authoring.NotExported` with why not, which `TestEveryProjectTableIsAccounted` checks, and plan item 84's import reads the same list.

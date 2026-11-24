@@ -2,6 +2,7 @@ package schemaversion
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"maps"
 	"path"
@@ -13,7 +14,9 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/flow"
+	"github.com/CyberCute-Studio/storycreep/server/internal/jsonscan"
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
+	"github.com/CyberCute-Studio/storycreep/server/internal/schemacheck"
 	"github.com/CyberCute-Studio/storycreep/server/internal/schemagen"
 )
 
@@ -94,6 +97,9 @@ func NewSchemas(dir string, docs map[string][]byte) (*Schemas, error) {
 		}
 		s.files[name] = compiled
 	}
+	// A file holds no null (serializer.Layout), which Check refuses first, so
+	// that what any other value may be need not be walked.
+	schemacheck.FailFast("AnyValue", slices.Collect(maps.Values(s.files))...)
 	return s, nil
 }
 
@@ -129,9 +135,25 @@ func (s *Schemas) Check(f Files) error {
 		if err != nil {
 			return fmt.Errorf("schemaversion: %s is not JSON: %w", p, err)
 		}
-		if err := sch.Validate(inst); err != nil {
+		if err := checkShape(f[p]); err != nil {
 			return fmt.Errorf("schemaversion: %s does not validate against its schema: %w", p, err)
 		}
+		if err := sch.Validate(inst); err != nil {
+			return fmt.Errorf("schemaversion: %s does not validate against its schema: %s", p, schemacheck.Failure(err))
+		}
+	}
+	return nil
+}
+
+// checkShape refuses what the schemas, as FailFast leaves them, are not to be
+// given: a file that nests too deeply, and a null, which no file holds. The
+// file is JSON.
+func checkShape(data []byte) error {
+	if err := schemacheck.CheckDepth(data); err != nil {
+		return err
+	}
+	if jsonscan.HasNull(data) {
+		return errors.New("it holds a null, which no value of a snapshot may be")
 	}
 	return nil
 }

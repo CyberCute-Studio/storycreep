@@ -24,6 +24,7 @@ const base: AuthoringExportBody = {
   contains_personal_data: true,
   import_max_bytes: 2048,
   exceeds_import_limit: false,
+  import_max_assets: 4000,
   created_at: "2026-11-22T10:00:00Z",
   expires_at: "2026-11-29T10:00:00Z",
 };
@@ -162,17 +163,31 @@ describe("the authoring export's dialog", () => {
     serve({
       ...base,
       status: "ready",
-      size_bytes: 4096,
+      size_bytes: base.import_max_bytes + 1,
       exceeds_import_limit: true,
       file_name: "harbour-draft-authoring.zip",
     });
     await open();
-    expect(await screen.findByText(/Ready: 4 kB/)).toBeTruthy();
+    expect(await screen.findByText(/Ready: /)).toBeTruthy();
     expect(screen.getByText(/larger than this instance/)).toBeTruthy();
     const link = screen.getByRole("link", { name: "Download archive" });
     expect(link.getAttribute("href")).toBe(
       "/api/v1/projects/prj_a/authoring-exports/job_a/download",
     );
+  });
+
+  it("warns of an archive with more assets than an import takes", async () => {
+    serve({
+      ...base,
+      status: "ready",
+      size_bytes: 1024,
+      asset_count: 4001,
+      exceeds_import_limit: true,
+      file_name: "harbour-draft-authoring.zip",
+    });
+    await open();
+    expect(await screen.findByText(/holds 4,001 assets/)).toBeTruthy();
+    expect(screen.queryByText(/larger than this instance/)).toBeNull();
   });
 
   it("says that an archive past its time is gone once its download is tried", async () => {

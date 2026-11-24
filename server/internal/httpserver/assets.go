@@ -50,7 +50,9 @@ const uploadReadTimeout = 5 * time.Minute
 // twice, as it reads it and as the attribute's value, which the sanitizer
 // checks without copying it, and the file that it writes, of at most the
 // same size (asset.ErrTooLarge), but no more, whatever its elements and their
-// attributes, which the sanitizer bounds before the decoder reads them.
+// attributes, which the sanitizer bounds before the decoder reads them. A
+// chunk of an import's upload is held the same way, and takes its turn among
+// them, as the two routes share one set of slots.
 const uploadMemory = 256 << 20
 
 // uploadSlots returns how many uploads of files of at most maxBytes may hold
@@ -249,9 +251,10 @@ var fileDoc = " The answer depends on where the instance stores its files (STORY
 
 // registerAssets registers the routes of the projects' assets (PRD
 // FR-ASSET-01, FR-ASSET-02): uploading one, whose file is at most the
-// service's MaxBytes, as many at once as uploadMemory holds, reading one,
-// and serving its file and its thumbnail.
-func registerAssets(m *api.Mux, assets *asset.Service) {
+// service's MaxBytes, as many at once as uploads, the slots that it shares
+// with an import's chunks, hold, reading one, and serving its file and its
+// thumbnail.
+func registerAssets(m *api.Mux, assets *asset.Service, uploads *slots) {
 	maxBytes := assets.MaxBytes()
 	// checkUpload refuses an upload that the project would refuse whatever
 	// its file holds before the route reads the file, so that a request that
@@ -337,7 +340,7 @@ func registerAssets(m *api.Mux, assets *asset.Service) {
 		// rate limit refuses, which counts every request before it waits for
 		// one, so that a client cannot keep more requests waiting than its
 		// limit lets it send.
-		api.AfterLimit(holdSlot(newSlots(uploadSlots(maxBytes)))))
+		api.AfterLimit(holdSlot(uploads)))
 
 	api.Register(m, api.ReadProject, huma.Operation{
 		OperationID: "getAsset",

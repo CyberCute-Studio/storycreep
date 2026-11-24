@@ -27,12 +27,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
 
 // ErrNoURL is returned by Open when STORYCREEP_DATABASE_MAINTENANCE_URL is not
@@ -81,6 +85,51 @@ func Open(ctx context.Context, url config.DatabaseURL) (*DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+// OpenConfigured is Open of the instance's maintenance login, for the server's
+// startup and the command line, which keep the URL to this package.
+func OpenConfigured(ctx context.Context, cfg *config.Config) (*DB, error) {
+	return Open(ctx, cfg.DatabaseMaintenanceURL)
+}
+
+// IDTables are the tables whose IDs an authoring archive holds, of every
+// workspace, which the import's collision check reads (PRD §5.2).
+var IDTables = []string{"project", "folder", "board", "variable", "component_type", "attribute_def", "component",
+	"node", "branch_output", "connection", "comment", "play_state", "snapshot", "asset"}
+
+// idBatch is how many IDs one statement of the collision check asks about.
+const idBatch = 10_000
+
+// AnyIDInUse says whether any of list is the ID of a row of IDTables, in any
+// workspace: one boolean, which names neither the ID nor the workspace, and is
+// all that the import's report may tell (PRD §5.2).
+func (db *DB) AnyIDInUse(ctx context.Context, list []ids.UUID) (bool, error) {
+	var query strings.Builder
+	query.WriteString("SELECT ")
+	for i, table := range IDTables {
+		if i > 0 {
+			query.WriteString(" OR ")
+		}
+		fmt.Fprintf(&query, "EXISTS (SELECT FROM %s WHERE id = ANY($1::uuid[]))", pgx.Identifier{table}.Sanitize())
+	}
+	found := false
+	err := db.inTx(ctx, func(tx pgx.Tx) error {
+		for batch := range slices.Chunk(list, idBatch) {
+			args := make([]pgtype.UUID, len(batch))
+			for i, id := range batch {
+				args[i] = pgtype.UUID{Bytes: id, Valid: true}
+			}
+			if err := tx.QueryRow(ctx, query.String(), args).Scan(&found); err != nil {
+				return fmt.Errorf("maintenance: check the IDs: %w", err)
+			}
+			if found {
+				return nil
+			}
+		}
+		return nil
+	})
+	return found, err
 }
 
 // Close closes the pool, waiting for the connections in use to be returned.

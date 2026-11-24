@@ -324,7 +324,7 @@ func (q *Queries) AuthoringEntry(ctx context.Context, arg AuthoringEntryParams) 
 }
 
 const authoringExport = `-- name: AuthoringExport :one
-SELECT id, workspace_id, project_id, requested_by, snapshot_id, profile, include_assets, include_releases, status, storage_key, size_bytes, file_name, created_at, finished_at, expires_at FROM authoring_export
+SELECT id, workspace_id, project_id, requested_by, snapshot_id, profile, include_assets, include_releases, status, storage_key, size_bytes, file_name, created_at, finished_at, expires_at, asset_count FROM authoring_export
 WHERE workspace_id = $1 AND project_id = $2 AND requested_by = $3 AND id = $4
     AND expires_at > now()
 `
@@ -362,6 +362,7 @@ func (q *Queries) AuthoringExport(ctx context.Context, arg AuthoringExportParams
 		&i.CreatedAt,
 		&i.FinishedAt,
 		&i.ExpiresAt,
+		&i.AssetCount,
 	)
 	return i, err
 }
@@ -388,7 +389,7 @@ func (q *Queries) AuthoringExportInProgress(ctx context.Context, arg AuthoringEx
 }
 
 const authoringExportOfJob = `-- name: AuthoringExportOfJob :one
-SELECT id, workspace_id, project_id, requested_by, snapshot_id, profile, include_assets, include_releases, status, storage_key, size_bytes, file_name, created_at, finished_at, expires_at FROM authoring_export WHERE workspace_id = $1 AND id = $2
+SELECT id, workspace_id, project_id, requested_by, snapshot_id, profile, include_assets, include_releases, status, storage_key, size_bytes, file_name, created_at, finished_at, expires_at, asset_count FROM authoring_export WHERE workspace_id = $1 AND id = $2
 `
 
 type AuthoringExportOfJobParams struct {
@@ -416,12 +417,13 @@ func (q *Queries) AuthoringExportOfJob(ctx context.Context, arg AuthoringExportO
 		&i.CreatedAt,
 		&i.FinishedAt,
 		&i.ExpiresAt,
+		&i.AssetCount,
 	)
 	return i, err
 }
 
 const authoringExports = `-- name: AuthoringExports :many
-SELECT id, workspace_id, project_id, requested_by, snapshot_id, profile, include_assets, include_releases, status, storage_key, size_bytes, file_name, created_at, finished_at, expires_at FROM authoring_export
+SELECT id, workspace_id, project_id, requested_by, snapshot_id, profile, include_assets, include_releases, status, storage_key, size_bytes, file_name, created_at, finished_at, expires_at, asset_count FROM authoring_export
 WHERE workspace_id = $1 AND project_id = $2 AND requested_by = $3
     AND expires_at > now()
     AND ($4::uuid = '00000000-0000-0000-0000-000000000000' OR id < $4::uuid)
@@ -470,6 +472,7 @@ func (q *Queries) AuthoringExports(ctx context.Context, arg AuthoringExportsPara
 			&i.CreatedAt,
 			&i.FinishedAt,
 			&i.ExpiresAt,
+			&i.AssetCount,
 		); err != nil {
 			return nil, err
 		}
@@ -956,12 +959,13 @@ func (q *Queries) FailExpiredAuthoringExports(ctx context.Context, arg FailExpir
 }
 
 const finishAuthoringExport = `-- name: FinishAuthoringExport :execrows
-UPDATE authoring_export SET status = 'ready', size_bytes = $1, file_name = $2, finished_at = now()
-WHERE workspace_id = $3 AND id = $4 AND status = 'building'
+UPDATE authoring_export SET status = 'ready', size_bytes = $1, asset_count = $2, file_name = $3, finished_at = now()
+WHERE workspace_id = $4 AND id = $5 AND status = 'building'
 `
 
 type FinishAuthoringExportParams struct {
 	SizeBytes   pgtype.Int8
+	AssetCount  pgtype.Int4
 	FileName    pgtype.Text
 	WorkspaceID pgtype.UUID
 	ID          pgtype.UUID
@@ -971,6 +975,7 @@ type FinishAuthoringExportParams struct {
 func (q *Queries) FinishAuthoringExport(ctx context.Context, arg FinishAuthoringExportParams) (int64, error) {
 	result, err := q.db.Exec(ctx, finishAuthoringExport,
 		arg.SizeBytes,
+		arg.AssetCount,
 		arg.FileName,
 		arg.WorkspaceID,
 		arg.ID,
@@ -987,7 +992,7 @@ INSERT INTO authoring_export (id, workspace_id, project_id, requested_by, snapsh
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
     $9, $10)
 ON CONFLICT (workspace_id, project_id, requested_by) WHERE status IN ('queued', 'building') DO NOTHING
-RETURNING id, workspace_id, project_id, requested_by, snapshot_id, profile, include_assets, include_releases, status, storage_key, size_bytes, file_name, created_at, finished_at, expires_at
+RETURNING id, workspace_id, project_id, requested_by, snapshot_id, profile, include_assets, include_releases, status, storage_key, size_bytes, file_name, created_at, finished_at, expires_at, asset_count
 `
 
 type InsertAuthoringExportParams struct {
@@ -1035,6 +1040,7 @@ func (q *Queries) InsertAuthoringExport(ctx context.Context, arg InsertAuthoring
 		&i.CreatedAt,
 		&i.FinishedAt,
 		&i.ExpiresAt,
+		&i.AssetCount,
 	)
 	return i, err
 }

@@ -663,7 +663,7 @@ func conditional(o queries.BranchOutput, at string) error {
 // an output with the ID of one that exists already, which may be another
 // workspace's, or another project's, whose rows the transaction does not see.
 func refuseTakenOutputID() error {
-	return commands.Refuse("id", "is the ID of a branch output that exists already", nil)
+	return commands.Refuse("id", "is the ID of a branch output that exists already", commands.ErrIDTaken)
 }
 
 // anyOutput returns the output of the batch's project whose ID is id, an

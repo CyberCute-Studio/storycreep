@@ -58,8 +58,8 @@ const (
 	RestoreAttribute commands.Type = "attribute.restore"
 )
 
-// createAttributePayload is CreateAttribute's payload.
-type createAttributePayload struct {
+// CreateAttributePayload is CreateAttribute's payload.
+type CreateAttributePayload struct {
 	ID              string      `json:"id" doc:"The new attribute definition's ID, an atr_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
 	ComponentTypeID string      `json:"component_type_id" doc:"The ID of the component type that the definition is added to, which is not in the project's trash, and which has fewer than 100 definitions that are not"`
 	Name            string      `json:"name" maxLength:"100" doc:"The definition's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them"`
@@ -137,27 +137,35 @@ func registerAttributes(r *commands.Registry) {
 	values := []ids.Kind{ids.AttributeDef, ids.Component}
 	op, sc := authz.ManageVariablesAndComponents, scope.ProjectWrite
 
-	commands.Register(r, commands.Spec[createAttributePayload]{
+	commands.Register(r, commands.Spec[CreateAttributePayload]{
 		Type: CreateAttribute, Capability: op, Scope: sc,
 		Touches: []ids.Kind{ids.AttributeDef, ids.ComponentType, ids.Component},
 		// A create is never a step of an inverse, so its Check checks the
 		// default whole, as a variable's create does, once the options that it
 		// is checked against are valid.
-		Check: func(p createAttributePayload) input.FieldErrors {
+		Check: func(p CreateAttributePayload) input.FieldErrors {
 			errs := newID(ids.AttributeDef, p.ID)
 			errs = append(errs, entityID(ids.ComponentType, "component_type_id", p.ComponentTypeID)...)
 			if options := checkOptions(p.Type, p.Options); len(options) > 0 {
 				return append(errs, options...)
 			}
 			errs = append(errs, checkRuntime("runtime", p.Type, p.Runtime)...)
-			_, problem := p.Default.Of(p.Type, p.Options...)
+			_, problem := p.Default.Read(p.Type, value.Checks{Length: true}, p.Options...)
 			return append(errs, field("default", problem)...)
 		},
-		CheckNew: func(p createAttributePayload) input.FieldErrors {
+		// An import creates a definition with its stored name, options, and
+		// default, which the text rules may refuse (commands.Spec.CheckNew). A
+		// default that is not of its type is Check's to report, once.
+		CheckNew: func(p CreateAttributePayload) input.FieldErrors {
 			errs := field("name", checkName(p.Name))
-			return append(errs, field("options", value.CheckOptionNames(p.Options))...)
+			errs = append(errs, field("options", value.CheckOptionNames(p.Options))...)
+			if _, problem := p.Default.Read(p.Type, value.Checks{Length: true}, p.Options...); problem == "" {
+				_, problem = p.Default.Of(p.Type, p.Options...)
+				errs = append(errs, field("default", problem)...)
+			}
+			return errs
 		},
-		Inverse: func(_ context.Context, _ *commands.Tx, p createAttributePayload) ([]commands.Step, error) {
+		Inverse: func(_ context.Context, _ *commands.Tx, p CreateAttributePayload) ([]commands.Step, error) {
 			return []commands.Step{{Type: DeleteAttribute, Payload: attributeIDPayload{ID: p.ID}}}, nil
 		},
 		Apply: applyCreateAttribute,
@@ -442,7 +450,7 @@ func registerAttributes(r *commands.Registry) {
 }
 
 // applyCreateAttribute is CreateAttribute's Apply.
-func applyCreateAttribute(ctx context.Context, tx *commands.Tx, p createAttributePayload) error {
+func applyCreateAttribute(ctx context.Context, tx *commands.Tx, p CreateAttributePayload) error {
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	id := decoded(ids.AttributeDef, p.ID)
@@ -450,7 +458,7 @@ func applyCreateAttribute(ctx context.Context, tx *commands.Tx, p createAttribut
 	// anything else is checked, as a variable's create is.
 	if _, err := q.AttributeDefAny(ctx, queries.AttributeDefAnyParams{WorkspaceID: ws, ProjectID: project,
 		ID: id}); err == nil {
-		return commands.Refuse("id", "is the ID of an attribute definition that exists already", nil)
+		return commands.Refuse("id", "is the ID of an attribute definition that exists already", commands.ErrIDTaken)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("component: read the attribute definition: %w", err)
 	}
@@ -477,8 +485,9 @@ func applyCreateAttribute(ctx context.Context, tx *commands.Tx, p createAttribut
 	if err != nil {
 		return err
 	}
-	// Check checked the default against the type.
-	def, _ := p.Default.Of(p.Type, p.Options...)
+	// Check checked the default against the type, and CheckNew the characters
+	// of one that is not a stored value.
+	def, _ := p.Default.Read(p.Type, value.Checks{Length: true}, p.Options...)
 	options := p.Options
 	if options == nil {
 		options = []string{}
@@ -487,7 +496,7 @@ func applyCreateAttribute(ctx context.Context, tx *commands.Tx, p createAttribut
 		ComponentTypeID: t.ID, SortKey: order, Key: key, Name: p.Name, Type: p.Type, EnumOptions: options,
 		DefaultValue: def.JSON(), IsRuntime: p.Runtime, CreatedBy: by(tx)})
 	if database.UniqueViolation(err, "attribute_def_pkey") {
-		return commands.Refuse("id", "is the ID of an attribute definition that exists already", nil)
+		return commands.Refuse("id", "is the ID of an attribute definition that exists already", commands.ErrIDTaken)
 	}
 	if err != nil {
 		return fmt.Errorf("component: add the attribute definition: %w", err)

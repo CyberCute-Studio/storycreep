@@ -50,8 +50,8 @@ const (
 	Restore commands.Type = "board.restore"
 )
 
-// createPayload is Create's payload.
-type createPayload struct {
+// CreatePayload is Create's payload.
+type CreatePayload struct {
 	ID          string `json:"id" doc:"The new board's ID, a bd_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
 	Name        string `json:"name" maxLength:"100" doc:"The board's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them"`
 	Slug        string `json:"slug,omitempty" doc:"The board's slug, which names its file in the game project: groups of lowercase ASCII letters and digits joined by single hyphens, as harbour-intro, of at most 64 characters, that no other board of the project has, in its trash or not, and that is not a name that Windows reserves for a device, such as con or com1. A slug that is not one is answered with 422 slug_invalid, and one that another board has with 409 slug_taken. Without it, the server derives one from the name: its letters and digits in lowercase ASCII, without their accents, each run of other characters a hyphen, or board if that leaves nothing, with -board after a name that Windows reserves for a device, as con-board, and then with -2, -3, and so on, the first that no board of the project has (PRD FR-PROJ-02 AC1, AC4)."`
@@ -138,15 +138,17 @@ func registerBoards(r *commands.Registry) {
 	// A board's folder is an entity that the board refers to.
 	inFolder := []ids.Kind{ids.Board, ids.Folder}
 
-	commands.Register(r, commands.Spec[createPayload]{
+	commands.Register(r, commands.Spec[CreatePayload]{
 		Type: Create, Capability: authz.ManageBoards, Scope: scope.ProjectWrite, Touches: inFolder,
-		Check: func(p createPayload) input.FieldErrors {
-			errs := newID(ids.Board, p.ID)
-			errs = append(errs, field("name", checkName(p.Name))...)
-			errs = append(errs, field("description", checkDescription(p.Description))...)
-			return append(errs, optionalID(ids.Folder, "folder_id", p.FolderID)...)
+		Check: func(p CreatePayload) input.FieldErrors {
+			return append(newID(ids.Board, p.ID), optionalID(ids.Folder, "folder_id", p.FolderID)...)
 		},
-		Inverse: func(_ context.Context, _ *commands.Tx, p createPayload) ([]commands.Step, error) {
+		// An import creates a board with its stored name and description,
+		// which the text rules may refuse (commands.Spec.CheckNew).
+		CheckNew: func(p CreatePayload) input.FieldErrors {
+			return append(field("name", checkName(p.Name)), field("description", checkDescription(p.Description))...)
+		},
+		Inverse: func(_ context.Context, _ *commands.Tx, p CreatePayload) ([]commands.Step, error) {
 			return []commands.Step{{Type: Delete, Payload: deletePayload{ID: p.ID}}}, nil
 		},
 		Apply: applyCreate,
@@ -438,7 +440,7 @@ func applyDelete(ctx context.Context, tx *commands.Tx, p deletePayload) error {
 }
 
 // applyCreate is Create's Apply.
-func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
+func applyCreate(ctx context.Context, tx *commands.Tx, p CreatePayload) error {
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	id := decoded(ids.Board, p.ID)
@@ -449,7 +451,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	// the insert below refuses the ID of a board that this transaction does
 	// not see.
 	if _, err := q.BoardAny(ctx, queries.BoardAnyParams{WorkspaceID: ws, ProjectID: project, ID: id}); err == nil {
-		return commands.Refuse("id", "is the ID of a board that exists already", nil)
+		return commands.Refuse("id", "is the ID of a board that exists already", commands.ErrIDTaken)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("board: read the board: %w", err)
 	}
@@ -478,7 +480,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	if database.UniqueViolation(err, "board_pkey") {
 		// The ID is another workspace's, or another project's, whose rows
 		// this transaction does not see.
-		return commands.Refuse("id", "is the ID of a board that exists already", nil)
+		return commands.Refuse("id", "is the ID of a board that exists already", commands.ErrIDTaken)
 	}
 	if err != nil {
 		return fmt.Errorf("board: add the board: %w", err)

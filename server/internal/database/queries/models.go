@@ -59,6 +59,7 @@ type AuthoringExport struct {
 	CreatedAt       pgtype.Timestamptz
 	FinishedAt      pgtype.Timestamptz
 	ExpiresAt       pgtype.Timestamptz
+	AssetCount      pgtype.Int4
 }
 
 type Board struct {
@@ -452,6 +453,27 @@ type ProjectGrant struct {
 	Role         string
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+}
+
+type ProjectImport struct {
+	ID               pgtype.UUID
+	WorkspaceID      pgtype.UUID
+	RequestedBy      pgtype.UUID
+	Status           string
+	FileName         string
+	SizeBytes        int64
+	ChunkBytes       int32
+	IDPolicy         string
+	AppliedPolicy    pgtype.Text
+	CreatedProjectID pgtype.UUID
+	Phase            string
+	ProgressDone     int64
+	ProgressTotal    int64
+	Report           []byte
+	Failure          []byte
+	CreatedAt        pgtype.Timestamptz
+	FinishedAt       pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
 }
 
 type Snapshot struct {

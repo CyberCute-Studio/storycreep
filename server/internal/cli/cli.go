@@ -76,6 +76,8 @@ var commands = []*command{
 	grantRole,
 	resetPassword,
 	createToken,
+	exportProject,
+	importProject,
 	validateConfig,
 	healthcheck,
 }

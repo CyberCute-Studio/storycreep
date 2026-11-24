@@ -5,6 +5,28 @@ import (
 	"testing"
 )
 
+// TestCheckStoredLength checks that a stored text is held to its length alone,
+// counted in characters, whatever a text rule says of what it holds.
+func TestCheckStoredLength(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		text     string
+		min, max int
+		ok       bool
+	}{
+		{"", 0, 3, true},
+		{"", 1, 3, false},
+		{"žžž", 1, 3, true},
+		{"žžžž", 1, 3, false},
+		{" a\a", 1, 3, true},
+		{string(rune(0x202e)), 1, 3, true},
+	} {
+		if got := CheckStoredLength(c.text, c.min, c.max); (got == "") != c.ok {
+			t.Errorf("CheckStoredLength(%q, %d, %d) = %q, want ok %v", c.text, c.min, c.max, got, c.ok)
+		}
+	}
+}
+
 // TestCheckText checks that a text of several lines may be empty and hold
 // line feeds and tabs, but no other control character, bidirectional
 // control, or line separator, and no more characters than its limit, counted

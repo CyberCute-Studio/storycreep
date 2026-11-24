@@ -132,6 +132,10 @@ func TestAssetStorageKeys(t *testing.T) {
 	if c.AssetMaxBytes != MaxAssetMaxBytes {
 		t.Errorf("AssetMaxBytes = %d", c.AssetMaxBytes)
 	}
+	c = mustLoad(t, withRequired(map[string]string{"STORYCREEP_IMPORT_MAX_BYTES": "4503599627370496"}))
+	if c.ImportMaxBytes != MaxImportMaxBytes {
+		t.Errorf("ImportMaxBytes = %d", c.ImportMaxBytes)
+	}
 
 	c = mustLoad(t, withRequired(map[string]string{"STORYCREEP_MODE": "hosted"}))
 	if c.Capabilities.BlobDriver != BlobS3 || c.AssetStorage.S3 == nil {
@@ -156,6 +160,8 @@ func TestAssetStorageKeys(t *testing.T) {
 		{"a unit", map[string]string{"STORYCREEP_ASSET_MAX_BYTES": "10MB"}, "STORYCREEP_ASSET_MAX_BYTES"},
 		{"an import limit of no bytes", map[string]string{"STORYCREEP_IMPORT_MAX_BYTES": "0"}, "STORYCREEP_IMPORT_MAX_BYTES"},
 		{"an import limit with a unit", map[string]string{"STORYCREEP_IMPORT_MAX_BYTES": "2GB"},
+			"STORYCREEP_IMPORT_MAX_BYTES"},
+		{"an import limit past the most", map[string]string{"STORYCREEP_IMPORT_MAX_BYTES": "4503599627370497"},
 			"STORYCREEP_IMPORT_MAX_BYTES"},
 		{"a setup directory", map[string]string{"STORYCREEP_SETUP_OWNER_EMAIL": "jo@example.com",
 			"STORYCREEP_SETUP_OWNER_NAME": "Jo", "STORYCREEP_SETUP_OWNER_PASSWORD": "correct horse battery",

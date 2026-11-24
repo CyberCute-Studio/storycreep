@@ -59,9 +59,9 @@ type describePayload struct {
 	Description string `json:"description" maxLength:"2000" doc:"The project's new description, of at most 2000 characters, which may be empty, without white space around it, and without control characters but line feeds and tabs"`
 }
 
-// settingsPayload is UpdateSettings's payload. A setting that it leaves out
+// SettingsPayload is UpdateSettings's payload. A setting that it leaves out
 // stays as it is.
-type settingsPayload struct {
+type SettingsPayload struct {
 	DefaultLocale  *string       `json:"default_locale,omitempty" maxLength:"64" doc:"The locale of the project's text, as a BCP 47 tag of a language in its canonical form, such as en or cs-CZ"`
 	PublishMinRole *string       `json:"publish_min_role,omitempty" enum:"editor,admin" doc:"The least role that may publish the project's snapshots"`
 	Entry          *ProjectEntry `json:"entry,omitempty" doc:"The project's entry, which replaces its entry: without a board, the project has none. A board other than the entry's is one of the project's boards, in its trash or not, and a node, unless the entry keeps both its board and its node, is a node of that board, in the project's trash or not, or the command is answered with 422 validation_failed. Without a node, the flow starts at the board's entry node."`
@@ -181,21 +181,21 @@ func Register(r *commands.Registry) {
 		},
 	})
 
-	commands.Register(r, commands.Spec[settingsPayload]{
+	commands.Register(r, commands.Spec[SettingsPayload]{
 		Type: UpdateSettings, Capability: patchOperation, Scope: patchScope, Touches: touches,
 		Check: checkSettings,
 		// The step of the inverse writes back the stored default locale, which
 		// a later version of golang.org/x/text/language may write otherwise
 		// in its canonical form (commands.Spec.CheckNew).
 		CheckNew: checkNewSettings,
-		Inverse: func(ctx context.Context, tx *commands.Tx, p settingsPayload) ([]commands.Step, error) {
+		Inverse: func(ctx context.Context, tx *commands.Tx, p SettingsPayload) ([]commands.Step, error) {
 			cur, err := read(ctx, tx)
 			if err != nil {
 				return nil, err
 			}
 			// The inverse sets back exactly the settings that p sets.
 			set := decodeSettings(cur.Settings)
-			var back settingsPayload
+			var back SettingsPayload
 			if p.DefaultLocale != nil {
 				back.DefaultLocale = &set.DefaultLocale
 			}
@@ -412,7 +412,7 @@ func lifecycle(update func(ctx context.Context, q *queries.Queries, by queries.A
 
 // checkSettings returns what is wrong with UpdateSettings's payload p that its
 // schema cannot say, but for its default locale (checkNewSettings).
-func checkSettings(p settingsPayload) input.FieldErrors {
+func checkSettings(p SettingsPayload) input.FieldErrors {
 	if p.Entry != nil {
 		if f, msg := checkEntry(*p.Entry); msg != "" {
 			return field("entry."+f, msg)
@@ -424,7 +424,7 @@ func checkSettings(p settingsPayload) input.FieldErrors {
 // checkNewSettings returns what is wrong with the default locale of
 // UpdateSettings's payload p: a BCP 47 tag of a language, in its canonical
 // form.
-func checkNewSettings(p settingsPayload) input.FieldErrors {
+func checkNewSettings(p SettingsPayload) input.FieldErrors {
 	if p.DefaultLocale == nil {
 		return nil
 	}
@@ -440,7 +440,7 @@ func checkNewSettings(p settingsPayload) input.FieldErrors {
 // applySettings is UpdateSettings's Apply: it changes the settings that p
 // names, and records a change of publish_min_role in the audit log
 // (FR-SNAP-01 AC6).
-func applySettings(ctx context.Context, tx *commands.Tx, p settingsPayload) error {
+func applySettings(ctx context.Context, tx *commands.Tx, p SettingsPayload) error {
 	cur, err := read(ctx, tx)
 	if err != nil {
 		return err
@@ -471,7 +471,9 @@ func applySettings(ctx context.Context, tx *commands.Tx, p settingsPayload) erro
 		ID: nullUUID(tx.ProjectID())})); err != nil {
 		return err
 	}
-	if set.PublishMinRole == previous.PublishMinRole {
+	// An import gives a new project the role that its archive holds, which is
+	// no change of its policy: its audit entry is project.import.
+	if set.PublishMinRole == previous.PublishMinRole || tx.Populating() {
 		return nil
 	}
 	return tx.Audit(ctx, audit.Entry{Action: audit.ActionProjectPublishPolicyChange, SubjectID: tx.ProjectID(),

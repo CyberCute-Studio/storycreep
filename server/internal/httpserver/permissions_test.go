@@ -1249,6 +1249,10 @@ func sampleValue(t *testing.T, registry huma.Registry, s *huma.Schema) any {
 // publish gate lets it through. A diff's is of the project's snapshot into
 // itself, which a sample of the schema would not name.
 var sampleBodies = map[api.Route]func(t *testing.T, f *rolesFixture, params map[string]string) []byte{
+	{Method: http.MethodPut, Pattern: "/api/v1/workspaces/{workspace_id}/project-imports/{import_id}/chunks/{index}"}: func(
+		_ *testing.T, _ *rolesFixture, _ map[string]string) []byte {
+		return []byte("0123456789")
+	},
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/diff"}: func(t *testing.T,
 		_ *rolesFixture, params map[string]string) []byte {
 		return jsonBody(t, map[string]any{"from": params["snapshot_id"], "to": params["snapshot_id"]})
@@ -1416,6 +1420,8 @@ func routeParams(t *testing.T, f *rolesFixture) map[string]string {
 		"play_state_id":     f.playState(t, p),
 		"snapshot_id":       f.snapshot(t, p),
 		"export_id":         f.authoringExport(t, p),
+		"import_id":         f.projectImport(t),
+		"index":             "0",
 		"from_board_id":     f.board(t, p),
 		"to_board_id":       f.board(t, p),
 		// No account has the notification, which the routes of the
@@ -1426,6 +1432,28 @@ func routeParams(t *testing.T, f *rolesFixture) map[string]string {
 
 // authoringExport returns the ID of a ready authoring export of the project
 // p, which its owner asked for, and which nobody else reads.
+// projectImport begins an import of a small archive, as the owner, and
+// returns its ID.
+func (f *rolesFixture) projectImport(t *testing.T) string {
+	t.Helper()
+	res := call(f.s.main, http.MethodPost, importsPath(f.ws), jsonBody(t, map[string]any{"file_name": "a.zip",
+		"size_bytes": 10}), f.as["owner"].header(true))
+	if res.status == http.StatusConflict {
+		// The owner's import that an earlier walk of the routes began.
+		if id, ok := res.details(t)["import_id"].(string); ok {
+			return id
+		}
+	}
+	if res.status != http.StatusCreated {
+		t.Fatalf("begin an import: %d %s", res.status, res.body)
+	}
+	var i ProjectImportBody
+	if err := json.Unmarshal(res.body, &i); err != nil {
+		t.Fatal(err)
+	}
+	return i.ID
+}
+
 func (f *rolesFixture) authoringExport(t *testing.T, p string) string {
 	t.Helper()
 	res := call(f.s.main, http.MethodPost, projectPath(p)+"/authoring-exports", jsonBody(t, map[string]any{}),

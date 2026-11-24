@@ -133,8 +133,8 @@ type ManyPayload struct {
 	IDs []string `json:"ids" minItems:"1" maxItems:"10000" nullable:"false" doc:"The IDs of the nodes, each once, at most 10000, of any of the project's boards"`
 }
 
-// entryPayload is SetBoardEntry's payload.
-type entryPayload struct {
+// EntryPayload is SetBoardEntry's payload.
+type EntryPayload struct {
 	ID     string `json:"id" doc:"The board's ID"`
 	NodeID string `json:"node_id,omitempty" doc:"The ID of the board's new entry node, a node of the board, in the project's trash or not, or the entry node that the board has, which may no longer exist. Without it, the board has none."`
 }
@@ -393,20 +393,20 @@ func Register(r *commands.Registry) {
 		},
 	})
 
-	commands.Register(r, commands.Spec[entryPayload]{
+	commands.Register(r, commands.Spec[EntryPayload]{
 		Type: SetBoardEntry, Capability: authz.ManageBoards, Scope: sc, Touches: []ids.Kind{ids.Board, ids.Node},
-		Check: func(p entryPayload) input.FieldErrors {
+		Check: func(p EntryPayload) input.FieldErrors {
 			return append(entityID(ids.Board, "id", p.ID), optionalID(ids.Node, "node_id", p.NodeID)...)
 		},
-		Inverse: func(ctx context.Context, tx *commands.Tx, p entryPayload) ([]commands.Step, error) {
+		Inverse: func(ctx context.Context, tx *commands.Tx, p EntryPayload) ([]commands.Step, error) {
 			b, err := liveBoardOf(ctx, tx, p.ID)
 			if err != nil {
 				return nil, err
 			}
-			return []commands.Step{{Type: SetBoardEntry, Payload: entryPayload{ID: p.ID,
+			return []commands.Step{{Type: SetBoardEntry, Payload: EntryPayload{ID: p.ID,
 				NodeID: encode(ids.Node, b.EntryNodeID)}}}, nil
 		},
-		Apply: func(ctx context.Context, tx *commands.Tx, p entryPayload) error {
+		Apply: func(ctx context.Context, tx *commands.Tx, p EntryPayload) error {
 			b, err := liveBoardOf(ctx, tx, p.ID)
 			if err != nil {
 				return err
@@ -822,6 +822,13 @@ func checkTitle(title string) string {
 
 // applyCreate is Create's Apply.
 func applyCreate(ctx context.Context, tx *commands.Tx, p CreatePayload) error {
+	// An import's values skip CheckNew, but a snapshot's load holds a node's
+	// tags to being distinct, whatever their characters.
+	if tx.Populating() {
+		if errs := checkDistinctTags("tags", p.Tags); len(errs) > 0 {
+			return commands.Refuse(errs[0].Field, errs[0].Message, nil)
+		}
+	}
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	id := decoded(ids.Node, p.ID)
@@ -958,7 +965,7 @@ func checkNewNode(ctx context.Context, q *queries.Queries, ws, project, id pgtyp
 // with the ID of one that exists already, which may be another workspace's,
 // or another project's, whose rows the transaction does not see.
 func refuseTakenID() error {
-	return commands.Refuse("id", "is the ID of a node that exists already", nil)
+	return commands.Refuse("id", "is the ID of a node that exists already", commands.ErrIDTaken)
 }
 
 // planUpdate returns the node of Update's payload p, as it is, and every

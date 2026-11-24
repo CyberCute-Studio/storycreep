@@ -235,7 +235,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	// keep-mine sends it (FR-OFF-04), is refused for its ID; the insert below
 	// refuses the ID of a play state that this transaction does not see.
 	if _, err := q.PlayStateAny(ctx, queries.PlayStateAnyParams{WorkspaceID: ws, ProjectID: project, ID: id}); err == nil {
-		return commands.Refuse("id", "is the ID of a play state that exists already", nil)
+		return commands.Refuse("id", "is the ID of a play state that exists already", commands.ErrIDTaken)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("playstate: read the play state: %w", err)
 	}
@@ -248,7 +248,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	if database.UniqueViolation(err, "play_state_pkey") {
 		// The ID is another project's, or another workspace's, whose rows
 		// this transaction does not see.
-		return commands.Refuse("id", "is the ID of a play state that exists already", nil)
+		return commands.Refuse("id", "is the ID of a play state that exists already", commands.ErrIDTaken)
 	}
 	if err != nil {
 		return fmt.Errorf("playstate: add the play state: %w", err)
@@ -405,6 +405,69 @@ func checkState(name string, st published.SaveState) input.FieldErrors {
 			"that a play state's state may take", len(data), MaxStateBytes)}}
 	}
 	return nil
+}
+
+// CheckImported returns what is wrong with a play state of an imported
+// archive for the project projectID, by its name, its state, and the names of
+// its values. The state is held to what the commands hold one to, and to being
+// of the project, the names to naming values that it holds, and each text to
+// the lengths that the database and the readers take: a stored text may break
+// the text rules of a new one (checkName, checkNameTexts), and is kept as it
+// is, as the step of an inverse writes it back (commands.Spec.CheckNew). It
+// also returns the state and the names as a command stores them, which are what
+// it checked: jsonb sorts a document's keys, so that of two spellings of a key,
+// a read of the bytes as the archive holds them could take the other one.
+func CheckImported(projectID ids.UUID, name string, state, names []byte) (stateData, namesData []byte,
+	errs input.FieldErrors) {
+	if msg := input.CheckStoredLength(name, 1, MaxNameLength); msg != "" {
+		errs = append(errs, input.FieldError{Field: "name", Message: msg})
+	}
+	var st published.SaveState
+	if err := json.Unmarshal(state, &st); err != nil {
+		return nil, nil, append(errs, input.FieldError{Field: "state", Message: "is no save state: " + err.Error()})
+	}
+	errs = append(errs, checkState("state", st)...)
+	if st.ProjectID != ids.Encode(ids.Project, projectID) {
+		errs = append(errs, input.FieldError{Field: "state.projectId", Message: "is not the ID of the project that " +
+			"it is imported as, whose play states hold its own states only"})
+	}
+	var ns PlayStateNames
+	if err := json.Unmarshal(names, &ns); err != nil {
+		return nil, nil, append(errs, input.FieldError{Field: "names", Message: "are no names: " + err.Error()})
+	}
+	errs = append(errs, checkNames(st, ns)...)
+	errs = append(errs, checkStoredNames(ns)...)
+	if len(errs) > 0 {
+		return nil, nil, errs
+	}
+	var err error
+	if stateData, err = json.Marshal(st); err != nil {
+		return nil, nil, input.FieldErrors{{Field: "state", Message: "is no save state: " + err.Error()}}
+	}
+	if namesData, err = json.Marshal(ns); err != nil {
+		return nil, nil, input.FieldErrors{{Field: "names", Message: "are no names: " + err.Error()}}
+	}
+	return stateData, namesData, nil
+}
+
+// checkStoredNames returns the problems of names that are kept as they are
+// stored: each within MaxValueNameLength characters, and no other rule.
+func checkStoredNames(names PlayStateNames) input.FieldErrors {
+	var errs input.FieldErrors
+	check := func(at, name string) {
+		if msg := input.CheckStoredLength(name, 0, MaxValueNameLength); msg != "" {
+			errs = append(errs, input.FieldError{Field: at, Message: msg})
+		}
+	}
+	for _, v := range slices.Sorted(maps.Keys(names.Variables)) {
+		check("names.variables."+v, names.Variables[v])
+	}
+	for _, c := range slices.Sorted(maps.Keys(names.Attributes)) {
+		for _, a := range slices.Sorted(maps.Keys(names.Attributes[c])) {
+			check("names.attributes."+c+"."+a, names.Attributes[c][a])
+		}
+	}
+	return errs
 }
 
 // checkName says what is wrong with a play state's name, or returns "".

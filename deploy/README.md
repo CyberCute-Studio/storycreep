@@ -38,7 +38,7 @@ The compose file names its Compose project `storycreep`, and the containers and 
 | `STORYCREEP_SMTP_URL`, `STORYCREEP_SMTP_FROM` | Not set | The SMTP server that the instance sends its email through, and the address that the email comes from. See [Email](#email). |
 | `STORYCREEP_ASSET_STORAGE` | Not set | Where the files that users upload are stored: an `s3://` URL of a bucket, or the `assets` volume when it is not set, unless first-run setup chose a bucket. See [Uploaded files](#uploaded-files). |
 | `STORYCREEP_ASSET_MAX_BYTES` | `10485760` | The largest file, in bytes, that an upload takes, at most `52428800` (50 MB). |
-| `STORYCREEP_IMPORT_MAX_BYTES` | `2147483648` | The largest project archive, in bytes, that the instance imports. The authoring export warns of a larger one. |
+| `STORYCREEP_IMPORT_MAX_BYTES` | `2147483648` | The largest project archive, in bytes, that the instance imports, at most `4503599627370496` (4 PiB). The authoring export warns of a larger one. |
 | `STORYCREEP_SETUP_OWNER_EMAIL`, `STORYCREEP_SETUP_OWNER_NAME`, `STORYCREEP_SETUP_OWNER_PASSWORD`, `STORYCREEP_SETUP_WORKSPACE_NAME`, `STORYCREEP_SETUP_WORKSPACE_SLUG`, `STORYCREEP_SETUP_SIGNUP`, `STORYCREEP_SETUP_SMTP_URL`, `STORYCREEP_SETUP_SMTP_FROM`, `STORYCREEP_SETUP_ASSET_STORAGE` | Not set | Unattended first-run setup. See [First-run setup](#first-run-setup). |
 | `STORYCREEP_MODE`, `STORYCREEP_PUBLIC_SITE`, `STORYCREEP_SIGNUP`, `STORYCREEP_INSTANCE_ADMIN_ACCESS`, `STORYCREEP_SESSION_IDLE_TIMEOUT`, `STORYCREEP_SESSION_LIFETIME`, `STORYCREEP_DEFAULT_LOCALE`, `STORYCREEP_LOG_LEVEL`, `STORYCREEP_ADMIN_ADDR`, `STORYCREEP_METRICS_TOKEN` | The server's | The server keys of the same names, which [`docs/configuration.md`](../docs/configuration.md) describes, as it does `STORYCREEP_TRUSTED_PROXIES`, `STORYCREEP_WORKSPACE_LIMITS`, the `STORYCREEP_SMTP_` keys, the `STORYCREEP_ASSET_` keys, and the `STORYCREEP_SETUP_` keys. |
 | `COMPOSE_PROJECT_NAME` | `storycreep` | The Compose project's name, which the containers' and volumes' names start with. Another name is another instance, with volumes of its own, so set it before the first start. |
@@ -113,7 +113,7 @@ docker run --rm --volumes-from "$(docker compose ps --all --quiet app)" alpine r
 
 In a bucket, a project's authoring export is written as a multipart upload. The server discards the parts of one that fails, but a server that is killed midway leaves them behind, where they take up storage without being listed as objects, and the hourly job does not see them. On Amazon S3 they stay until a lifecycle rule aborts them, so add one that does so after a day (`AbortIncompleteMultipartUpload`). On another S3-compatible storage, check how it expires incomplete uploads. A finished export takes up room in the store for the seven days that it is kept, and does not count towards a workspace's storage limit, so leave room for them when you size the volume or the bucket.
 
-An upload takes PNG, JPEG, GIF, WebP, and SVG images of at most `STORYCREEP_ASSET_MAX_BYTES`, and tells their type from their content. An SVG file is stored without its scripts and its references to anything outside it. The server holds an upload's file in memory while it checks and stores it, and the uploads in progress take turns for 256 MiB of files, of which one user's take a quarter at most, so that a burst of them waits rather than takes more. It makes the thumbnails one at a time, and decodes no image whose decoding would take more than 256 MiB of memory, which is then its own thumbnail.
+An upload takes PNG, JPEG, GIF, WebP, and SVG images of at most `STORYCREEP_ASSET_MAX_BYTES`, and tells their type from their content. An SVG file is stored without its scripts and its references to anything outside it. The server holds an upload's file, or a chunk of an imported archive, in memory while it checks and stores it, and the uploads in progress, of both kinds, take turns for 256 MiB of them, of which one user's take a quarter at most, so that a burst of them waits rather than takes more. It makes the thumbnails one at a time, and decodes no image whose decoding would take more than 256 MiB of memory, which is then its own thumbnail.
 
 ### API tokens
 
@@ -124,6 +124,19 @@ docker compose exec app storycreep create-token --scopes snapshot:read jo@exampl
 ```
 
 It prints the token's secret alone, once: the database keeps only its hash. A program sends it as `Authorization: Bearer scp_…`, so a reverse proxy in front of the server must pass that header on, as Caddy, Traefik, and nginx do unasked. A token acts only with the scopes that it holds, and never does more than its member's role allows at the time; removing the member revokes it. With any scope but `export:read`, it lists its workspace and the projects that it acts on, and reads them; the routes of accounts, members, and the administration of a workspace take a session alone, and answer a token with 403 `session_required`. Its requests count against its own rate limits and its member's, and in its workspace's usage, as `api_requests`.
+
+### Exporting and importing projects
+
+Owners and admins of a workspace import a project from its page. The operator can do both from the command line, as a member of the workspace:
+
+```sh
+docker compose exec app storycreep export --output /tmp/harbour.zip jo@example.com prj_01HQ8Z3XK4F7NAWR5TCQ9M2BVD
+docker compose exec app storycreep import jo@example.com harbour /tmp/harbour.zip
+```
+
+A full export contains personal data, so keep the file accordingly. An import checks the whole archive first, and creates the project all or nothing. Archives are limited by `STORYCREEP_IMPORT_MAX_BYTES`. The server needs `STORYCREEP_DATABASE_MAINTENANCE_URL`, which the published compose file sets, to check whether an archive's IDs are in use.
+
+Each server process runs one import at a time. A worst-case archive takes close to 2 GiB of heap, about 3 GiB of process memory, on top of what the server already holds. Lowering `STORYCREEP_IMPORT_MAX_BYTES` does not reduce this, because a small archive can unpack to as much JSON. On a host with less memory, an owner or admin who imports a crafted archive can run the server out of memory.
 
 ### Behind a reverse proxy
 

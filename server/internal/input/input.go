@@ -89,6 +89,23 @@ func CheckTrimmedText(text string, maxChars int) string {
 	return CheckText(text, maxChars)
 }
 
+// CheckStoredLength says what is wrong with a text that is kept as it is
+// stored, as an import keeps what a backup holds, or returns "". Such a text
+// may break a text rule that is newer than it, so that only its length is
+// held: from minChars to maxChars characters, as the database and the readers
+// of its row take it.
+func CheckStoredLength(text string, minChars, maxChars int) string {
+	switch n := utf8.RuneCountInString(text); {
+	case n < minChars && n == 0:
+		return "is empty"
+	case n < minChars:
+		return fmt.Sprintf("is shorter than %d characters", minChars)
+	case n > maxChars:
+		return fmt.Sprintf("is longer than %d characters", maxChars)
+	}
+	return ""
+}
+
 // FoldCase returns the key by which two names, as two tags of a node, are the
 // same but for their case: the name in Unicode's normalization form C, with
 // its case folded, so that Quest, QUEST, and quest are one (PRD FR-EDIT-06,

@@ -30,6 +30,12 @@ const (
 	// DefaultImportMaxBytes is the largest archive that an import takes
 	// unless STORYCREEP_IMPORT_MAX_BYTES says otherwise: 2 GB (PRD FR-DATA-01).
 	DefaultImportMaxBytes = 2 << 30
+	// MaxImportMaxBytes is the most that STORYCREEP_IMPORT_MAX_BYTES may allow:
+	// 4 PiB, far past any archive, at which what an import derives from it
+	// stays exact. Four times it, the zip guard's budget, fits an int64, an
+	// upload's chunk index fits the column's integer, and a client reads the
+	// size as a JavaScript number.
+	MaxImportMaxBytes = 1 << 52
 )
 
 // AssetStorage is where the instance stores the files of its assets (PRD

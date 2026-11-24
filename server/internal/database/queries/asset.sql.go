@@ -211,6 +211,21 @@ func (q *Queries) InsertAsset(ctx context.Context, arg InsertAssetParams) (pgtyp
 	return created_at, err
 }
 
+const keepLongStatements = `-- name: KeepLongStatements :exec
+SELECT set_config(name, '0', true)
+FROM pg_catalog.pg_settings
+WHERE name IN ('statement_timeout', 'lock_timeout')
+`
+
+// KeepLongStatements switches off, until the transaction ends, the timeouts
+// that the server, the database, or the login may set on one statement and on
+// a wait for a lock, for a transaction whose statements may take as long as
+// they need, as an import's of a large release's files.
+func (q *Queries) KeepLongStatements(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, keepLongStatements)
+	return err
+}
+
 const keepSession = `-- name: KeepSession :exec
 SELECT set_config(name, CASE name WHEN 'idle_in_transaction_session_timeout' THEN $1::text ELSE '0' END,
     true)
@@ -304,6 +319,8 @@ WHERE EXISTS (
     SELECT FROM asset a WHERE a.workspace_id = $2 AND a.thumbnail_key = k.key
 ) OR EXISTS (
     SELECT FROM authoring_export e WHERE e.workspace_id = $2 AND e.storage_key = k.key
+) OR EXISTS (
+    SELECT FROM project_import_chunk c WHERE c.workspace_id = $2 AND c.storage_key = k.key
 )
 `
 
@@ -313,8 +330,8 @@ type ReferencedBlobsParams struct {
 }
 
 // ReferencedBlobs returns those of the keys that a row of the workspace
-// refers to, as the file of an asset, as its thumbnail, or as the archive of
-// an authoring export: the check that keeps a blob from the orphan
+// refers to, as the file of an asset, as its thumbnail, as the archive of an
+// authoring export, or as a chunk of an import's upload: the check that keeps a blob from the orphan
 // reconciliation, which an upload makes of its one blob, and the
 // reconciliation of a batch of blobs in one query.
 func (q *Queries) ReferencedBlobs(ctx context.Context, arg ReferencedBlobsParams) ([]string, error) {

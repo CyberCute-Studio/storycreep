@@ -1115,6 +1115,7 @@
         "acknowledgedSeq": {
           "description": "The project's operation sequence of the validation report that its author acknowledged when they published it.",
           "format": "int64",
+          "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
         },
@@ -1163,6 +1164,7 @@
         "sourceSeq": {
           "description": "The project's operation sequence as of the draft that it was built from.",
           "format": "int64",
+          "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
         },

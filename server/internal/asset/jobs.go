@@ -82,21 +82,21 @@ func (orphans) Kind() string { return "asset_orphans" }
 // every hour.
 func (s *Service) RegisterJobs(r *jobs.Registry) {
 	jobs.Register(r, func(ctx context.Context, job *jobs.Job[thumbnailJob]) error {
-		return s.withDB(job.DB).makeThumbnail(ctx, job.Args)
+		return s.WithDB(job.DB).makeThumbnail(ctx, job.Args)
 	})
 	jobs.Serial(r, thumbnailJob{})
 	jobs.Register(r, func(ctx context.Context, job *jobs.Job[orphans]) error {
-		_, err := s.withDB(job.DB).Reconcile(ctx)
+		_, err := s.WithDB(job.DB).Reconcile(ctx)
 		return err
 	})
 	jobs.Periodic(r, reconciliationInterval, orphans{})
 }
 
-// withDB returns a Service like s that reads and writes db, as a job does on
+// WithDB returns a Service like s that reads and writes db, as a job does on
 // the workers' pool that it carries (package jobs). The storage reads the
 // bucket that setup chose through s's own.
-func (s *Service) withDB(db *database.DB) *Service {
-	if db == nil {
+func (s *Service) WithDB(db *database.DB) *Service {
+	if s == nil || db == nil {
 		return s
 	}
 	c := *s
@@ -222,10 +222,11 @@ func (s *Service) makeThumbnail(ctx context.Context, args thumbnailJob) error {
 // workspaceKey matches the key of a blob of a workspace that the
 // reconciliation may delete once no row refers to it: a file of any of the
 // types (extensions) or a thumbnail, which this package writes, whose hash of
-// its content it captures, or the archive of an authoring export (package
-// authoring), whose key holds the hash of the export's ID in its place.
+// its content it captures, or the archive of an authoring export or a chunk of
+// an import's upload (package authoring), whose key holds a hash of its own in
+// its place.
 var workspaceKey = regexp.MustCompile(`^[0-9a-f-]{36}/([0-9a-f]{64})\.(?:` +
-	strings.Join(slices.Sorted(maps.Values(extensions)), "|") + `|thumb\.png|export\.zip)$`)
+	strings.Join(slices.Sorted(maps.Values(extensions)), "|") + `|thumb\.png|export\.zip|import\.part)$`)
 
 // errSpent stops the listing of a workspace's blobs once the run has spent
 // its budget, or the listing its share of it (listBudget).
@@ -615,13 +616,14 @@ func (s *Service) reconcileWorkspace(ctx context.Context, store blob.Store, work
 			known[c.ThumbnailKey.String] = true
 		}
 	}
-	// An export's archive that a row names is no candidate either, so that
-	// the exports that a workspace keeps for days do not spend the run's
-	// budget on checks under locks, which would only find them referenced.
-	// In a transaction of its own, and only where the listing has an archive.
+	// An export's archive or an upload's chunk that a row names is no
+	// candidate either, so that the exports and the uploads that a workspace
+	// keeps for days do not spend the run's budget on checks under locks, which
+	// would only find them referenced. In a transaction of its own, and only
+	// where the listing has one.
 	var archives []string
 	for _, key := range l.keys {
-		if strings.HasSuffix(key, ".export.zip") {
+		if strings.HasSuffix(key, ".export.zip") || strings.HasSuffix(key, ".import.part") {
 			archives = append(archives, key)
 		}
 	}

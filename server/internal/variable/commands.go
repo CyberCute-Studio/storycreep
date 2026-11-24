@@ -53,8 +53,8 @@ const (
 	Restore commands.Type = "variable.restore"
 )
 
-// createPayload is Create's payload.
-type createPayload struct {
+// CreatePayload is Create's payload.
+type CreatePayload struct {
 	ID           string `json:"id" doc:"The new variable's ID, a var_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
 	Key          string `json:"key" doc:"The variable's key, by which expressions name it: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as met_elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other variable of its scope has, of those that are not in the project's trash, the project's global variables for a global, and its board's for a board's, which is answered with 409 key_taken."`
 	Type         string `json:"type" enum:"bool,int,float,string" doc:"The variable's type"`
@@ -176,15 +176,24 @@ func Register(r *commands.Registry) {
 	variable := []ids.Kind{ids.Variable}
 	op, sc := authz.ManageVariablesAndComponents, scope.ProjectWrite
 
-	commands.Register(r, commands.Spec[createPayload]{
+	commands.Register(r, commands.Spec[CreatePayload]{
 		Type: Create, Capability: op, Scope: sc, Touches: []ids.Kind{ids.Variable, ids.Board, ids.Folder},
-		Check: func(p createPayload) input.FieldErrors {
+		Check: func(p CreatePayload) input.FieldErrors {
 			errs := newID(ids.Variable, p.ID)
 			errs = append(errs, checkScope(p.Scope, p.BoardID)...)
 			errs = append(errs, checkReset("reset_on_enter", p.Scope, p.ResetOnEnter)...)
-			errs = append(errs, checkDefault(p.Type, p.Default)...)
-			errs = append(errs, field("description", checkDescription(p.Description))...)
+			errs = append(errs, checkDefaultForm(p.Type, p.Default)...)
 			return append(errs, optionalID(ids.Folder, "folder_id", p.FolderID)...)
+		},
+		// An import creates a variable with its stored default and description,
+		// which the text rules may refuse (commands.Spec.CheckNew). A default
+		// that is not of its type is Check's to report, once.
+		CheckNew: func(p CreatePayload) input.FieldErrors {
+			errs := field("description", checkDescription(p.Description))
+			if len(checkDefaultForm(p.Type, p.Default)) == 0 {
+				errs = append(errs, checkDefault(p.Type, p.Default)...)
+			}
+			return errs
 		},
 		// The undo of a create deletes the variable, forcing the deletion if
 		// what the create makes of the project uses it, as an expression that
@@ -193,7 +202,7 @@ func Register(r *commands.Registry) {
 		// undo is then refused for, as a deletion is. A forced undo deletes
 		// it whatever uses it then, as any forced deletion does, and needs a
 		// role that may publish, as any does (FR-VAR-04).
-		Inverse: func(ctx context.Context, tx *commands.Tx, p createPayload) ([]commands.Step, error) {
+		Inverse: func(ctx context.Context, tx *commands.Tx, p CreatePayload) ([]commands.Step, error) {
 			var board ids.UUID
 			if p.BoardID != "" {
 				board = decoded(ids.Board, p.BoardID).Bytes
@@ -452,7 +461,7 @@ func Register(r *commands.Registry) {
 }
 
 // applyCreate is Create's Apply.
-func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
+func applyCreate(ctx context.Context, tx *commands.Tx, p CreatePayload) error {
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	id := decoded(ids.Variable, p.ID)
@@ -462,7 +471,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	// its ID rather than for the key that its variable has taken; the insert
 	// below refuses the ID of a variable that this transaction does not see.
 	if _, err := q.VariableAny(ctx, queries.VariableAnyParams{WorkspaceID: ws, ProjectID: project, ID: id}); err == nil {
-		return commands.Refuse("id", "is the ID of a variable that exists already", nil)
+		return commands.Refuse("id", "is the ID of a variable that exists already", commands.ErrIDTaken)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("variable: read the variable: %w", err)
 	}
@@ -481,15 +490,16 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	if err != nil {
 		return err
 	}
-	// Check checked the default against the type.
-	def, _ := of(p.Default, p.Type, value.All)
+	// Check checked the default against the type, and CheckNew the characters
+	// of one that is not a stored value.
+	def, _ := of(p.Default, p.Type, value.Checks{Length: true})
 	err = q.InsertVariable(ctx, queries.InsertVariableParams{ID: id, WorkspaceID: ws, ProjectID: project,
 		Scope: p.Scope, BoardID: boardID, FolderID: folder, SortKey: order, Key: p.Key, Type: p.Type,
 		DefaultValue: def.JSON(), Description: p.Description, ResetOnEnter: p.ResetOnEnter, CreatedBy: by(tx)})
 	if database.UniqueViolation(err, "variable_pkey") {
 		// The ID is another workspace's, or another project's, whose rows this
 		// transaction does not see.
-		return commands.Refuse("id", "is the ID of a variable that exists already", nil)
+		return commands.Refuse("id", "is the ID of a variable that exists already", commands.ErrIDTaken)
 	}
 	if err != nil {
 		return fmt.Errorf("variable: add the variable: %w", err)
@@ -774,6 +784,13 @@ func refuse(errs input.FieldErrors) error {
 // none, for the type's zero value, has not.
 func checkDefault(typ string, def Value) input.FieldErrors {
 	_, problem := of(def, typ, value.All)
+	return field("default", problem)
+}
+
+// checkDefaultForm returns the problem of a default that is not a value of the
+// type typ, whatever its characters, which a stored default may hold.
+func checkDefaultForm(typ string, def Value) input.FieldErrors {
+	_, problem := of(def, typ, value.Checks{Length: true})
 	return field("default", problem)
 }
 

@@ -249,6 +249,8 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 	defer db.Close()
 	s.ready.db.Store(db)
 
+	defer s.maintenance.close()
+
 	// The queue enqueues jobs from the start, and its workers start once the
 	// server is ready, when River's tables exist.
 	registry := opts.Jobs

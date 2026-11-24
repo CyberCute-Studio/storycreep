@@ -172,7 +172,7 @@ WHERE workspace_id = @workspace_id AND id = @id AND status IN ('queued', 'buildi
 
 -- name: FinishAuthoringExport :execrows
 -- FinishAuthoringExport makes an export that is being built ready.
-UPDATE authoring_export SET status = 'ready', size_bytes = @size_bytes, file_name = @file_name, finished_at = now()
+UPDATE authoring_export SET status = 'ready', size_bytes = @size_bytes, asset_count = @asset_count, file_name = @file_name, finished_at = now()
 WHERE workspace_id = @workspace_id AND id = @id AND status = 'building';
 
 -- name: FailAuthoringExport :one

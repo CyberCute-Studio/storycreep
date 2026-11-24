@@ -41,15 +41,34 @@ func checkTags(at string, tags []string) input.FieldErrors {
 			errs = append(errs, input.FieldError{Field: f, Message: problem})
 			continue
 		}
-		key := input.FoldCase(tag)
-		if j, dup := first[key]; dup {
-			errs = append(errs, input.FieldError{Field: f, Message: fmt.Sprintf("is the tag of %s[%d] too, but for "+
-				"its case, which tags are compared without", at, j)})
-			continue
-		}
-		first[key] = i
+		errs = append(errs, repeatedTag(first, at, i, tag)...)
 	}
 	return errs
+}
+
+// checkDistinctTags returns the problems of stored tags that are kept as they
+// are, whose text rules a newer rule may break (checkTags): no two the same tag
+// but for their case, which a snapshot's load refuses (flow.Load), so that a
+// project that held them could not publish.
+func checkDistinctTags(at string, tags []string) input.FieldErrors {
+	var errs input.FieldErrors
+	first := make(map[string]int, len(tags))
+	for i, tag := range tags {
+		errs = append(errs, repeatedTag(first, at, i, tag)...)
+	}
+	return errs
+}
+
+// repeatedTag returns the problem of the tag at index i if first, the index of
+// each tag so far by its folded case, holds it, and adds it there otherwise.
+func repeatedTag(first map[string]int, at string, i int, tag string) input.FieldErrors {
+	key := input.FoldCase(tag)
+	if j, dup := first[key]; dup {
+		return field(fmt.Sprintf("%s[%d]", at, i), fmt.Sprintf("is the tag of %s[%d] too, but for its case, which "+
+			"tags are compared without", at, j))
+	}
+	first[key] = i
+	return nil
 }
 
 // Tag is a tag of a project's nodes, as the API suggests it.

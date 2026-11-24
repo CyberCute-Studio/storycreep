@@ -276,12 +276,26 @@ type Settings struct {
 // default component types, in the same transaction.
 func (s *Service) Create(ctx context.Context, userID, workspaceID ids.UUID, in Settings, client audit.Client) (
 	Visible, error) {
-	in.Description = input.LineFeeds(in.Description)
 	var out Visible
 	err := s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: userID}, func(tx pgx.Tx) error {
+		var err error
+		out, err = s.create(ctx, tx, userID, workspaceID, creation{id: ids.New(), in: in, seed: true,
+			action: audit.ActionProjectCreate, client: client})
+		return err
+	})
+	if err != nil {
+		return Visible{}, err
+	}
+	return out, nil
+}
+
+// CheckCreate says whether the user may create a project in the workspace now,
+// as an import asks before it takes an upload, with the errors of Create for
+// the workspace, the role, and the projects limit, and changes nothing.
+func (s *Service) CheckCreate(ctx context.Context, userID, workspaceID ids.UUID) error {
+	return s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: userID}, func(tx pgx.Tx) error {
 		q := queries.New(tx)
-		ws, err := activeWorkspace(ctx, q, workspaceID)
-		if err != nil {
+		if _, err := activeWorkspace(ctx, q, workspaceID); err != nil {
 			return err
 		}
 		a, err := s.access(ctx, q, userID, workspaceID, false)
@@ -295,60 +309,169 @@ func (s *Service) Create(ctx context.Context, userID, workspaceID ids.UUID, in S
 		if err := authz.Check(r, authz.ManageProjects); err != nil {
 			return err
 		}
-		set, err := check(in, workspaceLocale(ws.Settings))
-		if err != nil {
-			return err
-		}
-		if err := s.ent.Check(ctx, tx, workspaceID, entitlements.Projects, 1); err != nil {
-			return err
-		}
-		doc, err := json.Marshal(set)
-		if err != nil {
-			return fmt.Errorf("project: encode the settings: %w", err)
-		}
-		id := ids.New()
-		name, description := strings.TrimSpace(in.Name), strings.TrimSpace(in.Description)
-		projectSlug := slug.Derive(name, "project")
-		row, err := q.InsertProject(ctx, queries.InsertProjectParams{ID: nullUUID(id),
-			WorkspaceID: nullUUID(workspaceID), Name: name, Slug: projectSlug, Description: description, Settings: doc,
-			CreatedBy: nullUUID(userID)})
-		if err != nil {
-			return fmt.Errorf("project: add the project: %w", err)
-		}
-		if s.seed != nil {
-			if err := s.seed(ctx, tx, workspaceID, id, userID, set.DefaultLocale); err != nil {
-				return err
-			}
-		}
-		if err := usage.Record(ctx, tx, workspaceID, usage.Projects, 1); err != nil {
-			return err
-		}
-		if err := audit.Record(ctx, tx, audit.Entry{Action: audit.ActionProjectCreate, WorkspaceID: workspaceID,
-			ActorUserID: userID, SubjectID: id, Result: audit.ResultSuccess, IP: client.IP,
-			UserAgent: client.UserAgent}); err != nil {
-			return err
-		}
-		out = Visible{Role: s.policy.Effective(a.admin, a.member, role.None), Project: stateOf(queries.Project{
-			ID: nullUUID(id), WorkspaceID: nullUUID(workspaceID), Name: name, Slug: projectSlug, Description: description,
-			Settings: doc, Rev: 1, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})}
-		return nil
+		return s.ent.Check(ctx, tx, workspaceID, entitlements.Projects, 1)
 	})
+}
+
+// CheckManage says, in tx, a transaction of the workspace, whether the user may
+// manage its projects, as reading and continuing their imports needs (§5.6),
+// with the errors of Create for the workspace and the role.
+func (s *Service) CheckManage(ctx context.Context, tx pgx.Tx, userID, workspaceID ids.UUID) error {
+	q := queries.New(tx)
+	if _, err := activeWorkspace(ctx, q, workspaceID); err != nil {
+		return err
+	}
+	a, err := s.access(ctx, q, userID, workspaceID, false)
+	if err != nil {
+		return err
+	}
+	r := s.policy.Workspace(a.admin, a.member)
+	if r == role.None {
+		return ErrNotFound
+	}
+	return authz.Check(r, authz.ManageProjects)
+}
+
+// Imported is what CreateImported creates a project with.
+type Imported struct {
+	// ID is the project's ID: the archive's, or a fresh one (PRD §5.2).
+	ID ids.UUID
+	// Settings are its name, description, and default locale.
+	Settings Settings
+	// Slug is the archive's slug of the project, which it keeps if it is a
+	// slug. Otherwise it is derived from the name, as Create derives it.
+	Slug string
+	// Metadata is the audit entry's, of audit.ActionProjectImport.
+	Metadata map[string]any
+	Client   audit.Client
+}
+
+// CreateImported creates the project of an import, in tx, the transaction that
+// writes what the import holds, so that an import that fails leaves no project
+// (PRD FR-DATA-01). It is Create's one site of creating a project (plan note
+// N32), with the same authorisation, checks, and limit, and returns the same
+// errors, but for what the archive holds: it seeds nothing, the project is
+// recorded in the audit log as imported, and its name and description are
+// stored values, kept as they are and held only to their lengths, as the text
+// rules may refuse one that a project holds. The limit is the one thing that it
+// leaves to FinishImported, which the transaction calls last, as the check
+// holds the lock of the workspace's projects until the transaction ends, which
+// every other project's creation in the workspace would wait for.
+func (s *Service) CreateImported(ctx context.Context, tx pgx.Tx, userID, workspaceID ids.UUID, in Imported) (Visible,
+	error) {
+	return s.create(ctx, tx, userID, workspaceID, creation{id: in.ID, in: in.Settings, slug: in.Slug,
+		action: audit.ActionProjectImport, metadata: in.Metadata, client: in.Client, limitLater: true, stored: true})
+}
+
+// FinishImported checks the workspace's projects limit for the project that
+// CreateImported added in tx, and records it in the workspace's usage. It
+// returns the *entitlements.LimitError of a workspace without the room, whose
+// transaction then adds nothing.
+func (s *Service) FinishImported(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID) error {
+	if err := s.ent.Check(ctx, tx, workspaceID, entitlements.Projects, 1); err != nil {
+		return err
+	}
+	return usage.Record(ctx, tx, workspaceID, usage.Projects, 1)
+}
+
+// creation is how create creates a project.
+type creation struct {
+	id       ids.UUID
+	in       Settings
+	slug     string
+	seed     bool
+	action   audit.Action
+	metadata map[string]any
+	client   audit.Client
+	// limitLater leaves the projects limit and its usage to FinishImported.
+	limitLater bool
+	// stored says that the name and the description are stored values, which
+	// are kept as they are (CreateImported).
+	stored bool
+}
+
+// create creates a project in tx, after every check that creating one takes.
+func (s *Service) create(ctx context.Context, tx pgx.Tx, userID, workspaceID ids.UUID, c creation) (Visible, error) {
+	in := c.in
+	if !c.stored {
+		in.Name, in.Description = strings.TrimSpace(in.Name), strings.TrimSpace(input.LineFeeds(in.Description))
+	}
+	q := queries.New(tx)
+	ws, err := activeWorkspace(ctx, q, workspaceID)
 	if err != nil {
 		return Visible{}, err
 	}
-	return out, nil
+	a, err := s.access(ctx, q, userID, workspaceID, false)
+	if err != nil {
+		return Visible{}, err
+	}
+	r := s.policy.Workspace(a.admin, a.member)
+	if r == role.None {
+		return Visible{}, ErrNotFound
+	}
+	if err := authz.Check(r, authz.ManageProjects); err != nil {
+		return Visible{}, err
+	}
+	set, err := check(in, workspaceLocale(ws.Settings), c.stored)
+	if err != nil {
+		return Visible{}, err
+	}
+	if !c.limitLater {
+		if err := s.ent.Check(ctx, tx, workspaceID, entitlements.Projects, 1); err != nil {
+			return Visible{}, err
+		}
+	}
+	doc, err := json.Marshal(set)
+	if err != nil {
+		return Visible{}, fmt.Errorf("project: encode the settings: %w", err)
+	}
+	name, description := in.Name, in.Description
+	projectSlug := c.slug
+	if slug.Check(projectSlug) != nil {
+		projectSlug = slug.Derive(name, "project")
+	}
+	row, err := q.InsertProject(ctx, queries.InsertProjectParams{ID: nullUUID(c.id),
+		WorkspaceID: nullUUID(workspaceID), Name: name, Slug: projectSlug, Description: description, Settings: doc,
+		CreatedBy: nullUUID(userID)})
+	if err != nil {
+		return Visible{}, fmt.Errorf("project: add the project: %w", err)
+	}
+	if c.seed && s.seed != nil {
+		if err := s.seed(ctx, tx, workspaceID, c.id, userID, set.DefaultLocale); err != nil {
+			return Visible{}, err
+		}
+	}
+	if !c.limitLater {
+		if err := usage.Record(ctx, tx, workspaceID, usage.Projects, 1); err != nil {
+			return Visible{}, err
+		}
+	}
+	if err := audit.Record(ctx, tx, audit.Entry{Action: c.action, WorkspaceID: workspaceID,
+		ActorUserID: userID, SubjectID: c.id, Result: audit.ResultSuccess, IP: c.client.IP,
+		UserAgent: c.client.UserAgent, Metadata: c.metadata}); err != nil {
+		return Visible{}, err
+	}
+	return Visible{Role: s.policy.Effective(a.admin, a.member, role.None), Project: stateOf(queries.Project{
+		ID: nullUUID(c.id), WorkspaceID: nullUUID(workspaceID), Name: name, Slug: projectSlug, Description: description,
+		Settings: doc, Rev: 1, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})}, nil
 }
 
 // check returns the settings of a project created with in, whose default
 // locale is locale unless in names one, or input.FieldErrors if a field of
-// in is not valid.
-func check(in Settings, locale string) (settings, error) {
+// in is not valid. A stored name or description is held to its length alone,
+// of at least one character for a name, which every project has.
+func check(in Settings, locale string, stored bool) (settings, error) {
 	var errs input.FieldErrors
-	if msg := checkName(strings.TrimSpace(in.Name)); msg != "" {
-		errs = append(errs, input.FieldError{Field: "name", Message: msg})
+	nameProblem, descriptionProblem := checkName(in.Name), checkDescription(in.Description)
+	if stored {
+		nameProblem, descriptionProblem = input.CheckStoredLength(in.Name, 1, MaxNameLength),
+			input.CheckStoredLength(in.Description, 0, MaxDescriptionLength)
 	}
-	if msg := checkDescription(strings.TrimSpace(in.Description)); msg != "" {
-		errs = append(errs, input.FieldError{Field: "description", Message: msg})
+	if nameProblem != "" {
+		errs = append(errs, input.FieldError{Field: "name", Message: nameProblem})
+	}
+	if descriptionProblem != "" {
+		errs = append(errs, input.FieldError{Field: "description", Message: descriptionProblem})
 	}
 	if in.DefaultLocale != "" {
 		var msg string
@@ -808,7 +931,7 @@ func (s *Service) Update(ctx context.Context, actor commands.Actor, projectID id
 		}
 		steps = append(steps, commands.Step{Type: Describe, Payload: describePayload{Description: description}})
 	}
-	set := settingsPayload{PublishMinRole: p.PublishMinRole, Entry: p.Entry}
+	set := SettingsPayload{PublishMinRole: p.PublishMinRole, Entry: p.Entry}
 	if p.DefaultLocale != nil {
 		locale, msg := canonicalLocale(*p.DefaultLocale)
 		if msg != "" {
@@ -824,7 +947,7 @@ func (s *Service) Update(ctx context.Context, actor commands.Actor, projectID id
 			errs = append(errs, input.FieldError{Field: "entry." + field, Message: msg})
 		}
 	}
-	if set != (settingsPayload{}) {
+	if set != (SettingsPayload{}) {
 		steps = append(steps, commands.Step{Type: UpdateSettings, Payload: set})
 	}
 	if len(errs) > 0 || len(steps) == 0 {
