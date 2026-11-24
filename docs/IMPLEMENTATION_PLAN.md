@@ -893,7 +893,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-DATA-01 AC5–AC6, FR-EDIT-06 AC3, and FR-AUTH-04 AC7 (now that the snapshot, draft, and authoring exports all exist) pass, and the archive validates against its schema.
 
 ### 84. Project import
-**Status:** todo · **Depends on:** 83
+**Status:** done ([#100](https://github.com/CyberCute-Studio/storycreep/pull/100)) · **Depends on:** 83
 **PRD:** FR-DATA-01 (import), NFR-SEC-13, §5.2 ID policy, FR-ADMIN-06 (`export`, `import`)
 - Resumable chunked upload to blob storage, limited by `STORYCREEP_IMPORT_MAX_BYTES`: `POST`, `GET …/workspaces/{id}/project-imports`, `GET` and `DELETE …/{import_id}`, `PUT …/chunks/{index}`, and `POST …/complete` (`server/internal/httpserver/imports.go`, N91). Zip-bomb and path-traversal guards (`server/internal/authoring/archive_read.go`).
 - An ID-collision check through the maintenance path (N20), returning one boolean (`maintenance.DB.AnyIDInUse`), then `preserve` or `remap`.
