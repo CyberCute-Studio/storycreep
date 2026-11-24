@@ -101,7 +101,7 @@ describe("duplicating a project", () => {
     answer = refused(409, {
       code: "duplicate_refused",
       message:
-        "This project could not be duplicated, as it holds more than this server can copy. Nothing was created.",
+        "This project could not be duplicated, as the import of its copy refused what it holds, such as more images than an import takes, or an image whose file is missing. Nothing was created.",
     });
     await userEvent.click(submit);
     expect((await within(dialog).findByRole("alert")).textContent).toContain(
@@ -123,5 +123,45 @@ describe("the name of a copy", () => {
     const got = copyName(format, long);
     expect(Array.from(got)).toHaveLength(100);
     expect(got.endsWith(" (copy)")).toBe(true);
+  });
+
+  it("leaves out the control characters that a new name may not hold", () => {
+    // U+202E RIGHT-TO-LEFT OVERRIDE and U+2028 LINE SEPARATOR, which an
+    // imported project's stored name may hold.
+    const stored = `Har${String.fromCodePoint(0x202e)}bour${String.fromCodePoint(0x2028)}`;
+    expect(copyName(format, stored)).toBe("Harbour (copy)");
+  });
+
+  it("is a name that the field takes, and so is one of as many characters typed", async () => {
+    fakeApi((operation) => {
+      if (operation === "getWorkspaceUsage") {
+        return {};
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const stored = { ...testProject, name: "🌊".repeat(100) };
+    const root = createRootRoute();
+    renderApp("/settings", {
+      session: testSession,
+      routes: root.addChildren([
+        createRoute({
+          getParentRoute: () => root,
+          path: "/settings",
+          component: () => <DuplicateProject project={stored} />,
+        }),
+      ]),
+    });
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Duplicate the project" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    const name = within(dialog).getByLabelText(
+      "Name of the copy",
+    ) as HTMLInputElement;
+    expect(name.value).toBe(copyName(format, stored.name));
+    expect(name.value.length).toBeLessThanOrEqual(name.maxLength);
+    await userEvent.clear(name);
+    await userEvent.type(name, "🌊".repeat(100));
+    expect(Array.from(name.value)).toHaveLength(100);
   });
 });

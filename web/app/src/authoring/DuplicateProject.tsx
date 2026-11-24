@@ -27,16 +27,32 @@ import { LimitNote } from "../workspace/Usage";
 /** The most characters that a project's name has (PRD FR-PROJ-01). */
 const maxNameLength = 100;
 
+/**
+ * The most that the name's field takes, in UTF-16 code units, as the browser
+ * counts them, of which a character takes two at most, so that the field
+ * takes every name that the server does, which refuses a longer one at it.
+ */
+const maxNameUnits = maxNameLength * 2;
+
 const nameField = bodyField("name");
+
+/**
+ * The control characters that a new name may not hold, as the server tells
+ * them (input.IsControl): Cc, Bidi_Control, Zl, and Zp, which the stored name
+ * of an imported project may hold, as its import keeps it as it was.
+ */
+const nameControls = /[\p{Cc}\p{Bidi_Control}\p{Zl}\p{Zp}]/gu;
 
 /**
  * The name that the dialog offers a copy of a project named name: the
  * catalog's, as "Harbour (copy)", with as much of name as fits within a
- * project's names, counted in characters, as the server counts them.
+ * project's names, counted in characters, as the server counts them, and
+ * without the control characters that a new name may not hold.
  */
 export function copyName(format: (name: string) => string, name: string) {
   const room = maxNameLength - Array.from(format("")).length;
-  return format(Array.from(name).slice(0, Math.max(room, 0)).join("").trim());
+  const kept = Array.from(name.replace(nameControls, ""));
+  return format(kept.slice(0, Math.max(room, 0)).join("").trim());
 }
 
 /**
@@ -115,7 +131,7 @@ export function DuplicateProject({ project }: { project: ProjectBody }) {
               name="name"
               autoComplete="off"
               required
-              maxLength={maxNameLength}
+              maxLength={maxNameUnits}
               defaultValue={copyName(
                 (name) =>
                   t("project_settings.duplicate_default_name", { name }),

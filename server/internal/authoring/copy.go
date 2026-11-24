@@ -37,7 +37,10 @@ func (e *DuplicateRefusedError) Error() string {
 // assets, and not its comments, play states, or releases. Its slug is derived
 // from its name, as a new project's is, and its duplicated_from names the
 // project. It is all or nothing: the transaction that creates the copy writes
-// all of it, and its audit entry.
+// all of it, and its audit entry. It has an import's time (importTimeout), as
+// the transaction that writes the copy waits for a lock for as long as it
+// takes (queries.KeepLongStatements), and nothing else ends it while its
+// client waits.
 //
 // It returns the errors of project.Service.CheckDuplicate, input.FieldErrors
 // for a name that a new project may not take, asset.ErrSetupRequired while
@@ -45,6 +48,15 @@ func (e *DuplicateRefusedError) Error() string {
 // that went to the trash meanwhile, the *entitlements.LimitError of a limit
 // that the copy would pass, as its storage, and a *DuplicateRefusedError.
 func (s *Service) Duplicate(ctx context.Context, actor commands.Actor, projectID ids.UUID, name string) (
+	project.Visible, error) {
+	ctx, cancel := context.WithTimeout(ctx, importTimeout)
+	defer cancel()
+	created, err := s.duplicate(ctx, actor, projectID, name)
+	return created, outOfTime(ctx, "copy", err)
+}
+
+// duplicate is Duplicate within its time.
+func (s *Service) duplicate(ctx context.Context, actor commands.Actor, projectID ids.UUID, name string) (
 	project.Visible, error) {
 	source, err := s.projects.CheckDuplicate(ctx, actor, projectID)
 	if err != nil {
@@ -72,6 +84,11 @@ func (s *Service) Duplicate(ctx context.Context, actor commands.Actor, projectID
 	}
 	if err != nil {
 		return project.Visible{}, err
+	}
+	// Before any of it is written, as the import would refuse it once all of
+	// it was.
+	if len(c.assets) > MaxImportAssets {
+		return project.Visible{}, &DuplicateRefusedError{Failure: tooManyAssets(len(c.assets))}
 	}
 	id := ids.New()
 	w := &chunkWriter{ctx: ctx, store: store, ws: ws, id: id, buf: make([]byte, 0, ChunkBytes)}
@@ -110,8 +127,17 @@ func (s *Service) Duplicate(ctx context.Context, actor commands.Actor, projectID
 // project.Service.CheckCreate, and the *entitlements.LimitError or the
 // error of a role that the transaction that writes the project was refused
 // for. An archive of the server's own that its import refuses is an error of
-// the server's.
+// the server's. It has an import's time, as Duplicate has.
 func (s *Service) ImportSample(ctx context.Context, actor commands.Actor, workspaceID ids.UUID) (project.Visible,
+	error) {
+	ctx, cancel := context.WithTimeout(ctx, importTimeout)
+	defer cancel()
+	created, err := s.importSample(ctx, actor, workspaceID)
+	return created, outOfTime(ctx, "sample project's import", err)
+}
+
+// importSample is ImportSample within its time.
+func (s *Service) importSample(ctx context.Context, actor commands.Actor, workspaceID ids.UUID) (project.Visible,
 	error) {
 	if err := s.projects.CheckCreate(ctx, actor.UserID, workspaceID); err != nil {
 		return project.Visible{}, err
@@ -129,6 +155,16 @@ func (s *Service) ImportSample(ctx context.Context, actor commands.Actor, worksp
 		return project.Visible{}, internalError(err)
 	}
 	return created, nil
+}
+
+// outOfTime returns err, the error of what ran in running, the copy or the
+// sample project's import, as what names it, or, once running has run out of
+// its time, an error that says so, and that nothing was created.
+func outOfTime(running context.Context, what string, err error) error {
+	if err != nil && errors.Is(running.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("authoring: the %s ran out of its %s, and nothing was created: %w", what, importTimeout, err)
+	}
+	return err
 }
 
 // internalError returns err, an error of importArchive of an archive of the

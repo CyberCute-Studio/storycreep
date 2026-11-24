@@ -234,6 +234,14 @@ func firstLine(s string) string {
 	return out
 }
 
+// tooManyAssets is the refusal of an archive of n assets, more than an import
+// takes (maxImportAssets), which a copy of a project refuses too before it
+// writes the archive (Duplicate).
+func tooManyAssets(n int) *ImportError {
+	return &ImportError{Code: FailAssetInvalid, Section: "assets", Check: "count",
+		Detail: fmt.Sprintf("it holds %d assets, more than the %d that an import takes", n, maxImportAssets)}
+}
+
 // readArchived reads the manifest and every section that it lists, refusing an
 // archive of a format that this server does not read, a section that it cannot
 // import, a file whose hash is not the manifest's or that its schema refuses,
@@ -383,9 +391,7 @@ func readArchived(a *archive) (*archived, error) {
 		return nil, err
 	}
 	if len(c.assets) > maxImportAssets {
-		return nil, &ImportError{Code: FailAssetInvalid, Section: "assets", Check: "count",
-			Detail: fmt.Sprintf("it holds %d assets, more than the %d that an import takes", len(c.assets),
-				maxImportAssets)}
+		return nil, tooManyAssets(len(c.assets))
 	}
 	assetPaths := make(map[string]bool, len(c.assets))
 	for _, as := range c.assets {

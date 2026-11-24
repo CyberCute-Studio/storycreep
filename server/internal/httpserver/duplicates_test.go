@@ -28,11 +28,11 @@ func duplicate(t *testing.T, h http.Handler, si signedIn, project, name string) 
 // project that it was duplicated from; its export differs from the
 // project's only in the IDs, the names, and the timestamps; and it holds
 // neither the comment, nor the play state, nor the release. Its creation is
-// recorded in the audit log.
+// recorded in the audit log. It does not run in parallel, so that it times
+// the copy while none of the package's other tests run.
 //
 // Verifies: FR-PROJ-01/AC1
 func TestDuplicateProject(t *testing.T) {
-	t.Parallel()
 	s, d, owner, ws := inviteServer(t, "open", nil)
 	startWorkers(t, s, d)
 	h := s.main

@@ -30,13 +30,26 @@ type sampleProjectInput struct {
 	WorkspaceID string `path:"workspace_id" doc:"The workspace's ID"`
 }
 
+// copySlots is how many copies of projects a process makes at once, of which
+// each user's is one at a time (slots): a copy is an import of the project's
+// archive, which holds as much memory as an import's job, which runs one at a
+// time in each process (jobs.Serial), and holds a connection of the requests'
+// pool for as long as its transaction takes, so that copies of large projects
+// asked for at once neither run the server out of memory nor take every
+// connection from the other requests. Two, so that one long copy does not
+// keep every other user's waiting. A copy that waits for its turn waits
+// before its request's body is read (holdSlot).
+const copySlots = 2
+
 // registerDuplicates registers the routes that create a project from content
 // that the server has already (PRD FR-PROJ-01, FR-PROJ-05, plan note N92): a
 // copy of a project, and the sample project. Each creates a project, so it is
 // the workspace's owners' and admins' and takes a session alone, as creating
 // and importing a project do (§5.6), and each counts in the bucket of exports
-// and imports, as it is one.
+// and imports, as it is one. A copy waits for one of copySlots; the sample,
+// whose archive is small, waits for nothing.
 func registerDuplicates(m *api.Mux, imports *authoring.Service) {
+	copies := newSlots(copySlots)
 	api.Register(m, api.ManageProjects, huma.Operation{
 		OperationID: "duplicateProject",
 		Method:      http.MethodPost,
@@ -66,7 +79,7 @@ func registerDuplicates(m *api.Mux, imports *authoring.Service) {
 			return nil, duplicateError(err)
 		}
 		return &createdProjectOutput{Location: "/api/v1/projects/" + p.ID, Body: newProjectBody(p)}, nil
-	}, api.SessionOnly(), api.RateLimit(api.BucketExport))
+	}, api.SessionOnly(), api.RateLimit(api.BucketExport), api.AfterLimit(holdSlot(copies)))
 
 	api.Register(m, api.ManageProjects, huma.Operation{
 		OperationID: "importSampleProject",
