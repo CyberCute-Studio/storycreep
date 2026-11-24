@@ -411,6 +411,35 @@ func (s *Service) ListImports(ctx context.Context, actor commands.Actor, workspa
 	return out, err
 }
 
+// CheckChunk returns the error that PutChunk would refuse a chunk of the import
+// with whatever the chunk holds: the errors of GetImport, and an
+// *ImportStateError unless the import is uploading. The route asks before it
+// takes one of the slots that asset uploads wait for too, so that a session
+// with no upload on its way, as of an account with no workspace, holds none.
+func (s *Service) CheckChunk(ctx context.Context, actor commands.Actor, workspaceID, id ids.UUID) error {
+	_, err := s.uploadingImport(ctx, actor, workspaceID, id)
+	return err
+}
+
+// uploadingImport returns the actor's import id of the workspace, with the
+// errors of CheckChunk.
+func (s *Service) uploadingImport(ctx context.Context, actor commands.Actor, workspaceID, id ids.UUID) (
+	queries.ProjectImport, error) {
+	var row queries.ProjectImport
+	err := s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
+		var err error
+		row, err = s.ownImport(ctx, tx, actor.UserID, workspaceID, id)
+		return err
+	})
+	if err != nil {
+		return row, err
+	}
+	if row.Status != ImportUploading {
+		return row, &ImportStateError{Status: row.Status}
+	}
+	return row, nil
+}
+
 // PutChunk stores the chunk index of the import's upload, which may be sent
 // again, as a resumed upload may. It returns the errors of GetImport, an
 // *ImportStateError unless the import is uploading, and a *ChunkError for an
@@ -418,17 +447,9 @@ func (s *Service) ListImports(ctx context.Context, actor commands.Actor, workspa
 func (s *Service) PutChunk(ctx context.Context, actor commands.Actor, workspaceID, id ids.UUID, index int,
 	data []byte) error {
 	scope := database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}
-	var row queries.ProjectImport
-	err := s.db.InTx(ctx, scope, func(tx pgx.Tx) error {
-		var err error
-		row, err = s.ownImport(ctx, tx, actor.UserID, workspaceID, id)
-		return err
-	})
+	row, err := s.uploadingImport(ctx, actor, workspaceID, id)
 	if err != nil {
 		return err
-	}
-	if row.Status != ImportUploading {
-		return &ImportStateError{Status: row.Status}
 	}
 	chunk := int64(row.ChunkBytes)
 	count := chunkCount(row.SizeBytes, chunk)

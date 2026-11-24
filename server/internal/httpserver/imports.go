@@ -219,12 +219,24 @@ func importActor(ctx context.Context, workspaceID, importID string) (ws, id ids.
 // FR-DATA-01, plan note N91), which create a project, so that each is the
 // workspace's owners' and admins' and takes a session alone, as creating a
 // project does (§5.6). A chunk waits for one of uploads, the slots that it
-// shares with an asset's upload, before its body is read.
+// shares with an asset's upload, before its body is read, once the rate limit
+// has counted it and checkChunk has found it the user's own import that is
+// uploading, so that a session that could upload nothing holds no slot.
 func registerProjectImports(m *api.Mux, imports *authoring.Service, uploads *slots) {
 	const importsPath = "/api/v1/workspaces/{workspace_id}/project-imports"
 	url := func(i authoring.Import) string {
 		return "/api/v1/workspaces/" + i.WorkspaceID + "/project-imports/" + i.ID
 	}
+	checkChunk := api.GuardRequest(func(ctx huma.Context) error {
+		ws, id, actor, err := importActor(ctx.Context(), ctx.Param("workspace_id"), ctx.Param("import_id"))
+		if err != nil {
+			return err
+		}
+		if err := imports.CheckChunk(ctx.Context(), actor, ws, id); err != nil {
+			return importError(err)
+		}
+		return nil
+	})
 	api.Register(m, api.ManageProjects, huma.Operation{
 		OperationID: "createProjectImport",
 		Method:      http.MethodPost,
@@ -336,7 +348,7 @@ func registerProjectImports(m *api.Mux, imports *authoring.Service, uploads *slo
 			return nil, importError(err)
 		}
 		return nil, nil
-	}, api.SessionOnly(), api.AfterLimit(holdSlot(uploads)))
+	}, api.SessionOnly(), api.AfterLimit(checkChunk, holdSlot(uploads)))
 
 	api.Register(m, api.ManageProjects, huma.Operation{
 		OperationID: "completeProjectImport",

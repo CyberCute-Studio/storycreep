@@ -2,7 +2,9 @@ package authoring
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -100,6 +102,75 @@ const (
 
 // errDirectoryTooLarge stops the zip reader at maxDirectoryBytes.
 var errDirectoryTooLarge = errors.New("authoring: the archive's central directory is too large")
+
+// What checkClaimedEntries reads of a zip's end records.
+const (
+	zipEndLen       = 22
+	zip64LocatorLen = 20
+	zip64EndLen     = 56
+	// zipEndSearch is how far from the end of a file the zip reader looks for
+	// its end record.
+	zipEndSearch = 65 * 1024
+	// maxEndRecords is how many places in that part of a file may look like
+	// the end records of a zip64 archive, each of which takes a read of the
+	// store. A zip has one.
+	maxEndRecords = 8
+)
+
+// The signatures of a zip's end record, zip64 locator, and zip64 end record.
+var (
+	zipEndSignature       = []byte("PK\x05\x06")
+	zip64LocatorSignature = []byte("PK\x06\x07")
+	zip64EndSignature     = []byte("PK\x06\x06")
+)
+
+// checkClaimedEntries refuses a file whose zip64 end record claims more members
+// than an import takes. It runs before zip.NewReader, which makes room for as
+// many as the record claims, up to a thirtieth of the file's size, before it
+// reads one, and keeps that room for as long as a member is open: a directory
+// of one member that claims 71 million would add 546 MiB to what an import of
+// 2 GiB holds, and proportionally more under a raised limit. It asks of every
+// place that the reader could take for the end record, rather than work out
+// which it takes. A failure to read that is no store's leaves the file to the
+// reader, which says what is wrong with it.
+func checkClaimedEntries(r io.ReaderAt, size int64) error {
+	tail := make([]byte, min(size, zipEndSearch+zip64LocatorLen))
+	if n, err := r.ReadAt(tail, size-int64(len(tail))); n < len(tail) {
+		if readFailure(err) {
+			return err
+		}
+		return nil
+	}
+	records := 0
+	for i := len(tail) - zipEndLen; i >= zip64LocatorLen; i-- {
+		if !bytes.HasPrefix(tail[i:], zipEndSignature) ||
+			!bytes.HasPrefix(tail[i-zip64LocatorLen:], zip64LocatorSignature) {
+			continue
+		}
+		if records++; records > maxEndRecords {
+			return invalidArchive("zip", "the file is not a zip archive")
+		}
+		at := binary.LittleEndian.Uint64(tail[i-zip64LocatorLen+8:])
+		if size < zip64EndLen || at > uint64(size-zip64EndLen) {
+			continue
+		}
+		var end [zip64EndLen]byte
+		if n, err := r.ReadAt(end[:], int64(at)); n < len(end) {
+			if readFailure(err) {
+				return err
+			}
+			continue
+		}
+		if !bytes.HasPrefix(end[:], zip64EndSignature) {
+			continue
+		}
+		if n := binary.LittleEndian.Uint64(end[32:]); n > maxArchiveEntries {
+			return invalidArchive("entries", "it claims %d members, more than the %d that an import takes", n,
+				maxArchiveEntries)
+		}
+	}
+	return nil
+}
 
 // Failure codes of an import, in its failure's code, which the API and the web
 // app show (FR-DATA-01).
@@ -237,6 +308,9 @@ func (c *countingReaderAt) ReadAt(p []byte, off int64) (int, error) {
 // or deflated without encryption, and expands within the guards, which scale
 // with the instance's import limit.
 func openArchive(r io.ReaderAt, size, importMax int64) (*archive, error) {
+	if err := checkClaimedEntries(r, size); err != nil {
+		return nil, err
+	}
 	source := &countingReaderAt{r: r, limit: maxDirectoryBytes}
 	zr, err := zip.NewReader(source, size)
 	source.limit = 0

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"slices"
 	"strconv"
@@ -94,6 +95,105 @@ func TestArchiveDirectoryGuard(t *testing.T) {
 	wantRefused(t, err, "entries")
 	if err == nil || !strings.Contains(err.Error(), "central directory") {
 		t.Errorf("the error is %v, want the directory's refusal rather than the count of its members", err)
+	}
+}
+
+// paddedZip reads as head, then zeros, then tail, over size bytes, so that a
+// test can open an archive of gigabytes without holding them.
+type paddedZip struct {
+	head, tail []byte
+	size       int64
+}
+
+// ReadAt implements io.ReaderAt.
+func (f paddedZip) ReadAt(p []byte, off int64) (int, error) {
+	tailAt := f.size - int64(len(f.tail))
+	n := 0
+	for n < len(p) && off+int64(n) < f.size {
+		at := off + int64(n)
+		switch {
+		case at < int64(len(f.head)):
+			n += copy(p[n:], f.head[at:])
+		case at >= tailAt:
+			n += copy(p[n:], f.tail[at-tailAt:])
+		default:
+			gap := int(min(tailAt-at, int64(len(p)-n)))
+			clear(p[n : n+gap])
+			n += gap
+		}
+	}
+	if n < len(p) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+// zipClaiming returns a zip of size bytes that holds one member and whose
+// zip64 end record claims that it holds claimed.
+func zipClaiming(t *testing.T, size int64, claimed uint64) paddedZip {
+	t.Helper()
+	var b bytes.Buffer
+	w := zip.NewWriter(&b)
+	m, err := w.Create("manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Write([]byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw := b.Bytes()
+	le := binary.LittleEndian
+	end := raw[len(raw)-zipEndLen:]
+	dirSize, dirAt := int64(le.Uint32(end[12:])), int64(le.Uint32(end[16:]))
+	newAt := size - dirSize - zip64EndLen - zip64LocatorLen - zipEndLen
+	tail := slices.Clone(raw[dirAt : dirAt+dirSize])
+	record := make([]byte, zip64EndLen)
+	le.PutUint32(record, 0x06064b50)
+	le.PutUint64(record[4:], zip64EndLen-12)
+	le.PutUint16(record[12:], 45)
+	le.PutUint16(record[14:], 45)
+	le.PutUint64(record[24:], claimed)
+	le.PutUint64(record[32:], claimed)
+	le.PutUint64(record[40:], uint64(dirSize))
+	le.PutUint64(record[48:], uint64(newAt))
+	locator := make([]byte, zip64LocatorLen)
+	le.PutUint32(locator, 0x07064b50)
+	le.PutUint64(locator[8:], uint64(newAt+dirSize))
+	le.PutUint32(locator[16:], 1)
+	last := make([]byte, zipEndLen)
+	le.PutUint32(last, 0x06054b50)
+	le.PutUint16(last[8:], 0xffff)
+	le.PutUint16(last[10:], 0xffff)
+	le.PutUint32(last[12:], 0xffffffff)
+	le.PutUint32(last[16:], 0xffffffff)
+	tail = slices.Concat(tail, record, locator, last)
+	return paddedZip{head: raw[:dirAt], tail: tail, size: size}
+}
+
+// TestArchiveClaimedEntriesGuard checks that an end record that claims more
+// members than an import takes is refused before the zip reader makes room for
+// them, although the count that the reader compares, of 16 bits, agrees with
+// the directory, and that a zip64 record within the limit still opens.
+//
+// Verifies: NFR-SEC-13
+func TestArchiveClaimedEntriesGuard(t *testing.T) {
+	t.Parallel()
+	const size = 2 << 30
+	claimed := uint64(1)
+	for claimed+65536 <= size/30 {
+		claimed += 65536
+	}
+	_, err := openArchive(zipClaiming(t, size, claimed), size, size)
+	wantRefused(t, err, "entries")
+	a, err := openArchive(zipClaiming(t, size, 1+65536), size, size)
+	if err != nil {
+		t.Fatalf("a zip64 record within the limit: %v", err)
+	}
+	if len(a.files) != 1 {
+		t.Errorf("it opened with %d members, want 1", len(a.files))
 	}
 }
 

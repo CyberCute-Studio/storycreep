@@ -6,14 +6,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/authoring"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/comment"
@@ -1462,6 +1465,48 @@ func TestImportTakesASequenceAtItsLimit(t *testing.T) {
 	if err := json.Unmarshal(res.body, &report); err != nil || report.Seq != 1<<52 {
 		t.Errorf("the project's sequence: %d %s", res.status, res.body)
 	}
+}
+
+// TestImportChunkIsRefusedBeforeItsBody checks that a chunk that no upload of
+// its user's waits for is answered without its body being read, and so without
+// holding one of the slots that asset uploads wait for: one of an account that
+// has no part in the workspace, and one of an import that has ended.
+//
+// Verifies: NFR-SEC-13
+func TestImportChunkIsRefusedBeforeItsBody(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	data := zipOf(t, exportedArchive(t, f))
+	ended := mustImport(t, f.s, f.owner, f.ws, data, "remap")
+	waiting := beginImport(t, f.s.main, f.owner, f.ws, len(data), "remap")
+	newAccount(t, f.s.main, "stranger@example.com")
+	stranger := signIn(t, f.s.main, "stranger@example.com")
+	// A body that never arrives, which a route that reads it waits for.
+	put := func(si signedIn, importID string) response {
+		t.Helper()
+		body, w := io.Pipe()
+		defer w.Close()
+		r := httptest.NewRequest(http.MethodPut, importsPath(f.ws)+"/"+importID+"/chunks/0", body)
+		maps.Copy(r.Header, withOctets(si.header(true)))
+		maps.Copy(r.Header, newClient())
+		rec := httptest.NewRecorder()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			f.s.main.ServeHTTP(rec, r)
+		}()
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			t.Fatal("the route waited for the body of a chunk that it refuses")
+		}
+		return response{status: rec.Code, header: rec.Header(), body: rec.Body.Bytes()}
+	}
+	wantCode(t, "a chunk of an account outside the workspace", put(stranger, waiting.ID), http.StatusNotFound,
+		api.CodeNotFound)
+	wantCode(t, "a chunk of an import that has ended", put(f.owner, ended.ID), http.StatusConflict,
+		api.CodeImportNotUploading)
 }
 
 // TestImportRefusesAReleaseOfAnotherName checks a release whose index entry
