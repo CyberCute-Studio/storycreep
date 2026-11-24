@@ -54,6 +54,7 @@ type ManifestWorkspace struct {
 	ID        string    `json:"id" doc:"The workspace's ID."`
 	Name      string    `json:"name" doc:"The workspace's name."`
 	Slug      string    `json:"slug" doc:"The workspace's slug."`
+	Settings  Value     `json:"settings" doc:"The workspace's settings as it keeps them, such as its default_locale."`
 	CreatedAt time.Time `json:"createdAt" doc:"When the workspace was created."`
 }
 

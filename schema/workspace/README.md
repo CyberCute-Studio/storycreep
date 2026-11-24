@@ -11,7 +11,7 @@ A workspace export is a zip of a whole workspace (PRD FR-DATA-02): every project
 | Path | Holds |
 | --- | --- |
 | `README.md` | What this archive holds, and the personal-data notice |
-| `workspace.json` | The manifest: the format and its version, the version of the projects' authoring format, when the reading began, the workspace, each project with its archive's path, size, and SHA-256, the projects left out, and each section with its item count and SHA-256 |
+| `workspace.json` | The manifest: the format and its version, the version of the projects' authoring format, when the reading began, the workspace with its settings, each project with its archive's path, size, and SHA-256, the projects left out, and each section with its item count and SHA-256 |
 | `projects/<project ID>.zip` | Each project outside the trash, archived ones too, as a full authoring export of its draft, with its comments, play states, release history, and assets, in the format of [`../authoring/`](../authoring/README.md), which the project import takes as it is |
 | `members.json` | Every member, guests too: the membership's and the user's IDs, the display name, the email address, the role, when they joined, and their grants on the workspace's projects |
 | `audit-log.json` | Every entry of the workspace's audit log made by the time that the reading began, oldest first, one to a line: the action, the actor and their API token, the subject, the result, the IP address, the user agent, the request's ID, the metadata, and when |
@@ -23,7 +23,7 @@ The JSON files come after the projects' archives in the zip, and the manifest la
 
 - **The trash.** A project in the workspace's trash is not in the archive, as nothing in a trash is exported (FR-DATA-01). The manifest's `trashedProjects` names each, with when it went there, and so a project that went to the trash, or was deleted for good, while the archive was being made, without that time.
 - **One moment.** The workspace, its members, and the list of its projects are read as of one moment, and the audit log is read up to it. Each project is then read as of a moment of its own, which its `authoring.json` names, as reading every project at once would hold a transaction open for as long as the whole archive takes.
-- **Accounts.** The archive holds who the members are, not their accounts: no password, session, API token, or other credential, and no member's other workspaces.
+- **Accounts.** The archive holds who the members are, not their accounts: no password, session, API token, or other credential, and no member's other workspaces. Nor does it hold the workspace's open invitations, whose people are not members yet.
 
 ## Building it
 

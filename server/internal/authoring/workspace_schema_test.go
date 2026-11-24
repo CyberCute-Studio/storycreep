@@ -95,7 +95,8 @@ func TestWorkspaceSchemaValidates(t *testing.T) {
 		return map[string]any{
 			WorkspaceManifestPath: WorkspaceManifest{Format: WorkspaceFormat, FormatVersion: WorkspaceVersion,
 				AuthoringFormatVersion: Version, Generator: serializer.Generator(), ExportedAt: at,
-				Workspace:    ManifestWorkspace{ID: "ws_1", Name: "Harbour", Slug: "harbour", CreatedAt: at},
+				Workspace: ManifestWorkspace{ID: "ws_1", Name: "Harbour", Slug: "harbour",
+					Settings: Value(`{"default_locale": "en"}`), CreatedAt: at},
 				PersonalData: true, Projects: []WorkspaceProject{{ID: "prj_1", Name: "Lighthouse", Slug: "lighthouse",
 					Path: "projects/prj_1.zip", SizeBytes: 10, SHA256: strings.Repeat("a", 64)}},
 				TrashedProjects: []TrashedProject{{ID: "prj_2", Name: "Old", Slug: "old", DeletedAt: &at}},

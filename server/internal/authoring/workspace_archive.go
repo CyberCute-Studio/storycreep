@@ -104,7 +104,7 @@ func (s *Service) readWorkspace(ctx context.Context, row queries.WorkspaceExport
 		c.manifest = WorkspaceManifest{Format: WorkspaceFormat, FormatVersion: WorkspaceVersion,
 			AuthoringFormatVersion: Version, Generator: serializer.Generator(), ExportedAt: exportedAt,
 			Workspace: ManifestWorkspace{ID: ids.Encode(ids.Workspace, ws.ID.Bytes), Name: ws.Name, Slug: ws.Slug,
-				CreatedAt: ws.CreatedAt.Time.UTC()},
+				Settings: Value(ws.Settings), CreatedAt: ws.CreatedAt.Time.UTC()},
 			PersonalData: true, TrashedProjects: trashed}
 		c.fileName = ws.Slug + "-workspace.zip"
 		return nil

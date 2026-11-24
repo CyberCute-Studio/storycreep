@@ -4,7 +4,7 @@
 -- name: WorkspaceExportWorkspace :one
 -- WorkspaceExportWorkspace returns what the archive holds of the workspace
 -- itself.
-SELECT id, name, slug, created_at FROM workspace WHERE id = @id;
+SELECT id, name, slug, settings, created_at FROM workspace WHERE id = @id;
 
 -- name: WorkspaceExportProjects :many
 -- WorkspaceExportProjects returns the workspace's projects, those in its trash

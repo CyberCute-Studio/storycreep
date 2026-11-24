@@ -161,6 +161,9 @@
           "description": "The workspace's name.",
           "type": "string"
         },
+        "settings": {
+          "description": "The workspace's settings as it keeps them, such as its default_locale."
+        },
         "slug": {
           "description": "The workspace's slug.",
           "type": "string"
@@ -170,6 +173,7 @@
         "id",
         "name",
         "slug",
+        "settings",
         "createdAt"
       ],
       "type": "object"

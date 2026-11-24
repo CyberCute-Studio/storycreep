@@ -483,13 +483,14 @@ func (q *Queries) WorkspaceExportProjects(ctx context.Context, workspaceID pgtyp
 
 const workspaceExportWorkspace = `-- name: WorkspaceExportWorkspace :one
 
-SELECT id, name, slug, created_at FROM workspace WHERE id = $1
+SELECT id, name, slug, settings, created_at FROM workspace WHERE id = $1
 `
 
 type WorkspaceExportWorkspaceRow struct {
 	ID        pgtype.UUID
 	Name      string
 	Slug      string
+	Settings  []byte
 	CreatedAt pgtype.Timestamptz
 }
 
@@ -504,6 +505,7 @@ func (q *Queries) WorkspaceExportWorkspace(ctx context.Context, id pgtype.UUID) 
 		&i.ID,
 		&i.Name,
 		&i.Slug,
+		&i.Settings,
 		&i.CreatedAt,
 	)
 	return i, err

@@ -233,7 +233,7 @@ func TestWorkspaceExport(t *testing.T) {
 	files := unzipDeflated(t, res.body)
 	m := validateWorkspaceArchive(t, files)
 	if m.Format != authoring.WorkspaceFormat || m.FormatVersion != 1 || m.AuthoringFormatVersion != authoring.Version ||
-		!m.PersonalData || m.Workspace.ID != f.ws {
+		!m.PersonalData || m.Workspace.ID != f.ws || !bytes.Contains(m.Workspace.Settings, []byte(`"default_locale"`)) {
 		t.Errorf("the manifest is %+v", m)
 	}
 	if !strings.Contains(string(files[authoring.ReadmePath]), "**This archive contains personal data.**") {
