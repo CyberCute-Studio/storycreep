@@ -231,6 +231,14 @@ func TestWorkspaceExport(t *testing.T) {
 		t.Errorf("Content-Disposition is %q, want an attachment named %s", got, e.FileName)
 	}
 	files := unzipDeflated(t, res.body)
+	// The manifest last in the zip, as the format says, after what it names.
+	zr, err := zip.NewReader(bytes.NewReader(res.body), int64(len(res.body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := zr.File[len(zr.File)-1].Name; last != authoring.WorkspaceManifestPath {
+		t.Errorf("the archive's last file is %s, want the manifest, %s", last, authoring.WorkspaceManifestPath)
+	}
 	m := validateWorkspaceArchive(t, files)
 	if m.Format != authoring.WorkspaceFormat || m.FormatVersion != 1 || m.AuthoringFormatVersion != authoring.Version ||
 		!m.PersonalData || m.Workspace.ID != f.ws || !bytes.Contains(m.Workspace.Settings, []byte(`"default_locale"`)) {

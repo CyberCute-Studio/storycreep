@@ -151,8 +151,9 @@ func (s *Service) readMembers(ctx context.Context, q *queries.Queries, ws pgtype
 // writeWorkspace writes the archive of c to w: each project's archive, which it
 // reads and writes one at a time, as an authoring export of its draft does,
 // and the workspace's own assets, then the members, the audit log, which it
-// reads a page at a time, the manifest, and the README. A project that went to
-// the trash, or was deleted for good, after c was read joins the manifest's
+// reads a page at a time, the README, and last the manifest, as the format
+// says, since it names what was written before it. A project that went to the
+// trash, or was deleted for good, after c was read joins the manifest's
 // trashed projects rather than the archive.
 func (s *Service) writeWorkspace(ctx context.Context, w io.Writer, store blob.Store, row queries.WorkspaceExport,
 	c *workspaceContent) error {
@@ -238,6 +239,12 @@ func (s *Service) writeWorkspace(ctx context.Context, w io.Writer, store blob.St
 	}
 	c.manifest.Sections = append(c.manifest.Sections, ManifestSection{Name: "audit log", Path: WorkspaceAuditPath,
 		Items: entries, SHA256: hex.EncodeToString(h.Sum(nil))})
+	if f, err = file(ReadmePath); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(f, workspaceReadme(c.manifest)); err != nil {
+		return fmt.Errorf("authoring: write the README to the archive: %w", err)
+	}
 	manifest, err := marshal(c.manifest)
 	if err != nil {
 		return fmt.Errorf("authoring: write the manifest: %w", err)
@@ -247,12 +254,6 @@ func (s *Service) writeWorkspace(ctx context.Context, w io.Writer, store blob.St
 	}
 	if _, err := f.Write(manifest); err != nil {
 		return fmt.Errorf("authoring: write the manifest to the archive: %w", err)
-	}
-	if f, err = file(ReadmePath); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(f, workspaceReadme(c.manifest)); err != nil {
-		return fmt.Errorf("authoring: write the README to the archive: %w", err)
 	}
 	if err := zw.Close(); err != nil {
 		return fmt.Errorf("authoring: finish the archive: %w", err)
