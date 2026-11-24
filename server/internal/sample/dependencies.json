@@ -1,0 +1,88 @@
+{
+  "description": "The cross-board dependency graph of the sample project (PRD FR-DEP-02 AC1): every board with its badge's counts, and every edge with its kind and how many contributions it has, as GET /api/v1/projects/{id}/dependencies answers for the sample, boards named by their names. TestSampleDependencyGraph holds the view to it exactly.",
+  "boards": [
+    { "name": "Harbour Intro", "inbound": 2, "outbound": 2 },
+    { "name": "Elara — First Meeting", "inbound": 2, "outbound": 2 },
+    { "name": "Harbourmaster", "inbound": 2, "outbound": 2 }
+  ],
+  "edges": [
+    {
+      "from": "Harbour Intro",
+      "to": "Elara — First Meeting",
+      "kind": "jumper",
+      "contributions": 1
+    },
+    {
+      "from": "Harbour Intro",
+      "to": "Harbourmaster",
+      "kind": "variable",
+      "contributions": 3
+    },
+    {
+      "from": "Harbour Intro",
+      "to": "Harbourmaster",
+      "kind": "jumper",
+      "contributions": 1
+    },
+    {
+      "from": "Elara — First Meeting",
+      "to": "Harbour Intro",
+      "kind": "variable",
+      "contributions": 4
+    },
+    {
+      "from": "Elara — First Meeting",
+      "to": "Harbour Intro",
+      "kind": "jumper",
+      "contributions": 1
+    },
+    {
+      "from": "Elara — First Meeting",
+      "to": "Harbourmaster",
+      "kind": "variable",
+      "contributions": 3
+    },
+    {
+      "from": "Elara — First Meeting",
+      "to": "Harbourmaster",
+      "kind": "attribute",
+      "contributions": 3
+    },
+    {
+      "from": "Elara — First Meeting",
+      "to": "Harbourmaster",
+      "kind": "jumper",
+      "contributions": 1
+    },
+    {
+      "from": "Elara — First Meeting",
+      "to": "Harbourmaster",
+      "kind": "visit",
+      "contributions": 1
+    },
+    {
+      "from": "Harbourmaster",
+      "to": "Harbour Intro",
+      "kind": "variable",
+      "contributions": 5
+    },
+    {
+      "from": "Harbourmaster",
+      "to": "Harbour Intro",
+      "kind": "jumper",
+      "contributions": 1
+    },
+    {
+      "from": "Harbourmaster",
+      "to": "Elara — First Meeting",
+      "kind": "variable",
+      "contributions": 2
+    },
+    {
+      "from": "Harbourmaster",
+      "to": "Elara — First Meeting",
+      "kind": "jumper",
+      "contributions": 1
+    }
+  ]
+}

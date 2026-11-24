@@ -344,6 +344,9 @@ var exportRoutes = map[api.Route]bool{
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/draft/text-export"}:                         true,
 	{Method: http.MethodPost, Pattern: "/api/v1/workspaces/{workspace_id}/project-imports"}:                      true,
 	{Method: http.MethodPost, Pattern: "/api/v1/workspaces/{workspace_id}/project-imports/{import_id}/complete"}: true,
+	// A copy of a project, and the sample, are an export and an import each.
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/duplicate"}:          true,
+	{Method: http.MethodPost, Pattern: "/api/v1/workspaces/{workspace_id}/sample-project"}: true,
 }
 
 // TestEveryRouteRateLimited checks that a rate limit counts every route of

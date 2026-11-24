@@ -190,8 +190,39 @@ func Generate(size Size, seed uint64) (*Fixture, error) {
 	if _, err := ParseSize(string(size)); err != nil {
 		return nil, err
 	}
+	f, err := generate(size.Spec(), seed)
+	if err != nil {
+		return nil, err
+	}
+	f.Size, f.Name = size, fmt.Sprintf("Fixture %s, seed %d", size, seed)
+	return f, nil
+}
+
+// GenerateSpec returns a project of what spec says, and of the seed, as
+// Generate makes one of a size, for a test that needs a project of a size
+// between the reference fixtures', as a duplication of 1,000 entities (PRD
+// FR-PROJ-01 AC1). Its Size is "". It refuses a spec that cannot be made: of
+// no board, of fewer nodes than boards, as each board has an entry node, or
+// of no variable or no component, which the expressions read; and a spec and
+// a seed of which a board would have no variable to read, as one whose
+// variables all fell to the other boards.
+func GenerateSpec(spec Spec, seed uint64) (*Fixture, error) {
+	if spec.Boards < 1 || spec.Nodes < spec.Boards || spec.Variables < 1 || spec.Components < 1 {
+		return nil, fmt.Errorf("fixture: a project of %+v cannot be made", spec)
+	}
+	f, err := generate(spec, seed)
+	if err != nil {
+		return nil, err
+	}
+	f.Name = fmt.Sprintf("Fixture of %d nodes, seed %d", spec.Nodes, seed)
+	return f, nil
+}
+
+// generate returns the batches of the project of spec and the seed, or an
+// error if a board would have no variable that its expressions read.
+func generate(spec Spec, seed uint64) (*Fixture, error) {
 	g := &gen{
-		spec: size.Spec(),
+		spec: spec,
 		// Two sources, so that the IDs do not move when what the content
 		// draws from its source changes, and the other way round.
 		r:   rand.New(rand.NewPCG(seed, 0x5eed_0001)),
@@ -200,13 +231,20 @@ func Generate(size Size, seed uint64) (*Fixture, error) {
 	}
 	g.setup()
 	g.variables()
+	if len(g.globals) == 0 {
+		for b := range g.boards {
+			if len(g.boards[b].locals) == 0 {
+				return nil, fmt.Errorf("fixture: a project of %+v and seed %d has no variable that board %d reads",
+					spec, seed, b+1)
+			}
+		}
+	}
 	g.components()
 	for b := range g.boards {
 		g.board(b)
 	}
 	g.links()
-	return &Fixture{Size: size, Seed: seed, Name: fmt.Sprintf("Fixture %s, seed %d", size, seed),
-		Batches: g.batches}, nil
+	return &Fixture{Seed: seed, Batches: g.batches}, nil
 }
 
 // gen is a fixture as it is generated: the batches so far, and what they

@@ -119,6 +119,8 @@ type Project struct {
 	Entry          ProjectEntry `json:"entry" doc:"Where the game starts: the entry board, and the node on it"`
 	Rev            int64        `json:"rev" doc:"The project's revision, which every change of its name, description, settings, archiving, or deletion increments, and which a change expects with expected_rev"`
 	Seq            int64        `json:"seq" doc:"The sequence number of the project's latest operation, 0 before its first"`
+	// DuplicatedFrom is set on a copy of a project (FR-PROJ-01).
+	DuplicatedFrom string `json:"duplicated_from,omitempty" doc:"The ID of the project that this project was duplicated from, if it is a copy, until that project is purged. It may be in the trash, or one that the user cannot see."`
 	// ArchivedAt, DeletedAt, and HardDeleteAfter are set while the project is
 	// archived, and in the trash.
 	ArchivedAt      *time.Time `json:"archived_at,omitempty" doc:"When the project was archived, if it is: an archived project is read-only"`
@@ -196,9 +198,19 @@ func stateOf(p queries.Project) Project {
 	set := decodeSettings(p.Settings)
 	return Project{ID: ids.Encode(ids.Project, p.ID.Bytes), WorkspaceID: ids.Encode(ids.Workspace, p.WorkspaceID.Bytes),
 		Name: p.Name, Slug: p.Slug, Description: p.Description, DefaultLocale: set.DefaultLocale,
-		PublishMinRole: set.PublishMinRole, Entry: set.Entry, Rev: p.Rev, Seq: p.Seq, ArchivedAt: timeOf(p.ArchivedAt),
+		PublishMinRole: set.PublishMinRole, Entry: set.Entry, Rev: p.Rev, Seq: p.Seq,
+		DuplicatedFrom: encodeOptional(ids.Project, p.DuplicatedFrom), ArchivedAt: timeOf(p.ArchivedAt),
 		DeletedAt: timeOf(p.DeletedAt), HardDeleteAfter: timeOf(p.HardDeleteAfter), CreatedAt: p.CreatedAt.Time,
 		UpdatedAt: p.UpdatedAt.Time}
+}
+
+// encodeOptional returns the public ID of kind k of the column u, or "" if it
+// is null.
+func encodeOptional(k ids.Kind, u pgtype.UUID) string {
+	if !u.Valid {
+		return ""
+	}
+	return ids.Encode(k, u.Bytes)
 }
 
 // timeOf returns the time of the column t, or nil if it is null.
@@ -332,6 +344,49 @@ func (s *Service) CheckManage(ctx context.Context, tx pgx.Tx, userID, workspaceI
 	return authz.Check(r, authz.ManageProjects)
 }
 
+// CheckDuplicate says whether the actor may duplicate the project projectID
+// now, and returns it (FR-PROJ-01): duplicating reads the project's content
+// (§5.6, P) and creates a project in its workspace (W), which needs room for
+// one more. It returns the errors of Get, then ErrInsufficientRole unless the
+// actor's role in the workspace is owner or admin, which a guest's, whose
+// grant shows them the project, is not, and an *entitlements.LimitError of a
+// workspace at its projects limit. It changes nothing.
+func (s *Service) CheckDuplicate(ctx context.Context, actor commands.Actor, projectID ids.UUID) (Visible, error) {
+	workspaceID, err := s.actorWorkspace(ctx, actor, projectID)
+	if err != nil {
+		return Visible{}, err
+	}
+	var out Visible
+	err = s.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
+		var err error
+		if out, err = s.GetIn(ctx, tx, actor, workspaceID, projectID); err != nil {
+			return err
+		}
+		a, err := s.access(ctx, queries.New(tx), actor.UserID, workspaceID, false)
+		if err != nil {
+			return err
+		}
+		if err := authz.Check(s.policy.Workspace(a.admin, a.member), authz.ManageProjects); err != nil {
+			return err
+		}
+		return s.ent.Check(ctx, tx, workspaceID, entitlements.Projects, 1)
+	})
+	if err != nil {
+		return Visible{}, err
+	}
+	return out, nil
+}
+
+// CheckNewName returns the input.FieldErrors of the field name of a name that
+// Create would refuse for a new project, with the white space around it taken
+// off, or nil, as a copy's name is checked before the copy is made.
+func CheckNewName(name string) error {
+	if msg := checkName(strings.TrimSpace(name)); msg != "" {
+		return input.FieldErrors{{Field: "name", Message: msg}}
+	}
+	return nil
+}
+
 // Imported is what CreateImported creates a project with.
 type Imported struct {
 	// ID is the project's ID: the archive's, or a fresh one (PRD §5.2).
@@ -341,7 +396,18 @@ type Imported struct {
 	// Slug is the archive's slug of the project, which it keeps if it is a
 	// slug. Otherwise it is derived from the name, as Create derives it.
 	Slug string
-	// Metadata is the audit entry's, of audit.ActionProjectImport.
+	// NewName says that the name is one that the user gives the project now,
+	// as a copy's (FR-PROJ-01), which is held to a new project's checks, with
+	// the white space around it taken off, rather than a stored value of the
+	// archive's.
+	NewName bool
+	// DuplicatedFrom is the project of the workspace that a copy is
+	// duplicated from, or zero for an import.
+	DuplicatedFrom ids.UUID
+	// Action is the audit entry's action, audit.ActionProjectImport unless
+	// it is set, as a copy's is audit.ActionProjectDuplicate.
+	Action audit.Action
+	// Metadata is the audit entry's.
 	Metadata map[string]any
 	Client   audit.Client
 }
@@ -359,8 +425,13 @@ type Imported struct {
 // every other project's creation in the workspace would wait for.
 func (s *Service) CreateImported(ctx context.Context, tx pgx.Tx, userID, workspaceID ids.UUID, in Imported) (Visible,
 	error) {
-	return s.create(ctx, tx, userID, workspaceID, creation{id: in.ID, in: in.Settings, slug: in.Slug,
-		action: audit.ActionProjectImport, metadata: in.Metadata, client: in.Client, limitLater: true, stored: true})
+	action := in.Action
+	if action == "" {
+		action = audit.ActionProjectImport
+	}
+	return s.create(ctx, tx, userID, workspaceID, creation{id: in.ID, in: in.Settings, slug: in.Slug, action: action,
+		metadata: in.Metadata, client: in.Client, limitLater: true, stored: true, newName: in.NewName,
+		duplicatedFrom: in.DuplicatedFrom})
 }
 
 // FinishImported checks the workspace's projects limit for the project that
@@ -386,8 +457,11 @@ type creation struct {
 	// limitLater leaves the projects limit and its usage to FinishImported.
 	limitLater bool
 	// stored says that the name and the description are stored values, which
-	// are kept as they are (CreateImported).
-	stored bool
+	// are kept as they are (CreateImported), but for a name that newName says
+	// is new.
+	stored, newName bool
+	// duplicatedFrom is the project that a copy is duplicated from, or zero.
+	duplicatedFrom ids.UUID
 }
 
 // create creates a project in tx, after every check that creating one takes.
@@ -395,6 +469,10 @@ func (s *Service) create(ctx context.Context, tx pgx.Tx, userID, workspaceID ids
 	in := c.in
 	if !c.stored {
 		in.Name, in.Description = strings.TrimSpace(in.Name), strings.TrimSpace(input.LineFeeds(in.Description))
+	}
+	storedName := c.stored && !c.newName
+	if !storedName {
+		in.Name = strings.TrimSpace(in.Name)
 	}
 	q := queries.New(tx)
 	ws, err := activeWorkspace(ctx, q, workspaceID)
@@ -412,7 +490,7 @@ func (s *Service) create(ctx context.Context, tx pgx.Tx, userID, workspaceID ids
 	if err := authz.Check(r, authz.ManageProjects); err != nil {
 		return Visible{}, err
 	}
-	set, err := check(in, workspaceLocale(ws.Settings), c.stored)
+	set, err := check(in, workspaceLocale(ws.Settings), storedName, c.stored)
 	if err != nil {
 		return Visible{}, err
 	}
@@ -432,7 +510,7 @@ func (s *Service) create(ctx context.Context, tx pgx.Tx, userID, workspaceID ids
 	}
 	row, err := q.InsertProject(ctx, queries.InsertProjectParams{ID: nullUUID(c.id),
 		WorkspaceID: nullUUID(workspaceID), Name: name, Slug: projectSlug, Description: description, Settings: doc,
-		CreatedBy: nullUUID(userID)})
+		CreatedBy: nullUUID(userID), DuplicatedFrom: nullUUID(c.duplicatedFrom)})
 	if err != nil {
 		return Visible{}, fmt.Errorf("project: add the project: %w", err)
 	}
@@ -453,19 +531,23 @@ func (s *Service) create(ctx context.Context, tx pgx.Tx, userID, workspaceID ids
 	}
 	return Visible{Role: s.policy.Effective(a.admin, a.member, role.None), Project: stateOf(queries.Project{
 		ID: nullUUID(c.id), WorkspaceID: nullUUID(workspaceID), Name: name, Slug: projectSlug, Description: description,
-		Settings: doc, Rev: 1, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})}, nil
+		Settings: doc, Rev: 1, DuplicatedFrom: nullUUID(c.duplicatedFrom), CreatedAt: row.CreatedAt,
+		UpdatedAt: row.UpdatedAt})}, nil
 }
 
 // check returns the settings of a project created with in, whose default
 // locale is locale unless in names one, or input.FieldErrors if a field of
-// in is not valid. A stored name or description is held to its length alone,
-// of at least one character for a name, which every project has.
-func check(in Settings, locale string, stored bool) (settings, error) {
+// in is not valid. A stored name or description, as storedName and
+// storedDescription say, is held to its length alone, of at least one
+// character for a name, which every project has.
+func check(in Settings, locale string, storedName, storedDescription bool) (settings, error) {
 	var errs input.FieldErrors
 	nameProblem, descriptionProblem := checkName(in.Name), checkDescription(in.Description)
-	if stored {
-		nameProblem, descriptionProblem = input.CheckStoredLength(in.Name, 1, MaxNameLength),
-			input.CheckStoredLength(in.Description, 0, MaxDescriptionLength)
+	if storedName {
+		nameProblem = input.CheckStoredLength(in.Name, 1, MaxNameLength)
+	}
+	if storedDescription {
+		descriptionProblem = input.CheckStoredLength(in.Description, 0, MaxDescriptionLength)
 	}
 	if nameProblem != "" {
 		errs = append(errs, input.FieldError{Field: "name", Message: nameProblem})

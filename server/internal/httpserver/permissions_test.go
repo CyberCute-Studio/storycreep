@@ -380,6 +380,17 @@ var permissionMatrix = []struct {
 					return call(f.s.main, http.MethodPost, commandsPath(f.project(t, "")),
 						commandBatch(t, wireCommand{Type: "project.delete"}), si.header(true))
 				}},
+			// Duplicating reads the project and creates one (FR-PROJ-01).
+			{name: "duplicate a project", project: true, success: http.StatusCreated,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return duplicate(t, f.s.main, si, f.project(t, ""), "Lighthouse, again")
+				}},
+			// Opening the sample imports it, which creates a project
+			// (FR-PROJ-05, "Import a project").
+			{name: "open the sample project", success: http.StatusCreated,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodPost, samplePath(f.ws), nil, si.header(true))
+				}},
 		},
 	},
 	{

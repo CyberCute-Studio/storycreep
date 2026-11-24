@@ -67,7 +67,7 @@ test("a project is created, archived, unarchived, deleted to the trash, and rest
   page,
 }) => {
   await signedIn(page, "Pia Projects");
-  await expect(page.getByText(en["projects.empty"])).toBeVisible();
+  await expect(page.getByText(en["projects.empty_offer"])).toBeVisible();
   await press(page.getByRole("button", { name: en["projects.create"] }));
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
@@ -123,7 +123,7 @@ test("a project is created, archived, unarchived, deleted to the trash, and rest
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     en["projects.title"],
   );
-  await expect(page.getByText(en["projects.empty"])).toBeVisible();
+  await expect(page.getByText(en["projects.empty_offer"])).toBeVisible();
 
   await press(
     page.getByRole("link", { name: en["workspace.nav.trash"], exact: true }),

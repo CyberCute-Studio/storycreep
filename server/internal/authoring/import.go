@@ -1015,8 +1015,31 @@ type importRun struct {
 	// until the transaction that writes the project adds it, or nil for a
 	// job's.
 	file *ImportRequest
+	// internal is how an archive that the server made itself is imported, as
+	// a copy of a project or the sample project, which no row records, or nil
+	// for an import of the job's or of the command line.
+	internal *internalRun
 	// finished, if set, receives the report of the transaction that commits.
 	finished *ImportReport
+}
+
+// internalRun is how the server imports an archive of its own (plan note
+// N92): a copy of a project (Duplicate), or the sample project
+// (ImportSample). Neither is an upload, so no row of project_import records
+// it, and its audit entry says what it was.
+type internalRun struct {
+	// name is the name that the user gives a copy, which a new project's
+	// checks hold it to, and from which its slug is derived, or "" to keep the
+	// archive's name and slug.
+	name string
+	// duplicatedFrom is the project that a copy is duplicated from, or zero.
+	duplicatedFrom ids.UUID
+	// action and metadata are those of the audit entry of the new project.
+	action   audit.Action
+	metadata map[string]any
+	// created receives the new project, as the transaction that commits reads
+	// it, with the actor's role on it.
+	created *project.Visible
 }
 
 // progress records how far the job is, which a failure to record leaves as it
@@ -1025,7 +1048,7 @@ type importRun struct {
 // inside the transaction that writes the project, which on a pool of one
 // connection would wait for itself.
 func (s *Service) progress(ctx context.Context, run importRun, phase string, done, total int64) {
-	if run.file != nil {
+	if run.file != nil || run.internal != nil {
 		return
 	}
 	err := s.db.InTx(ctx, database.Scope{WorkspaceID: run.workspace}, func(tx pgx.Tx) error {
@@ -1487,6 +1510,13 @@ func (s *Service) writeImport(ctx context.Context, run importRun, a *archive, c 
 		Settings: project.Settings{Name: c.project.Name, Description: c.project.Description,
 			DefaultLocale: settings.DefaultLocale},
 		Metadata: map[string]any{"import_id": ids.Encode(ids.Job, run.importID), "id_policy": policy}}
+	if run.internal != nil {
+		in.Action, in.Metadata, in.DuplicatedFrom = run.internal.action, run.internal.metadata,
+			run.internal.duplicatedFrom
+		if run.internal.name != "" {
+			in.Settings.Name, in.Slug, in.NewName = run.internal.name, "", true
+		}
+	}
 	// A root that its author deleted only keeps its thread's place, and the
 	// export does not count it either.
 	live := 0
@@ -1611,6 +1641,16 @@ func (s *Service) writeImport(ctx context.Context, run importRun, a *archive, c 
 		if err := s.projects.FinishImported(ctx, tx, run.workspace); err != nil {
 			return err
 		}
+		if run.internal != nil {
+			// As the transaction leaves it, with what the draft's commands
+			// changed of its settings, as its entry.
+			created, err := s.projects.GetIn(ctx, tx, actor, run.workspace, projectID)
+			if err != nil {
+				return err
+			}
+			*run.internal.created = created
+			return nil
+		}
 		data, err := json.Marshal(report)
 		if err != nil {
 			return err
@@ -1685,11 +1725,12 @@ func importWriteError(err error) error {
 	var limit *entitlements.LimitError
 	if errors.As(err, &limit) {
 		return &ImportError{Code: FailLimitExceeded, Check: string(limit.Key),
-			Detail: fmt.Sprintf("the workspace has no room for it under its %s limit", limit.Key)}
+			Detail: fmt.Sprintf("the workspace has no room for it under its %s limit", limit.Key), cause: limit}
 	}
 	if errors.Is(err, authz.ErrInsufficientRole) || errors.Is(err, authz.ErrOwnerRequired) ||
 		errors.Is(err, project.ErrNotFound) || errors.Is(err, commands.ErrNotFound) {
-		return &ImportError{Code: FailForbidden, Detail: "the user may no longer create a project in the workspace"}
+		return &ImportError{Code: FailForbidden, Detail: "the user may no longer create a project in the workspace",
+			cause: err}
 	}
 	var pg *pgconn.PgError
 	if errors.As(err, &pg) && (strings.HasPrefix(pg.Code, "22") || strings.HasPrefix(pg.Code, "23")) {

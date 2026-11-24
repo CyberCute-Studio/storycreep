@@ -16,6 +16,7 @@ import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
 import { VerifyNotice } from "../auth/VerifyNotice";
 import { ImportButton } from "../authoring/ImportDialog";
+import { SampleProjectButton } from "../authoring/SampleProject";
 import { found } from "../shell/found";
 import { Button, MoreButton } from "../ui/Button";
 import { closesUnlessPending, DialogFrame, FormButtons } from "../ui/Dialog";
@@ -48,8 +49,9 @@ export const Route = createFileRoute("/workspaces/$workspaceId/")({
 });
 
 // A workspace's projects (PRD FR-PROJ-01), archived ones too, which its
-// owners and admins create: a guest's, those granted to them alone
-// (FR-TEN-04 AC2).
+// owners and admins create, import, or open the sample of (FR-PROJ-05), as an
+// empty list offers them, as after the first sign-in: a guest's, those
+// granted to them alone (FR-TEN-04 AC2).
 function Projects() {
   const { t } = useTranslation();
   const { workspaceId } = Route.useParams();
@@ -73,13 +75,19 @@ function Projects() {
         <div className="flex flex-wrap items-center gap-4">
           <NewProject workspace={workspace} />
           <ImportButton key={workspace.id} workspaceId={workspace.id} />
+          <SampleProjectButton
+            key={`sample-${workspace.id}`}
+            workspaceId={workspace.id}
+          />
         </div>
       )}
       {projects.length === 0 ? (
         <p className="text-fg-muted">
           {workspace.role === "guest"
             ? t("projects.none_shared")
-            : t("projects.empty")}
+            : manages
+              ? t("projects.empty_offer")
+              : t("projects.empty")}
         </p>
       ) : (
         <ul

@@ -157,6 +157,42 @@ func TestGenerateCounts(t *testing.T) {
 	}
 }
 
+// TestGenerateSpec checks that GenerateSpec refuses a spec that cannot be
+// made, and that a small spec makes a project of its counts, or, of a seed
+// that leaves a board no variable to read, an error, but never panics.
+func TestGenerateSpec(t *testing.T) {
+	for _, spec := range []fixture.Spec{
+		{Boards: 0, Nodes: 10, Variables: 3, Components: 3},
+		{Boards: 5, Nodes: 3, Variables: 10, Components: 3},
+		{Boards: 2, Nodes: 10, Variables: 0, Components: 3},
+		{Boards: 2, Nodes: 10, Variables: 3, Components: 0},
+	} {
+		if _, err := fixture.GenerateSpec(spec, 1); err == nil {
+			t.Errorf("GenerateSpec(%+v) made a project", spec)
+		}
+	}
+	spec := fixture.Spec{Boards: 3, Nodes: 3, Variables: 1, Components: 1}
+	made, refused := 0, 0
+	for seed := range uint64(50) {
+		f, err := fixture.GenerateSpec(spec, seed)
+		if err != nil {
+			refused++
+			continue
+		}
+		made++
+		for typ, want := range map[commands.Type]int{board.Create: spec.Boards, node.Create: spec.Nodes,
+			variable.Create: spec.Variables, component.Create: spec.Components} {
+			if got := f.Count(typ); got != want {
+				t.Errorf("seed %d: %d %s commands, want %d", seed, got, typ, want)
+			}
+		}
+	}
+	if made == 0 || refused == 0 {
+		t.Errorf("of 50 seeds, %d made a project of %+v and %d were refused, want some of each", made, spec,
+			refused)
+	}
+}
+
 // assignmentRE finds an assignment to a component's runtime attribute in a
 // script, as anchor3.count -= 1.
 var assignmentRE = regexp.MustCompile(`\.(trust|mood|alive|count) [-+]?= `)

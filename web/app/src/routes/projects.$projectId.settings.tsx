@@ -12,6 +12,7 @@ import { api, sessionQuery } from "../api";
 import { bodyField } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
+import { DuplicateProject } from "../authoring/DuplicateProject";
 import {
   conflictOf,
   managesProject,
@@ -55,8 +56,8 @@ export const Route = createFileRoute("/projects/$projectId/settings")({
 
 // A project's settings (PRD FR-PROJ-01): its name, slug, and description,
 // and archiving it, which makes it read-only, which its owners and admins
-// change, and deleting it to the workspace's trash, for 30 days, which the
-// workspace's owners and admins alone do (§5.6).
+// change, and duplicating it, and deleting it to the workspace's trash, for
+// 30 days, which the workspace's owners and admins alone do (§5.6).
 function Settings() {
   const { t } = useTranslation();
   const { projectId } = Route.useParams();
@@ -76,7 +77,10 @@ function Settings() {
       )}
       {manages && <Archive project={project} />}
       {managesWorkspace(workspace.role) && (
-        <DeleteProject project={project} workspace={workspace} />
+        <>
+          <DuplicateProject project={project} />
+          <DeleteProject project={project} workspace={workspace} />
+        </>
       )}
     </Page>
   );

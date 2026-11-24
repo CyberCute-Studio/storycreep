@@ -1853,6 +1853,11 @@ export interface DiffSummary {
   removed: number;
 }
 
+export interface DuplicateProjectBody {
+  /** The copy's name, as a new project's for POST /api/v1/workspaces/{workspace_id}/projects: of 1 to 100 characters, not all of them blank, and without control characters, bidirectional controls, and line separators among them. White space around it is removed. The copy's slug is derived from it. */
+  name: string;
+}
+
 export interface Edge {
   /** How many contributions the edge has that the filters keep, which its list of contributions lists: of variable and attribute, the triples of the variable or the attribute, a site that writes it, and a site that reads it; of jumper, the jumpers; and of visit, the pairs of the node visited and the expression that reads it */
   contributions: number;
@@ -3001,6 +3006,8 @@ export interface Project {
   deleted_at?: string;
   /** The project's description, which may be empty */
   description: string;
+  /** The ID of the project that this project was duplicated from, if it is a copy, until that project is purged. It may be in the trash, or one that the user cannot see. */
+  duplicated_from?: string;
   /** Where the game starts: the entry board, and the node on it */
   entry: ProjectEntry;
   /** When a project in the trash is deleted for good, after which it cannot be restored */
@@ -3048,6 +3055,8 @@ export interface ProjectBody {
   deleted_at?: string;
   /** The project's description, which may be empty */
   description: string;
+  /** The ID of the project that this project was duplicated from, if it is a copy, until that project is purged. It may be in the trash, or one that the user cannot see. */
+  duplicated_from?: string;
   /** Where the game starts: the entry board, and the node on it */
   entry: ProjectEntry;
   /** When a project in the trash is deleted for good, after which it cannot be restored */
@@ -4657,6 +4666,27 @@ export interface Operations {
     };
   };
   /**
+   * Duplicate a project
+   *
+   * Copies the project into a new project of its workspace, with fresh IDs, and answers 201 with the copy, whose duplicated_from names the project (PRD FR-PROJ-01). The copy holds the project's draft as a content-only authoring export of it with its assets holds it: its folders, boards, variables, component types and components, nodes, connections, muted findings, and assets, outside the trash, and not its comments, play states, or releases. It is made whole or not at all, in the request. An archived project may be duplicated, and its copy is not archived. Only an owner or an admin of the workspace may, and anyone else with a role on the project is answered with 403 insufficient_role. A name that its field does not allow is answered with 422 validation_failed, a workspace that has as many projects as its plan allows, or no room for the copy's assets, with 409 limit_exceeded or storage_limit_exceeded, and a project that the copy's import refuses, as one of more assets than an import takes, with 409 duplicate_refused. Until the instance's first-run setup has completed, the answer is 403 setup_required, unless STORYCREEP_ASSET_STORAGE names where files are stored. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Exports share a rate limit of 60 an hour for each IP address, and 30 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.
+   */
+  duplicateProject: {
+    input: {
+      path: {
+        /** The ID of the project to duplicate */
+        project_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+      body: DuplicateProjectBody;
+    };
+    responses: {
+      201: ProjectBody;
+    };
+  };
+  /**
    * Export the draft
    *
    * Returns the files of the project's draft as it is now, as a zip of the published layout, at the version of the published game format that schema asks for, or, without it, at the version that the server writes, read as of one moment (PRD FR-SYNC-01, §7.8), as a game's draft pull fetches it. It is always marked as the draft's: its manifest's snapshot has the channel draft, the draft's content hash, and when it was exported, as pulledAt, and neither an ID nor a version, which a draft has none of, and Content-Disposition names it as the draft's. What the draft holds that no release may, as a condition that does not compile, it stands in for as play mode does, so that it is exported whatever validation would say of publishing it. The draft is not a release, so an API token needs project:read, and one that holds snapshot:read alone is answered with 403 insufficient_scope (PRD FR-SYNC-01 AC4). The zip holds a member of each file of the published layout (PRD §6.3), at its path, as storycreep.json or boards/harbour-intro.json, in the order of their paths, with no member of a directory, which the manifest lists with each file's SHA-256, and Content-Disposition names it, as an attachment. A release of the server always makes the same zip of the same files, and another release may compress them otherwise, so a client compares the files, by the manifest's hashes, not the zip's bytes. Asked with schema, the files are rendered at that version of the published format: down to an older version by the renderer of each version between, or up to a newer one by the migration to each, and they validate against that version's JSON Schemas (PRD FR-SYNC-01 AC2), with the manifest's hashes and content hash those of the files at that version. A version that the server does not read is answered with 409 schema_unsupported, with details.min and details.max, the oldest and the newest that it reads (AC3), and an older version that cannot express what the files hold with 409 schema_unrepresentable, which lists each value that it cannot express, so that nothing is dropped silently (PRD §6.4). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Exports share a rate limit of 60 an hour for each IP address, 30 for each account, and 30 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.
@@ -5218,6 +5248,26 @@ export interface Operations {
     };
     responses: {
       200: UsageBody;
+    };
+  };
+  /**
+   * Open the sample project
+   *
+   * Imports the sample project, The Lighthouse Keeper, as a new project of the workspace, with fresh IDs, and answers 201 with it (PRD FR-PROJ-05). The sample is an authoring export that the server holds: three boards of a short story, with variables, components, a quest, gating across boards, and a warning of the validation to look at. Each request adds another project. Only an owner or an admin of the workspace may, and anyone else with a role in it is answered with 403 insufficient_role; a workspace that has as many projects as its plan allows is answered with 409 limit_exceeded. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Exports share a rate limit of 60 an hour for each IP address, and 30 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.
+   */
+  importSampleProject: {
+    input: {
+      path: {
+        /** The workspace's ID */
+        workspace_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+    };
+    responses: {
+      201: ProjectBody;
     };
   };
   /**
@@ -6697,6 +6747,7 @@ export const routes = {
   deleteProject: { method: "DELETE", path: "/api/v1/projects/{project_id}" },
   diffSnapshots: { method: "POST", path: "/api/v1/projects/{project_id}/diff" },
   downloadAuthoringExport: { method: "GET", path: "/api/v1/projects/{project_id}/authoring-exports/{export_id}/download", blob: true },
+  duplicateProject: { method: "POST", path: "/api/v1/projects/{project_id}/duplicate" },
   exportDraft: { method: "GET", path: "/api/v1/projects/{project_id}/draft/export", blob: true },
   exportDraftText: { method: "GET", path: "/api/v1/projects/{project_id}/draft/text-export", blob: true },
   exportSnapshot: { method: "GET", path: "/api/v1/projects/{project_id}/snapshots/{snapshot_id}/export", blob: true },
@@ -6730,6 +6781,7 @@ export const routes = {
   getVersion: { method: "GET", path: "/version" },
   getWorkspace: { method: "GET", path: "/api/v1/workspaces/{workspace_id}" },
   getWorkspaceUsage: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/usage" },
+  importSampleProject: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/sample-project" },
   issuePasswordResetLink: { method: "POST", path: "/api/v1/admin/password-reset-links" },
   issueVerificationLink: { method: "POST", path: "/api/v1/admin/verification-links" },
   listAuthoringExports: { method: "GET", path: "/api/v1/projects/{project_id}/authoring-exports" },

@@ -150,8 +150,16 @@ const (
 	// (FR-DATA-01), by its actor, recorded in the transaction that creates the
 	// project. It belongs to the workspace, its subject is the new project, and
 	// its metadata's import_id names the import, and id_policy says whether it
-	// kept the archive's IDs (preserve) or gave fresh ones (remap).
+	// kept the archive's IDs (preserve) or gave fresh ones (remap). The import
+	// of the sample project (FR-PROJ-05), which is no upload, has no import_id,
+	// and its sample names the sample.
 	ActionProjectImport Action = "project.import"
+	// ActionProjectDuplicate is the duplication of a project into a new
+	// project of its workspace, by its actor (FR-PROJ-01), recorded in the
+	// transaction that creates the copy. It belongs to the workspace, its
+	// subject is the copy, and its metadata's duplicated_from names the
+	// project that it was copied from.
+	ActionProjectDuplicate Action = "project.duplicate"
 	// ActionProjectGrantCreate is a member's new grant on a project, with the
 	// role that its metadata's role names, which replaces the member's role
 	// in the workspace on that project, by an owner or admin of the
@@ -284,7 +292,9 @@ var events = []eventSpec{
 	{action: ActionProjectExport, inWorkspace: true, subject: "project", results: []Result{ResultSuccess},
 		metadata: []string{"export_id", "source", "profile", "include_assets", "include_releases"}},
 	{action: ActionProjectImport, inWorkspace: true, subject: "project", results: []Result{ResultSuccess},
-		metadata: []string{"import_id", "id_policy"}},
+		metadata: []string{"import_id", "id_policy", "sample"}},
+	{action: ActionProjectDuplicate, inWorkspace: true, subject: "project", results: []Result{ResultSuccess},
+		metadata: []string{"duplicated_from"}},
 	{action: ActionProjectGrantCreate, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},
 		metadata: []string{"project_id", "role"}},
 	{action: ActionProjectGrantChange, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},
