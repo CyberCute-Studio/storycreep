@@ -1530,8 +1530,13 @@ func (s *Service) writeImport(ctx context.Context, run importRun, a *archive, c 
 				return a.read(as.Path, s.maxAssetBytes())
 			})
 			if errors.Is(err, asset.ErrDuplicateContent) {
+				detail := "sanitized as this server does, its file is the same as another asset's, and a project " +
+					"holds one asset of each content"
+				if slices.ContainsFunc(c.assets[:i], func(o Asset) bool { return o.SHA256 == as.SHA256 }) {
+					detail = "the archive holds the same file twice"
+				}
 				return &ImportError{Code: FailAssetInvalid, Section: "assets", Check: "duplicate",
-					Detail: as.ID + ": the archive holds the same file twice"}
+					Detail: as.ID + ": " + detail}
 			}
 			if err != nil {
 				return err

@@ -108,13 +108,10 @@ const (
 	zipEndLen       = 22
 	zip64LocatorLen = 20
 	zip64EndLen     = 56
-	// zipEndSearch is how far from the end of a file the zip reader looks for
-	// its end record.
+	// zipEndNear and zipEndSearch are how far from the end of a file the zip
+	// reader looks for its end record, first and then at most.
+	zipEndNear   = 1024
 	zipEndSearch = 65 * 1024
-	// maxEndRecords is how many places in that part of a file may look like
-	// the end records of a zip64 archive, each of which takes a read of the
-	// store. A zip has one.
-	maxEndRecords = 8
 )
 
 // The signatures of a zip's end record, zip64 locator, and zip64 end record.
@@ -124,15 +121,37 @@ var (
 	zip64EndSignature     = []byte("PK\x06\x06")
 )
 
+// zipEndAt returns where in tail, the last bytes of a file, the zip reader
+// finds the end record, or -1: in each part of the file that it searches, the
+// last signature, if the comment that it announces ends within that part.
+func zipEndAt(tail []byte) int {
+	for _, n := range []int{zipEndNear, zipEndSearch} {
+		from := max(len(tail)-n, 0)
+		block := tail[from:]
+		for i := len(block) - zipEndLen; i >= 0; i-- {
+			if !bytes.HasPrefix(block[i:], zipEndSignature) {
+				continue
+			}
+			if comment := binary.LittleEndian.Uint16(block[i+zipEndLen-2:]); i+zipEndLen+int(comment) <= len(block) {
+				return from + i
+			}
+			break
+		}
+	}
+	return -1
+}
+
 // checkClaimedEntries refuses a file whose zip64 end record claims more members
 // than an import takes. It runs before zip.NewReader, which makes room for as
 // many as the record claims, up to a thirtieth of the file's size, before it
 // reads one, and keeps that room for as long as a member is open: a directory
 // of one member that claims 71 million would add 546 MiB to what an import of
-// 2 GiB holds, and proportionally more under a raised limit. It asks of every
-// place that the reader could take for the end record, rather than work out
-// which it takes. A failure to read that is no store's leaves the file to the
-// reader, which says what is wrong with it.
+// 2 GiB holds, and proportionally more under a raised limit. It reads the one
+// record that the reader takes, under the reader's own conditions, and no other
+// that the file spells: an export stores an asset's bytes as they are, near its
+// end, and they can spell any number of records that the reader passes over
+// (TestClaimedEntriesAgreesWithTheZipReader). A failure to read that is no
+// store's leaves the file to the reader, which says what is wrong with it.
 func checkClaimedEntries(r io.ReaderAt, size int64) error {
 	tail := make([]byte, min(size, zipEndSearch+zip64LocatorLen))
 	if n, err := r.ReadAt(tail, size-int64(len(tail))); n < len(tail) {
@@ -141,33 +160,37 @@ func checkClaimedEntries(r io.ReaderAt, size int64) error {
 		}
 		return nil
 	}
-	records := 0
-	for i := len(tail) - zipEndLen; i >= zip64LocatorLen; i-- {
-		if !bytes.HasPrefix(tail[i:], zipEndSignature) ||
-			!bytes.HasPrefix(tail[i-zip64LocatorLen:], zip64LocatorSignature) {
-			continue
+	i := zipEndAt(tail)
+	if i < zip64LocatorLen {
+		return nil
+	}
+	le := binary.LittleEndian
+	// The reader compares the directory's size with 16 bits too.
+	if end := tail[i:]; le.Uint16(end[10:]) != 0xffff && le.Uint32(end[12:]) != 0xffff &&
+		le.Uint32(end[16:]) != 0xffffffff {
+		return nil
+	}
+	locator := tail[i-zip64LocatorLen : i]
+	if !bytes.HasPrefix(locator, zip64LocatorSignature) || le.Uint32(locator[4:]) != 0 || le.Uint32(locator[16:]) != 1 {
+		return nil
+	}
+	at := le.Uint64(locator[8:])
+	if size < zip64EndLen || at > uint64(size-zip64EndLen) {
+		return nil
+	}
+	var record [zip64EndLen]byte
+	if n, err := r.ReadAt(record[:], int64(at)); n < len(record) {
+		if readFailure(err) {
+			return err
 		}
-		if records++; records > maxEndRecords {
-			return invalidArchive("zip", "the file is not a zip archive")
-		}
-		at := binary.LittleEndian.Uint64(tail[i-zip64LocatorLen+8:])
-		if size < zip64EndLen || at > uint64(size-zip64EndLen) {
-			continue
-		}
-		var end [zip64EndLen]byte
-		if n, err := r.ReadAt(end[:], int64(at)); n < len(end) {
-			if readFailure(err) {
-				return err
-			}
-			continue
-		}
-		if !bytes.HasPrefix(end[:], zip64EndSignature) {
-			continue
-		}
-		if n := binary.LittleEndian.Uint64(end[32:]); n > maxArchiveEntries {
-			return invalidArchive("entries", "it claims %d members, more than the %d that an import takes", n,
-				maxArchiveEntries)
-		}
+		return nil
+	}
+	if !bytes.HasPrefix(record[:], zip64EndSignature) {
+		return nil
+	}
+	if n := le.Uint64(record[32:]); n > maxArchiveEntries {
+		return invalidArchive("entries", "it claims %d members, more than the %d that an import takes", n,
+			maxArchiveEntries)
 	}
 	return nil
 }

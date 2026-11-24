@@ -476,13 +476,15 @@ func parseArgs(a jobArgs) (ws, id ids.UUID, err error) {
 	return ws, id, nil
 }
 
-// withDB returns a Service like s on db, the workers' pool of a job.
+// withDB returns a Service like s on db, the workers' pool of a job, and its
+// assets' service too, whose transactions an import's job then runs there.
 func (s *Service) withDB(db *database.DB) *Service {
 	if db == nil {
 		return s
 	}
 	c := *s
 	c.db = db
+	c.assets = s.assets.WithDB(db)
 	return &c
 }
 

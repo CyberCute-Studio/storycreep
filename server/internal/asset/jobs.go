@@ -82,21 +82,21 @@ func (orphans) Kind() string { return "asset_orphans" }
 // every hour.
 func (s *Service) RegisterJobs(r *jobs.Registry) {
 	jobs.Register(r, func(ctx context.Context, job *jobs.Job[thumbnailJob]) error {
-		return s.withDB(job.DB).makeThumbnail(ctx, job.Args)
+		return s.WithDB(job.DB).makeThumbnail(ctx, job.Args)
 	})
 	jobs.Serial(r, thumbnailJob{})
 	jobs.Register(r, func(ctx context.Context, job *jobs.Job[orphans]) error {
-		_, err := s.withDB(job.DB).Reconcile(ctx)
+		_, err := s.WithDB(job.DB).Reconcile(ctx)
 		return err
 	})
 	jobs.Periodic(r, reconciliationInterval, orphans{})
 }
 
-// withDB returns a Service like s that reads and writes db, as a job does on
+// WithDB returns a Service like s that reads and writes db, as a job does on
 // the workers' pool that it carries (package jobs). The storage reads the
 // bucket that setup chose through s's own.
-func (s *Service) withDB(db *database.DB) *Service {
-	if db == nil {
+func (s *Service) WithDB(db *database.DB) *Service {
+	if s == nil || db == nil {
 		return s
 	}
 	c := *s

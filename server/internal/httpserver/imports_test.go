@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1751,6 +1752,56 @@ func TestImportHoldsTheManifestToItsAssets(t *testing.T) {
 	got := failedImport(t, f.s, f.owner, f.ws, zipOf(t, files))
 	if got.Code != authoring.FailSchemaInvalid || got.Section != "assets" || got.Check != "includes_assets" {
 		t.Errorf("the failure is %+v, want schema_invalid of assets at includes_assets", *got)
+	}
+}
+
+// TestImportOfAnImageThatSpellsEndRecords checks that a real export imports
+// although an asset's bytes, which it stores as they are close to its end,
+// spell zip64 end records that the zip reader passes over.
+//
+// Verifies: FR-DATA-01/AC1, NFR-SEC-13
+func TestImportOfAnImageThatSpellsEndRecords(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	spelled := make([]byte, 42)
+	copy(spelled, "PK\x06\x07")
+	binary.LittleEndian.PutUint32(spelled[16:], 1)
+	copy(spelled[20:], "PK\x05\x06")
+	upload(t, f.s.main, f.owner, f.project, append(testPNG(t, 7, 7), bytes.Repeat(spelled, 9)...), http.StatusCreated)
+	e := waitForExport(t, f, f.owner, askExport(t, f.s.main, f.owner, f.project, map[string]any{}).ID)
+	res := call(f.s.main, http.MethodGet, authoringExportsPath(f.project)+"/"+e.ID+"/download", nil, f.owner.header(false))
+	if res.status != http.StatusOK || bytes.Count(res.body, spelled) != 9 {
+		t.Fatalf("the export: %d, spelling the records %d times", res.status, bytes.Count(res.body, spelled))
+	}
+	mustImport(t, f.s, f.owner, f.ws, res.body, "")
+}
+
+// TestImportNamesFilesThatSanitizeToOne checks the refusal of two assets whose
+// files differ in the archive and are one file once sanitized, which says so
+// rather than that the archive holds one file twice.
+func TestImportNamesFilesThatSanitizeToOne(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	files := exportedArchive(t, f)
+	assets := items[authoring.Asset](t, files, "assets/index.json")
+	for _, body := range []string{"", "<script>1</script>"} {
+		id := ids.Encode(ids.Asset, ids.New())
+		data := []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4">` + body + `</svg>`)
+		path := "assets/" + strings.ToLower(id) + ".svg"
+		files[path] = data
+		assets = append(assets, authoring.Asset{ID: id, Path: path, SHA256: sha256Hex(data), Mime: "image/svg+xml",
+			Bytes: int64(len(data))})
+	}
+	index, err := json.Marshal(authoring.Items[authoring.Asset]{Items: assets})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resealSection(t, files, "assets/index.json", index, len(assets))
+	got := failedImport(t, f.s, f.owner, f.ws, zipOf(t, files))
+	if got.Code != authoring.FailAssetInvalid || got.Check != "duplicate" || !strings.Contains(got.Detail, "sanitized") {
+		t.Errorf("the failure is %+v, want asset_invalid at duplicate that names the sanitizing", *got)
 	}
 }
 
