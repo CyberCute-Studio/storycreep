@@ -117,6 +117,11 @@ const (
 	// "Manage API tokens (others')"), which no project grant authorises
 	// (FR-TEN-04 AC4).
 	ManageTokens Operation = "workspace.tokens"
+	// ExportWorkspace is asking for an export of the whole workspace, and
+	// reading and downloading one's own (W, "Export the workspace", PRD
+	// FR-DATA-02), which only an owner may, as the archive holds every
+	// project, the members' email addresses, and the audit log.
+	ExportWorkspace Operation = "workspace.export"
 )
 
 // Scope is what an operation acts on, which says which role authorises it
@@ -139,9 +144,10 @@ var (
 	// does not allow.
 	ErrInsufficientRole = errors.New("authz: the user's role does not allow it")
 	// ErrOwnerRequired is returned for an operation that only an owner of the
-	// workspace may do (ManageOwners). It reaches only an admin (FR-TEN-03
-	// AC4), because the operations that need ManageOwners need ManageMembers
-	// first, which refuses the roles below admin with ErrInsufficientRole
+	// workspace may do (ManageOwners, ExportWorkspace). It reaches only an
+	// admin (FR-TEN-03 AC4): Check refuses the roles below admin such an
+	// operation with ErrInsufficientRole, as the operations that need
+	// ManageOwners need ManageMembers first, which refuses them so too
 	// (CheckGrant).
 	ErrOwnerRequired = errors.New("authz: only an owner of the workspace may do it")
 )
@@ -178,6 +184,7 @@ var matrix = map[Operation]rule{
 	// The workspace's own tokens and the others' are rows of their own.
 	ManageOwnWorkspaceTokens: {scope: Workspace, least: role.Editor, denied: ErrInsufficientRole},
 	ManageTokens:             {scope: Workspace, least: role.Admin, denied: ErrInsufficientRole},
+	ExportWorkspace:          {scope: Workspace, least: role.Owner, denied: ErrOwnerRequired},
 }
 
 // Operations returns the operations of the matrix, in order of their names.
@@ -211,14 +218,15 @@ func Allows(r role.Role, op Operation) bool {
 }
 
 // Check returns nil if the role r allows the operation op, and the error that
-// refuses it otherwise: ErrOwnerRequired for ManageOwners, and
+// refuses it otherwise: ErrOwnerRequired for an admin refused an operation
+// that only an owner may do, ManageOwners or ExportWorkspace, and
 // ErrInsufficientRole for the others, and for an operation that is not in the
 // matrix.
 func Check(r role.Role, op Operation) error {
 	if Allows(r, op) {
 		return nil
 	}
-	if rule, ok := matrix[op]; ok {
+	if rule, ok := matrix[op]; ok && (rule.denied != ErrOwnerRequired || r.AtLeast(role.Admin)) {
 		return rule.denied
 	}
 	return ErrInsufficientRole

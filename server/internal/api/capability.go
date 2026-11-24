@@ -87,6 +87,11 @@ const (
 	// owner or admin in its workspace (§5.6 "Manage own API tokens narrowed
 	// to this project", "Manage API tokens (others')").
 	ManageProjectTokens Capability = "project.tokens"
+	// ExportWorkspace is asking for an export of a whole workspace, and
+	// reading and downloading one's own (PRD FR-DATA-02), which needs owner
+	// (§5.6 "Export the workspace"). Its routes are session-only, as no scope
+	// of an API token grants it (FR-AUTH-04).
+	ExportWorkspace Capability = "workspace.export"
 	// ManageInstance is the instance-admin area (PRD FR-ADMIN-03), which
 	// needs a signed-in instance admin, whom the service checks (package
 	// account).
@@ -117,6 +122,7 @@ var capabilities = map[Capability]bool{
 	PublishSnapshots:        true,
 	ManageWorkspaceTokens:   true,
 	ManageProjectTokens:     true,
+	ExportWorkspace:         true,
 	ManageInstance:          true,
 }
 

@@ -431,6 +431,18 @@ var Tables = []Table{
 			"VALUES ($1, $2, $3, $4, 'full', true, true, 'failed', $5, now(), now() + interval '7 days')",
 			[]any{id, w.ID, w.Rows["project"], user, id.String()}}, nil
 	}},
+	{Name: "workspace_export", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+		// A finished export, by a user of its own, as a user has one export
+		// of a workspace on its way at a time.
+		user, err := NewUser(ctx, admin)
+		if err != nil {
+			return Statement{}, err
+		}
+		id := ids.New()
+		return Statement{id, "INSERT INTO workspace_export (id, workspace_id, requested_by, status, storage_key, " +
+			"finished_at, expires_at) VALUES ($1, $2, $3, 'failed', $4, now(), now() + interval '7 days')",
+			[]any{id, w.ID, user, id.String()}}, nil
+	}},
 	{Name: "project_import", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
 		// A failed import, by a user of its own, as a user has one import of
 		// a workspace on its way at a time.

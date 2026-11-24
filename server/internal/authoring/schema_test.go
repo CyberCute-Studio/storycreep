@@ -15,7 +15,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
 )
 
-var update = flag.Bool("update", false, "rewrite schema/authoring/v1/archive.schema.json")
+var update = flag.Bool("update", false, "rewrite schema/authoring/v1/archive.schema.json and schema/workspace/v1/archive.schema.json")
 
 var schemaFile = filepath.Join("..", "..", "..", filepath.FromSlash(SchemaPath))
 

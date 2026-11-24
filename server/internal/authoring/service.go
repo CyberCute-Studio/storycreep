@@ -464,6 +464,7 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 		return err
 	})
 	s.registerImportJobs(r)
+	s.registerWorkspaceJobs(r)
 }
 
 func parseArgs(a jobArgs) (ws, id ids.UUID, err error) {

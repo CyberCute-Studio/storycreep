@@ -1,0 +1,500 @@
+{
+  "$defs": {
+    "Asset": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": {
+          "description": "The size of its file.",
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "height": {
+          "description": "An image's height, in pixels.",
+          "format": "int32",
+          "type": "integer"
+        },
+        "id": {
+          "description": "The asset's ID.",
+          "type": "string"
+        },
+        "mime": {
+          "description": "Its media type.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The path of its file in the archive.",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "The SHA-256 of its file.",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "width": {
+          "description": "An image's width, in pixels.",
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "path",
+        "sha256",
+        "mime",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "GeneratorInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "What wrote the snapshot, storycreep for the server.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "version": {
+          "description": "Its version.",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "type": "object"
+    },
+    "ItemsAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "description": "The section's items.",
+          "items": {
+            "$ref": "#/$defs/Asset"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ItemsWorkspaceAuditEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "description": "The section's items.",
+          "items": {
+            "$ref": "#/$defs/WorkspaceAuditEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ItemsWorkspaceMember": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "description": "The section's items.",
+          "items": {
+            "$ref": "#/$defs/WorkspaceMember"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ManifestSection": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "description": "How many items it holds.",
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "The section's name.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The path of its file.",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "The SHA-256 of its file.",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "path",
+        "items",
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "ManifestWorkspace": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "description": "When the workspace was created.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "description": "The workspace's ID.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The workspace's name.",
+          "type": "string"
+        },
+        "slug": {
+          "description": "The workspace's slug.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "slug",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "MemberGrant": {
+      "additionalProperties": false,
+      "properties": {
+        "projectId": {
+          "description": "The project's ID.",
+          "type": "string"
+        },
+        "role": {
+          "description": "The member's role on the project.",
+          "enum": [
+            "admin",
+            "editor",
+            "commenter",
+            "viewer"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "projectId",
+        "role"
+      ],
+      "type": "object"
+    },
+    "TrashedProject": {
+      "additionalProperties": false,
+      "properties": {
+        "deletedAt": {
+          "description": "When it went to the trash, if it was there as the archive listed the projects. Without it, it went there, or was deleted for good, while the archive was made.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "description": "The project's ID.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The project's name.",
+          "type": "string"
+        },
+        "slug": {
+          "description": "The project's slug.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "slug"
+      ],
+      "type": "object"
+    },
+    "WorkspaceAuditEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "description": "What was done, such as project.create.",
+          "type": "string"
+        },
+        "actorTokenId": {
+          "description": "The API token that they did it with, if they used one.",
+          "type": "string"
+        },
+        "actorUserId": {
+          "description": "Who did it, if a user did.",
+          "type": "string"
+        },
+        "createdAt": {
+          "description": "When it was done.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "description": "The entry's ID, a UUID.",
+          "type": "string"
+        },
+        "ip": {
+          "description": "The IP address that it was asked from.",
+          "type": "string"
+        },
+        "metadata": {
+          "description": "What else the entry says, by its action, which never holds a name or an email address."
+        },
+        "requestId": {
+          "description": "The ID of the request that did it.",
+          "type": "string"
+        },
+        "result": {
+          "description": "How it ended, such as success or denied.",
+          "type": "string"
+        },
+        "subjectId": {
+          "description": "The ID of what it was done to, of its kind, or a UUID of a kind that has no prefix.",
+          "type": "string"
+        },
+        "subjectKind": {
+          "description": "The kind of what it was done to, such as project.",
+          "type": "string"
+        },
+        "userAgent": {
+          "description": "The user agent that asked for it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "action",
+        "result",
+        "metadata",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "WorkspaceManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "authoringFormatVersion": {
+          "description": "The version of the authoring format (schema/authoring) of each project's archive, which the project import takes as it is.",
+          "enum": [
+            1
+          ],
+          "format": "int64",
+          "type": "integer"
+        },
+        "exportedAt": {
+          "description": "When the archive's reading of the workspace began. Each project's archive says when its own content was read, as each is read as of a moment of its own.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "format": {
+          "description": "The format's name.",
+          "enum": [
+            "storycreep.workspace"
+          ],
+          "type": "string"
+        },
+        "formatVersion": {
+          "description": "The version of the format.",
+          "enum": [
+            1
+          ],
+          "format": "int64",
+          "type": "integer"
+        },
+        "generator": {
+          "$ref": "#/$defs/GeneratorInfo",
+          "description": "What wrote the archive."
+        },
+        "personalData": {
+          "description": "Whether the archive holds personal data, which it always does: the members' display names and email addresses, the audit log's IP addresses and user agents, and each project's comments and the names of the people involved.",
+          "enum": [
+            true
+          ],
+          "type": "boolean"
+        },
+        "projects": {
+          "description": "Each project that the archive holds, in the order of their IDs: every project of the workspace outside its trash, archived ones too.",
+          "items": {
+            "$ref": "#/$defs/WorkspaceProject"
+          },
+          "type": "array"
+        },
+        "sections": {
+          "description": "The archive's JSON files beside this one: the members, the audit log, and the workspace's own assets.",
+          "items": {
+            "$ref": "#/$defs/ManifestSection"
+          },
+          "type": "array"
+        },
+        "trashedProjects": {
+          "description": "The projects that the archive does not hold, as they are in the workspace's trash, or went there or were deleted for good while the archive was made, in the order of their IDs.",
+          "items": {
+            "$ref": "#/$defs/TrashedProject"
+          },
+          "type": "array"
+        },
+        "workspace": {
+          "$ref": "#/$defs/ManifestWorkspace",
+          "description": "The workspace."
+        }
+      },
+      "required": [
+        "format",
+        "formatVersion",
+        "authoringFormatVersion",
+        "generator",
+        "exportedAt",
+        "workspace",
+        "personalData",
+        "projects",
+        "trashedProjects",
+        "sections"
+      ],
+      "type": "object"
+    },
+    "WorkspaceMember": {
+      "additionalProperties": false,
+      "properties": {
+        "displayName": {
+          "description": "Their display name.",
+          "type": "string"
+        },
+        "email": {
+          "description": "Their email address.",
+          "type": "string"
+        },
+        "grants": {
+          "description": "Their grants on the workspace's projects, each of which replaces their role on its project, in the order of the projects' IDs.",
+          "items": {
+            "$ref": "#/$defs/MemberGrant"
+          },
+          "type": "array"
+        },
+        "joinedAt": {
+          "description": "When they joined the workspace.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "membershipId": {
+          "description": "The membership's ID.",
+          "type": "string"
+        },
+        "role": {
+          "description": "Their role in the workspace.",
+          "enum": [
+            "owner",
+            "admin",
+            "editor",
+            "commenter",
+            "viewer",
+            "guest"
+          ],
+          "type": "string"
+        },
+        "userId": {
+          "description": "The user's ID.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "membershipId",
+        "userId",
+        "displayName",
+        "email",
+        "role",
+        "joinedAt",
+        "grants"
+      ],
+      "type": "object"
+    },
+    "WorkspaceProject": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "description": "Whether the project is archived, and so read-only.",
+          "type": "boolean"
+        },
+        "id": {
+          "description": "The project's ID.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The project's name.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The path of the project's archive: a full authoring export of its draft, with its comments, play states, release history, and assets, in the format of schema/authoring, which the project import takes as it is.",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "The SHA-256 of the project's archive.",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "sizeBytes": {
+          "description": "The size of the project's archive.",
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "slug": {
+          "description": "The project's slug.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "slug",
+        "archived",
+        "path",
+        "sizeBytes",
+        "sha256"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/CyberCute-Studio/storycreep/main/schema/workspace/v1/archive.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The JSON files of an export of a whole Storycreep workspace (PRD FR-DATA-02), by their paths in its zip. Each project is an authoring export of its own, under projects/, which schema/authoring defines. schema/workspace/README.md describes the format.",
+  "properties": {
+    "assets/index.json": {
+      "$ref": "#/$defs/ItemsAsset"
+    },
+    "audit-log.json": {
+      "$ref": "#/$defs/ItemsWorkspaceAuditEntry"
+    },
+    "members.json": {
+      "$ref": "#/$defs/ItemsWorkspaceMember"
+    },
+    "workspace.json": {
+      "$ref": "#/$defs/WorkspaceManifest"
+    }
+  },
+  "required": [
+    "assets/index.json",
+    "audit-log.json",
+    "members.json",
+    "workspace.json"
+  ],
+  "title": "Storycreep workspace export, version 1",
+  "type": "object"
+}
