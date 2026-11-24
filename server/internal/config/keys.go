@@ -324,13 +324,13 @@ var keys = []key{
 		name: "STORYCREEP_IMPORT_MAX_BYTES",
 		doc: "The largest project archive, in bytes, that the instance imports (PRD FR-DATA-01). The authoring " +
 			"export shows an archive's size, and warns when it is larger than this, as this instance could not " +
-			"import it again.",
-		valuesDoc: "A whole number of at least 1",
+			"import it again. It is at most 4503599627370496 (4 PiB).",
+		valuesDoc: "A whole number from 1 to 4503599627370496",
 		def:       constant(strconv.Itoa(DefaultImportMaxBytes)),
 		parse: func(c *Config, v string) error {
 			n, err := strconv.ParseInt(v, 10, 64)
-			if err != nil || n < 1 {
-				return errors.New("must be a whole number of at least 1")
+			if err != nil || n < 1 || n > MaxImportMaxBytes {
+				return fmt.Errorf("must be a whole number from 1 to %d", int64(MaxImportMaxBytes))
 			}
 			c.ImportMaxBytes = n
 			return nil

@@ -218,8 +218,9 @@ func importActor(ctx context.Context, workspaceID, importID string) (ws, id ids.
 // registerProjectImports registers the routes of the project import (PRD
 // FR-DATA-01, plan note N91), which create a project, so that each is the
 // workspace's owners' and admins' and takes a session alone, as creating a
-// project does (§5.6).
-func registerProjectImports(m *api.Mux, imports *authoring.Service) {
+// project does (§5.6). A chunk waits for one of uploads, the slots that it
+// shares with an asset's upload, before its body is read.
+func registerProjectImports(m *api.Mux, imports *authoring.Service, uploads *slots) {
 	const importsPath = "/api/v1/workspaces/{workspace_id}/project-imports"
 	url := func(i authoring.Import) string {
 		return "/api/v1/workspaces/" + i.WorkspaceID + "/project-imports/" + i.ID
@@ -335,7 +336,7 @@ func registerProjectImports(m *api.Mux, imports *authoring.Service) {
 			return nil, importError(err)
 		}
 		return nil, nil
-	}, api.SessionOnly(), api.AfterLimit(holdSlot(newSlots(uploadSlots(authoring.ChunkBytes)))))
+	}, api.SessionOnly(), api.AfterLimit(holdSlot(uploads)))
 
 	api.Register(m, api.ManageProjects, huma.Operation{
 		OperationID: "completeProjectImport",

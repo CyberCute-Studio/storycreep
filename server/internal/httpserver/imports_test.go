@@ -1149,6 +1149,24 @@ func TestImportHoldsDirectRowsToTheirChecks(t *testing.T) {
 			}
 			resealSection(t, files, "releases/index.json", data, len(list))
 		}, authoring.FailReleaseInvalid, "", "sequence"},
+		"a release's report at a sequence past what a client reads": {func(files map[string][]byte) {
+			list := items[authoring.Release](t, files, "releases/index.json")
+			list[0].ValidationReport = authoring.Value(`{"seq": 4503599627370497, "findings": []}`)
+			data, err := json.Marshal(authoring.Items[authoring.Release]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "releases/index.json", data, len(list))
+		}, authoring.FailReleaseInvalid, "", "sequence"},
+		"a release's report at a negative sequence": {func(files map[string][]byte) {
+			list := items[authoring.Release](t, files, "releases/index.json")
+			list[0].ValidationReport = authoring.Value(`{"seq": -1, "findings": []}`)
+			data, err := json.Marshal(authoring.Items[authoring.Release]{Items: list})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resealSection(t, files, "releases/index.json", data, len(list))
+		}, authoring.FailReleaseInvalid, "", "sequence"},
 		"a release listed twice": {func(files map[string][]byte) {
 			list := items[authoring.Release](t, files, "releases/index.json")
 			list = append(list, list[0])
@@ -1418,6 +1436,31 @@ func TestImportStoresWhatItChecked(t *testing.T) {
 		f.owner.header(false))
 	if state.status != http.StatusOK || strings.Contains(string(state.body), other) {
 		t.Errorf("the play state: %d %s", state.status, state.body)
+	}
+}
+
+// TestImportTakesASequenceAtItsLimit checks that a release at the greatest
+// sequence that an import takes, 2^52, is imported, and that the project's
+// sequence is then that.
+func TestImportTakesASequenceAtItsLimit(t *testing.T) {
+	t.Parallel()
+	f := newAuthoringFixture(t)
+	openMaintenance(t, f.s, f.d)
+	files := exportedArchive(t, f)
+	list := items[authoring.Release](t, files, "releases/index.json")
+	list[0].SourceSeq = 1 << 52
+	index, err := json.Marshal(authoring.Items[authoring.Release]{Items: list})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resealSection(t, files, "releases/index.json", index, len(list))
+	got := mustImport(t, f.s, f.owner, f.ws, zipOf(t, files), "remap")
+	res := call(f.s.main, http.MethodGet, "/api/v1/projects/"+got.ProjectID+"/validation", nil, f.owner.header(false))
+	var report struct {
+		Seq int64 `json:"seq"`
+	}
+	if err := json.Unmarshal(res.body, &report); err != nil || report.Seq != 1<<52 {
+		t.Errorf("the project's sequence: %d %s", res.status, res.body)
 	}
 }
 

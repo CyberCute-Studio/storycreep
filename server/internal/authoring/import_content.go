@@ -355,9 +355,16 @@ func readArchived(a *archive) (*archived, error) {
 				Detail: fmt.Sprintf("its operation sequence %d is past the %d that an import takes", seq,
 					int64(maxImportedSeq))}
 		}
-		if _, err := storedReport(rel.ValidationReport); err != nil {
+		report, err := storedReport(rel.ValidationReport)
+		if err != nil {
 			return nil, &ImportError{Code: FailReleaseInvalid, Version: rel.Version, Check: "validation_report",
 				Detail: firstLine(err.Error())}
+		}
+		// The API sends the report's seq to a client, as it does a release's.
+		if report.Seq < 0 || report.Seq > maxImportedSeq {
+			return nil, &ImportError{Code: FailReleaseInvalid, Version: rel.Version, Check: "sequence",
+				Detail: fmt.Sprintf("its validation report's operation sequence %d is outside 0 to %d", report.Seq,
+					int64(maxImportedSeq))}
 		}
 		if _, err := storedWarnings(rel.AcknowledgedWarnings); err != nil {
 			return nil, &ImportError{Code: FailReleaseInvalid, Version: rel.Version, Check: "acknowledged_warnings",

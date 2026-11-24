@@ -40,8 +40,9 @@ status 1 if setup refuses one of their values, naming its key. Once setup
 has completed, it ignores those keys, and warns that they are still set.
 
 Once it serves, it also runs the background jobs that it and the other
-instances enqueue, 4 at a time, on a pool of 7 database connections of its
-own.
+instances enqueue, 4 at a time, and one at a time of each kind that runs
+alone, on a pool of database connections of its own, whose size the
+reference of STORYCREEP_DATABASE_URL gives.
 With --no-inline-workers, it only enqueues them, for the instances started
 without the flag to run, as a deployment does that runs its job workers on
 instances of their own. If no instance runs them, the jobs wait.
