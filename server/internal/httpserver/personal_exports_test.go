@@ -654,7 +654,10 @@ func TestPersonalDataExportOfAnUnverifiedAddress(t *testing.T) {
 	}
 	// An invitation to the address, and a link invitation that the user
 	// accepted.
-	addressed, accepted := ids.New(), ids.New()
+	// The second sorts after the first, as two IDs of one millisecond need
+	// not.
+	addressed := ids.New()
+	accepted := ids.NewAfter(addressed)
 	if _, err := f.admin.Exec(ctx, `INSERT INTO invite (id, workspace_id, email, role, token_hash, expires_at,
 		created_by) VALUES ($1, $2, 'as-viewer@example.com', 'editor', $3, now() + interval '14 days', $4)`, addressed,
 		other, bytes.Repeat([]byte{8}, 32), owner); err != nil {
