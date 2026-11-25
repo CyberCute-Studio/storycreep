@@ -8,13 +8,15 @@ import {
   press,
   registerAccount,
   signIn,
+  smallTargets,
   test,
   violations,
 } from "./fixtures.ts";
 
-// The account's own screens (PRD FR-AUTH-02, FR-AUTH-04, FR-I18N-02): its
-// language, its sessions, its API tokens, and its password. Each test
-// registers an account of its own and signs in as it.
+// The account's own screens (PRD FR-AUTH-02, FR-AUTH-04, FR-I18N-02,
+// FR-GDPR-01): its language, its sessions, its API tokens, its password, and
+// the export of its data. Each test registers an account of its own and signs
+// in as it.
 
 /** Registers an account, signs the page in as it, and returns its address. */
 async function signedIn(page: Page, name: string): Promise<string> {
@@ -224,4 +226,35 @@ test("changing the password, after which the new one signs in", async ({
   );
   await signIn(page, email, replacement);
   await atStart(page, "Pat Password");
+});
+
+// Verifies: FR-GDPR-01/AC1, NFR-A11Y-08
+test("the account's data exports, without an operator, to an archive that downloads through a link", async ({
+  page,
+}) => {
+  await signedIn(page, "Dana Datasubject");
+  await page.goto("/app/account");
+  await press(page.getByRole("link", { name: en["account.nav.data"] }));
+  const section = page.getByRole("region", {
+    name: en["personal_export.title"],
+  });
+  await expect(
+    section.getByText(en["personal_export.personal_data"]),
+  ).toBeVisible();
+  expect(await violations(page)).toEqual([]);
+  expect(await smallTargets(page)).toEqual([]);
+  await press(
+    section.getByRole("button", { name: en["personal_export.submit"] }),
+  );
+  const link = section.getByRole("link", {
+    name: en["personal_export.download"],
+  });
+  await expect(link).toBeVisible({ timeout: 30_000 });
+  expect(await violations(page)).toEqual([]);
+  expect(await smallTargets(page)).toEqual([]);
+  const downloading = page.waitForEvent("download");
+  await press(link);
+  expect((await downloading).suggestedFilename()).toMatch(
+    /^personal-data-\d{4}-\d{2}-\d{2}\.zip$/,
+  );
 });
