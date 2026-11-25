@@ -923,7 +923,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-DATA-02 AC1–AC3 pass.
 
 ### 87. Personal data export
-**Status:** todo · **Depends on:** 86
+**Status:** done ([#103](https://github.com/CyberCute-Studio/storycreep/pull/103)) · **Depends on:** 86
 **PRD:** FR-GDPR-01, §9.6, §5.4 (maintenance path)
 - A self-service job that produces an archive following the "In export" column of the §9.6 inventory, of every workspace, those that the user has left too, whose rows it reads through the maintenance path (N20), into the asset store, as a workspace export is built, which only the user who asked reads, for 7 days: `POST`, `GET …/auth/account/data-exports`, `GET …/{export_id}`, and `GET …/{export_id}/download`, session-only (`server/internal/authoring/personal_export.go` and `personal_archive.go`, `server/internal/maintenance/personal.go`, `httpserver/personal_exports.go`, migration 00041, N94).
 - Credentials appear as metadata only, with when the password was last set, which the account's row now records. Other actors appear as role labels (`personaldata.ActorLabel`).
