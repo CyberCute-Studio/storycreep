@@ -101,7 +101,10 @@ type UserReference struct {
 // Why the export leaves out the rows of some columns.
 const (
 	whyOthers = "the row is another person's, which names the user only as who did something for them: "
-	whyKept   = "a request that is kept for 7 days, and that the audit log records, whose entry the archive holds"
+	whyKept   = "a request that is kept for 7 days, and that the audit log records as it is asked for, whose entry " +
+		"the archive holds"
+	whyImport = "a request that is kept for 7 days, and that the audit log records once the import has created " +
+		"its project, whose entry the archive holds"
 )
 
 // References are the columns of the schema that refer to an account, every
@@ -132,7 +135,7 @@ var References = []UserReference{
 		"last changed each entity"},
 	{Table: "authoring_export", Column: "requested_by", Why: whyKept},
 	{Table: "workspace_export", Column: "requested_by", Why: whyKept},
-	{Table: "project_import", Column: "requested_by", Why: whyKept},
+	{Table: "project_import", Column: "requested_by", Why: whyImport},
 	{Table: "personal_data_export", Column: "user_id", Why: whyKept},
 	{Table: "imported_user", Column: "user_id", Why: "the account of an imported identity, which stands for " +
 		"someone whom an archive names and signs in nowhere, and is never an account that asks for an export; " +

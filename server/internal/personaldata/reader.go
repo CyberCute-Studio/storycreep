@@ -64,7 +64,7 @@ type Holdings struct {
 	// beside the account: its memberships, those that are gone too, as the
 	// log's entries of their removal or their creation name the user, and its
 	// API tokens, those of deleted projects too, as the log's entries of their
-	// creation name the user.
+	// creation and their revocation name the user.
 	Subjects []ids.UUID
 }
 

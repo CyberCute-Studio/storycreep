@@ -432,7 +432,9 @@ func (s *Service) BuildPersonalExport(ctx context.Context, user, id ids.UUID) er
 
 // ExpirePersonalExport deletes the export id of the user and its file, once
 // its time has passed, as Expire does an authoring export's: it ends the
-// export first, then deletes the file, then the row.
+// export first, then deletes the file, then the row. The file of an export
+// whose row is gone, as the cascade of its account's deletion deletes it, is
+// deleted all the same, as no workspace's orphan reconciliation lists it.
 func (s *Service) ExpirePersonalExport(ctx context.Context, user, id ids.UUID) error {
 	var key string
 	err := s.asUser(ctx, user, func(tx pgx.Tx) error {
@@ -440,6 +442,7 @@ func (s *Service) ExpirePersonalExport(ctx context.Context, user, id ids.UUID) e
 		row, err := q.PersonalDataExportOfJob(ctx, queries.PersonalDataExportOfJobParams{UserID: uuid(user),
 			ID: uuid(id)})
 		if errors.Is(err, pgx.ErrNoRows) {
+			key = personalStorageKey(id)
 			return nil
 		}
 		if err != nil {
@@ -454,9 +457,6 @@ func (s *Service) ExpirePersonalExport(ctx context.Context, user, id ids.UUID) e
 	})
 	if err != nil {
 		return fmt.Errorf("authoring: end the personal-data export: %w", err)
-	}
-	if key == "" {
-		return nil
 	}
 	store, err := s.storage.Store(ctx)
 	if err != nil {

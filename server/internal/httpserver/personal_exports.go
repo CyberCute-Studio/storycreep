@@ -24,9 +24,10 @@ const personalExportsPath = "/api/v1/auth/account/data-exports"
 // archive holds, in each route's description.
 const personalExportDoc = " Only the user who asked for an export reads it, signed in, and an export of anyone " +
 	"else, or one that has expired, is answered with 404 not_found. **The archive contains personal data**, all of " +
-	"it the user's: the account and its email address, the IP addresses and user agents of its sessions and of the " +
-	"audit log's entries of what the user did, and the comments that they wrote. It holds no password, no hash of " +
-	"one, and no secret of a session, an API token, or a link."
+	"it about the user: the account and its email address, the IP addresses and user agents of its sessions and of " +
+	"the audit log's entries of what the user did, which are whole, and so name, by their IDs, what and whom the " +
+	"user did it to, and the comments that they wrote. It holds no password, no hash of one, and no secret of a " +
+	"session, an API token, or a link."
 
 // PersonalExportBody is a personal-data export, as the API shows it.
 type PersonalExportBody struct {

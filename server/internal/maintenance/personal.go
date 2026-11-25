@@ -201,9 +201,11 @@ func (db *DB) Acted(ctx context.Context, user ids.UUID, until time.Time, after p
 // ActedOn returns a page of the audit entries about the user, or one of
 // subjects, whose actor is someone else, or nobody. Each subject's entries
 // are read in their order from the log's index of its subjects, at most a
-// page of them, so that a page reads no more of a subject's entries than it
-// may hold, however many there are after it, as of failed sign-ins with the
-// user's address.
+// page of them, so that a page reads no more of a subject's entries whose
+// actor is not the user than it may hold, however many there are after it,
+// as of failed sign-ins with the user's address. The index also holds the user's own
+// entries about their account, as their sign-ins, which a page passes over
+// after its cursor, as many as the user made.
 func (db *DB) ActedOn(ctx context.Context, user ids.UUID, subjects []ids.UUID, until time.Time,
 	after personaldata.AuditCursor, limit int) ([]personaldata.AuditEntry, error) {
 	about := append([]ids.UUID{user}, subjects...)

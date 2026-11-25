@@ -692,7 +692,8 @@ func TestPersonalDataExportOfAnUnverifiedAddress(t *testing.T) {
 // TestPersonalDataExportAccess checks who reads a personal-data export: only
 // its user, signed in, as an API token is refused and another user finds none;
 // the export expires seven days after it was asked for; a user has one on its
-// way at a time; and an export that is not ready has no file.
+// way at a time; an export that is not ready has no file; and the expiry job
+// deletes the file of an export whose row is gone.
 //
 // Verifies: FR-GDPR-01/AC1
 func TestPersonalDataExportAccess(t *testing.T) {
@@ -791,8 +792,28 @@ func TestPersonalDataExportAccess(t *testing.T) {
 		WHERE id = $1`, decode(t, ids.Job, stale.ID)); err != nil {
 		t.Fatal(err)
 	}
-	if fresh := askPersonalExport(t, h, user); fresh.ID == stale.ID {
+	fresh := askPersonalExport(t, h, user)
+	if fresh.ID == stale.ID {
 		t.Errorf("the new export is the one past its time, %s", fresh.ID)
+	}
+	// The file of an export whose row is gone, as the cascade of its account's
+	// deletion deletes it, is deleted by its expiry job all the same.
+	freshID := decode(t, ids.Job, fresh.ID)
+	if err := f.s.authoring.BuildPersonalExport(t.Context(), u, freshID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.admin.QueryRow(t.Context(), `DELETE FROM personal_data_export WHERE id = $1 RETURNING storage_key`,
+		freshID).Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Stat(t.Context(), key); err != nil {
+		t.Fatalf("the archive of the built export is not stored: %v", err)
+	}
+	if err := f.s.authoring.ExpirePersonalExport(t.Context(), u, freshID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Stat(t.Context(), key); !errors.Is(err, blob.ErrNotFound) {
+		t.Errorf("the archive of an export whose row is gone is still stored: %v", err)
 	}
 }
 

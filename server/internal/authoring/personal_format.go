@@ -32,9 +32,9 @@ type PersonalManifest struct {
 	Format        string                  `json:"format" enum:"storycreep.personal-data" doc:"The format's name."`
 	FormatVersion int                     `json:"formatVersion" enum:"1" doc:"The version of the format."`
 	Generator     published.GeneratorInfo `json:"generator" doc:"What wrote the archive."`
-	ExportedAt    time.Time               `json:"exportedAt" doc:"When the archive's reading began, by the database's clock. The account, its email links, and its sessions are read as of it, each other section after it, as of a moment of its own, and the audit log's entries up to it."`
+	ExportedAt    time.Time               `json:"exportedAt" doc:"When the archive's reading began, by the database's clock. The account, its email links, and its sessions are read as of it; the memberships, the API tokens, the invitations, and the imported identities after it, as of one moment; and the audit log, the comments, the notifications, and the attribution a page at a time, each page as of a moment of its own, the audit log's entries up to it."`
 	UserID        string                  `json:"userId" doc:"The ID of the account that the archive is of, whose user asked for it."`
-	PersonalData  bool                    `json:"personalData" enum:"true" doc:"Whether the archive holds personal data, which it always does: all of it is the user's."`
+	PersonalData  bool                    `json:"personalData" enum:"true" doc:"Whether the archive holds personal data, which it always does: all of it is about the user, and the audit log's entries of what the user did name, by their IDs, what and whom they did it to."`
 	Sections      []ManifestSection       `json:"sections" nullable:"false" doc:"The archive's JSON files beside this one, each with how many items it holds and its SHA-256."`
 }
 
@@ -82,7 +82,7 @@ type PersonalSession struct {
 // PersonalToken is an API token of the account's, never its secret's hash.
 type PersonalToken struct {
 	ID          string     `json:"id" doc:"The token's ID."`
-	Name        string     `json:"name" doc:"The token's name, which its user gave it."`
+	Name        string     `json:"name" doc:"The token's name, which its user, or the operator who made it, gave it."`
 	WorkspaceID string     `json:"workspaceId" doc:"The token's workspace."`
 	ProjectID   string     `json:"projectId,omitempty" doc:"The one project that the token is narrowed to, if any."`
 	Scopes      []string   `json:"scopes" nullable:"false" doc:"The token's scopes."`
@@ -305,7 +305,8 @@ func personalReadme(m PersonalManifest) string {
 	line("  whom you invited, the invitations that you made, and the notifications of the members whom you")
 	line("  mentioned. The audit log's entries of what you did, in `audit-log/acted.json`, record the invitations,")
 	line("  and `comments.json` holds the comments that mentioned them.")
-	line("- The requests for exports and imports, which are kept for 7 days, and which the audit log records.")
+	line("- The requests for exports and imports, which are kept for 7 days, and which the audit log records, an")
+	line("  export's as it is asked for, and an import's once the import has created its project.")
 	line("- Billing data: this instance keeps none. On the hosted service, the payment provider holds it, and its own")
 	line("  export gives it.")
 	return b.String()

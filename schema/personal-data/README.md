@@ -4,7 +4,7 @@ A personal-data export is a zip of what a Storycreep instance holds of one accou
 
 [`v1/archive.schema.json`](v1/archive.schema.json) is the JSON Schema of version 1. The server generates it from the Go types of `server/internal/authoring`, and `go test ./...` fails when it is out of date: run `go test ./internal/authoring -run TestPersonalSchemaFile -update` in `server/`. It describes an object of the archive's JSON files, by their paths, so a consumer validates each file against its property. Its `$id` names the version, so that a consumer can pin it.
 
-**The archive contains personal data**, all of it the user's: their email address, the IP addresses and user agents of their sessions and of what they did, and the comments that they wrote. It holds no password, no hash of one, and no secret of a session, an API token, an email link, or an invitation, only when each was made and used. Its README says so too.
+**The archive contains personal data**, all of it about the user: their email address, the IP addresses and user agents of their sessions and of what they did, and the comments that they wrote. The entries of what they did are whole, so they name, by their IDs, what and whom the user did it to, as a member whom the user removed as an admin. It holds no password, no hash of one, and no secret of a session, an API token, an email link, or an invitation, only when each was made and used. Its README says so too.
 
 ## Layout
 
@@ -31,7 +31,7 @@ Each section's items are in a stable order: by ID, an audit log's by when each e
 
 - The operation log, the history of the changes of each project's content, which belongs to its workspace and whose commands hold its content, and of which `attribution.json` holds who created and last changed each entity.
 - Other people's rows that name the user only as who did something for them: the memberships of the members whom the user invited, the invitations that the user made, and the notifications of the members whom the user mentioned. The entries of what the user did, in `audit-log/acted.json`, record the invitations, and `comments.json` holds the comments that mentioned the members.
-- The requests for authoring, workspace, and personal-data exports, and for imports, which are kept for seven days and recorded in the audit log.
+- The requests for authoring, workspace, and personal-data exports, and for imports, which are kept for seven days, and which the audit log records: an export's as it is asked for, and an import's once the import has created its project.
 - Billing data, which no instance keeps: on the hosted service, the payment provider holds it, and its own export gives it.
 
 `server/internal/personaldata` holds the inventory in code, and tests hold it to PRD §9.6 and to the schema: every foreign key to an account is held or left out with a reason, and so is every column of the account.

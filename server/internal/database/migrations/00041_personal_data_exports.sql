@@ -56,8 +56,9 @@ CREATE INDEX notification_user ON notification (user_id, id);
 -- Its file is a blob of the assets' store, under a key of its own below
 -- personal-data/, which no workspace's orphan reconciliation lists: the build
 -- deletes the file of an export that is gone, the expiry job deletes the file
--- before the row, and the account's hard deletion, which deletes the rows by
--- the cascade, deletes the files first (plan item 111).
+-- before the row, or after the row is gone, and the account's hard deletion
+-- deletes the files first, then the rows, by the cascade of the account's
+-- row, or itself if it keeps the row as a tombstone (plan item 111).
 CREATE TABLE personal_data_export (
 	id uuid PRIMARY KEY,
 	-- Who asked for the export, who alone reads it, and whom it is of.
