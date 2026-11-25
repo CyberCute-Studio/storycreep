@@ -131,8 +131,8 @@ var References = []UserReference{
 	{Table: "notification", Column: "actor_id", Why: whyOthers + "the notification of a member whom the user " +
 		"mentioned, whose comment comments.json holds"},
 	{Table: "operation", Column: "actor_user_id", Why: "the history of the changes of a project's content, " +
-		"which belongs to its workspace and is compacted (FR-GDPR-03); attribution.json holds who created and " +
-		"last changed each entity"},
+		"which belongs to its workspace and is compacted (FR-GDPR-03); attribution.json holds what the user created and " +
+		"last changed"},
 	{Table: "authoring_export", Column: "requested_by", Why: whyKept},
 	{Table: "workspace_export", Column: "requested_by", Why: whyKept},
 	{Table: "project_import", Column: "requested_by", Why: whyImport},

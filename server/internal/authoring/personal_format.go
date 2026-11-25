@@ -300,7 +300,7 @@ func personalReadme(m PersonalManifest) string {
 	line("## What it leaves out")
 	line("")
 	line("- The history of the changes of each project's content (its operation log), which belongs to its workspace,")
-	line("  and of which `attribution.json` holds who created and last changed each entity.")
+	line("  and of which `attribution.json` holds what you created and last changed.")
 	line("- Other people's rows that name you only as who did something for them: the memberships of the members")
 	line("  whom you invited, the invitations that you made, and the notifications of the members whom you")
 	line("  mentioned. The audit log's entries of what you did, in `audit-log/acted.json`, record the invitations,")

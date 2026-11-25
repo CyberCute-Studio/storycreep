@@ -29,7 +29,7 @@ Each section's items are in a stable order: by ID, an audit log's by when each e
 
 ## What it leaves out
 
-- The operation log, the history of the changes of each project's content, which belongs to its workspace and whose commands hold its content, and of which `attribution.json` holds who created and last changed each entity.
+- The operation log, the history of the changes of each project's content, which belongs to its workspace and whose commands hold its content, and of which `attribution.json` holds what the user created and last changed.
 - Other people's rows that name the user only as who did something for them: the memberships of the members whom the user invited, the invitations that the user made, and the notifications of the members whom the user mentioned. The entries of what the user did, in `audit-log/acted.json`, record the invitations, and `comments.json` holds the comments that mentioned the members.
 - The requests for authoring, workspace, and personal-data exports, and for imports, which are kept for seven days, and which the audit log records: an export's as it is asked for, and an import's once the import has created its project.
 - Billing data, which no instance keeps: on the hosted service, the payment provider holds it, and its own export gives it.
