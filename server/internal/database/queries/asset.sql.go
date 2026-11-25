@@ -320,6 +320,8 @@ WHERE EXISTS (
 ) OR EXISTS (
     SELECT FROM authoring_export e WHERE e.workspace_id = $2 AND e.storage_key = k.key
 ) OR EXISTS (
+    SELECT FROM workspace_export e WHERE e.workspace_id = $2 AND e.storage_key = k.key
+) OR EXISTS (
     SELECT FROM project_import_chunk c WHERE c.workspace_id = $2 AND c.storage_key = k.key
 )
 `
@@ -331,9 +333,10 @@ type ReferencedBlobsParams struct {
 
 // ReferencedBlobs returns those of the keys that a row of the workspace
 // refers to, as the file of an asset, as its thumbnail, as the archive of an
-// authoring export, or as a chunk of an import's upload: the check that keeps a blob from the orphan
-// reconciliation, which an upload makes of its one blob, and the
-// reconciliation of a batch of blobs in one query.
+// authoring export or of a workspace export, or as a chunk of an import's
+// upload: the check that keeps a blob from the orphan reconciliation, which
+// an upload makes of its one blob, and the reconciliation of a batch of blobs
+// in one query.
 func (q *Queries) ReferencedBlobs(ctx context.Context, arg ReferencedBlobsParams) ([]string, error) {
 	rows, err := q.db.Query(ctx, referencedBlobs, arg.Keys, arg.WorkspaceID)
 	if err != nil {

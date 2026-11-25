@@ -344,6 +344,27 @@ func (s *Service) CheckManage(ctx context.Context, tx pgx.Tx, userID, workspaceI
 	return authz.Check(r, authz.ManageProjects)
 }
 
+// CheckExportWorkspace says, in tx, a transaction of the workspace, whether the
+// user may export it whole, and read and download their exports of it (PRD
+// FR-DATA-02, §5.6 "Export the workspace"), with the errors of Create for the
+// workspace and a role of none: ErrOwnerRequired for an admin, and
+// ErrInsufficientRole for the roles below admin.
+func (s *Service) CheckExportWorkspace(ctx context.Context, tx pgx.Tx, userID, workspaceID ids.UUID) error {
+	q := queries.New(tx)
+	if _, err := activeWorkspace(ctx, q, workspaceID); err != nil {
+		return err
+	}
+	a, err := s.access(ctx, q, userID, workspaceID, false)
+	if err != nil {
+		return err
+	}
+	r := s.policy.Workspace(a.admin, a.member)
+	if r == role.None {
+		return ErrNotFound
+	}
+	return authz.Check(r, authz.ExportWorkspace)
+}
+
 // CheckDuplicate says whether the actor may duplicate the project projectID
 // now, and returns it (FR-PROJ-01): duplicating reads the project's content
 // (§5.6, P) and creates a project in its workspace (W), which needs room for

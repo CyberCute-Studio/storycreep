@@ -332,9 +332,9 @@ var authRoutes = map[api.Route]bool{
 // exportRoutes are the routes that count in the export bucket (PRD
 // FR-API-04), whose limits are lower than reads', since each reads a
 // project's files whole: the exports of a snapshot and of the draft, of their
-// files and of their text, asking for an authoring export and downloading it,
-// and beginning and completing a project import, each of which reads or writes
-// a project whole.
+// files and of their text, asking for an authoring export or a workspace
+// export and downloading it, and beginning and completing a project import,
+// each of which reads or writes a project, or a workspace, whole.
 var exportRoutes = map[api.Route]bool{
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/authoring-exports"}:                        true,
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/authoring-exports/{export_id}/download"}:    true,
@@ -345,8 +345,10 @@ var exportRoutes = map[api.Route]bool{
 	{Method: http.MethodPost, Pattern: "/api/v1/workspaces/{workspace_id}/project-imports"}:                      true,
 	{Method: http.MethodPost, Pattern: "/api/v1/workspaces/{workspace_id}/project-imports/{import_id}/complete"}: true,
 	// A copy of a project, and the sample, are an export and an import each.
-	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/duplicate"}:          true,
-	{Method: http.MethodPost, Pattern: "/api/v1/workspaces/{workspace_id}/sample-project"}: true,
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/duplicate"}:                       true,
+	{Method: http.MethodPost, Pattern: "/api/v1/workspaces/{workspace_id}/sample-project"}:              true,
+	{Method: http.MethodPost, Pattern: "/api/v1/workspaces/{workspace_id}/exports"}:                     true,
+	{Method: http.MethodGet, Pattern: "/api/v1/workspaces/{workspace_id}/exports/{export_id}/download"}: true,
 }
 
 // TestEveryRouteRateLimited checks that a rate limit counts every route of

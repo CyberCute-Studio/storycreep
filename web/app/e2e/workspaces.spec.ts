@@ -9,6 +9,7 @@ import {
   press,
   registerAccount,
   signIn,
+  smallTargets,
   test,
   violations,
 } from "./fixtures.ts";
@@ -111,6 +112,36 @@ test("the settings rename the workspace, and show what it uses, without a limit 
   await expect(
     page.getByRole("link", { name: en["limit.upgrade"] }),
   ).toHaveCount(0);
+});
+
+// Verifies: FR-DATA-02/AC2, NFR-A11Y-08
+test("the settings export the workspace for its owner, whose archive downloads through a link", async ({
+  page,
+}) => {
+  await signedIn(page, "Wren Exporter");
+  await press(
+    page.getByRole("link", { name: en["workspace.nav.settings"], exact: true }),
+  );
+  const section = page.getByRole("region", {
+    name: en["workspace_export.title"],
+  });
+  await expect(
+    section.getByText(en["workspace_export.personal_data"]),
+  ).toBeVisible();
+  expect(await violations(page)).toEqual([]);
+  expect(await smallTargets(page)).toEqual([]);
+  await press(
+    section.getByRole("button", { name: en["workspace_export.submit"] }),
+  );
+  const link = section.getByRole("link", {
+    name: en["workspace_export.download"],
+  });
+  await expect(link).toBeVisible({ timeout: 30_000 });
+  expect(await violations(page)).toEqual([]);
+  expect(await smallTargets(page)).toEqual([]);
+  const downloading = page.waitForEvent("download");
+  await press(link);
+  expect((await downloading).suggestedFilename()).toMatch(/-workspace\.zip$/);
 });
 
 // Verifies: NFR-A11Y-08

@@ -310,6 +310,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerDiffs(s.main, s.snapshots)
 	registerTextExport(s.main, s.snapshots)
 	registerAuthoringExports(s.main, s.authoring)
+	registerWorkspaceExports(s.main, s.authoring)
 	// One budget of memory for the two routes that hold a file's bytes.
 	uploads := newSlots(uploadSlots(max(s.assets.MaxBytes(), authoring.ChunkBytes)))
 	registerProjectImports(s.main, s.authoring, uploads)

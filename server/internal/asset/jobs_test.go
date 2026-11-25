@@ -1077,11 +1077,15 @@ func TestFinalStore(t *testing.T) {
 
 // TestWorkspaceKeyOfExport checks that the orphan reconciliation takes the key
 // of an authoring export's archive for a blob of the workspace, so that it
-// deletes the file of an export that is gone, as with its project's purge.
+// deletes the file of an export that is gone, as with its project's purge, and
+// so the key of a workspace export's archive, as with its user's deletion.
 func TestWorkspaceKeyOfExport(t *testing.T) {
 	ws, sum := "01234567-89ab-cdef-0123-456789abcdef", strings.Repeat("ab", 32)
 	if !workspaceKey.MatchString(ws + "/" + sum + ".export.zip") {
 		t.Error("the reconciliation does not read an export's key")
+	}
+	if !workspaceKey.MatchString(ws + "/" + sum + ".workspace-export.zip") {
+		t.Error("the reconciliation does not read a workspace export's key")
 	}
 	if workspaceKey.MatchString(ws + "/" + sum + ".zip") {
 		t.Error("the reconciliation reads a zip that is no export's")

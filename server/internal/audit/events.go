@@ -146,6 +146,12 @@ const (
 	// draft or a snapshot's ID, profile whether it is full or content, and
 	// include_assets and include_releases what else it holds.
 	ActionProjectExport Action = "project.export"
+	// ActionWorkspaceExport is a request for an export of a whole workspace
+	// (FR-DATA-02), which holds every project's comments, the members' email
+	// addresses, and the audit log, by its actor, an owner. It belongs to the
+	// workspace, its subject is the workspace, and its metadata's export_id
+	// names the export.
+	ActionWorkspaceExport Action = "workspace.export"
 	// ActionProjectImport is the import of a project from an archive
 	// (FR-DATA-01), by its actor, recorded in the transaction that creates the
 	// project. It belongs to the workspace, its subject is the new project, and
@@ -291,6 +297,8 @@ var events = []eventSpec{
 		metadata: []string{"project_id", "version"}},
 	{action: ActionProjectExport, inWorkspace: true, subject: "project", results: []Result{ResultSuccess},
 		metadata: []string{"export_id", "source", "profile", "include_assets", "include_releases"}},
+	{action: ActionWorkspaceExport, inWorkspace: true, subject: "workspace", results: []Result{ResultSuccess},
+		metadata: []string{"export_id"}},
 	{action: ActionProjectImport, inWorkspace: true, subject: "project", results: []Result{ResultSuccess},
 		metadata: []string{"import_id", "id_policy", "sample"}},
 	{action: ActionProjectDuplicate, inWorkspace: true, subject: "project", results: []Result{ResultSuccess},

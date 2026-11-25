@@ -2835,6 +2835,12 @@ export interface PageVariable {
   next_cursor: string | null;
 }
 
+export interface PageWorkspaceExportBody {
+  items: Array<WorkspaceExportBody>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
 export interface PasswordBody {
   /** The account's password */
   current_password: string;
@@ -4231,6 +4237,29 @@ export interface WorkspaceBody {
   updated_at: string;
 }
 
+export interface WorkspaceExportBody {
+  /** Whether the archive holds personal data, which a workspace's always does. */
+  contains_personal_data: boolean;
+  /** When the export was asked for. */
+  created_at: string;
+  /** When the export and its file are deleted, seven days after it was asked for. */
+  expires_at: string;
+  /** The name that a ready archive is downloaded under. */
+  file_name?: string;
+  /** When its build ended. */
+  finished_at?: string;
+  /** The export's ID, a job's. */
+  id: string;
+  /** How many projects a ready archive holds: those of the workspace outside its trash. */
+  project_count?: number;
+  /** The archive's size, once it is ready. */
+  size_bytes?: number;
+  /** Where the export is: queued, building, ready, with a file to download, or failed. */
+  status: "queued" | "building" | "ready" | "failed";
+  /** The workspace's ID. */
+  workspace_id: string;
+}
+
 export interface WorkspaceFields {
   /** When the workspace was created */
   created_at: string;
@@ -4586,6 +4615,26 @@ export interface Operations {
     };
   };
   /**
+   * Export a workspace
+   *
+   * Asks for a zip of the whole workspace, in the format of schema/workspace/v1, and answers 202 with the export, queued, whose URL Location names. A job builds it. The archive holds each project of the workspace outside its trash, archived ones too, as a full authoring export of its draft (schema/authoring/v1), with its comments, play states, release history, and assets, which the project import takes as it is; the members, with their roles, email addresses, and grants; the audit log; and the workspace's own assets. Its manifest names the projects in the trash, which it does not hold (PRD FR-DATA-02). The archive is kept for seven days. A user has one export of a workspace on its way at a time, and another request is answered with 409 export_in_progress, whose details.export_id names it. Until the instance's first-run setup has completed, which may yet choose where files are stored, the answer is 403 setup_required, unless STORYCREEP_ASSET_STORAGE names where they are. Only an owner of the workspace may export it: an admin is answered with 403 owner_required, and an editor, a commenter, or a viewer with 403 insufficient_role. Only the owner who asked for an export reads it, while they are an owner, and an export of anyone else, or one that has expired, is answered with 404 not_found. **The archive contains personal data**: the members' display names and email addresses, the audit log's IP addresses and user agents, and each project's comments and the names of the people involved. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Exports share a rate limit of 60 an hour for each IP address, and 30 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.
+   */
+  createWorkspaceExport: {
+    input: {
+      path: {
+        /** The workspace's ID */
+        workspace_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+    };
+    responses: {
+      202: WorkspaceExportBody;
+    };
+  };
+  /**
    * Make an API token of a workspace
    *
    * Makes an API token of the whole workspace for the signed-in user, who owns it, with the scopes that it holds, and an expiry, if it has one. It acts on every project of the workspace, and on no other workspace's. Only an owner, an admin, or an editor of the workspace may, and anyone else with a role in it is answered with 403 insufficient_role. POST /api/v1/projects/{project_id}/tokens makes one narrowed to a project. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. The answer holds the token's secret, which no other answer ever holds: the server keeps only its SHA-256 hash. A request made with the token does no more than its owner's role allows at the time, and fails from the next request once the token expires or is revoked, or once its owner's membership is removed, which revokes it. A name or scopes that their field does not allow, or an expiry that is not in the future, are answered with 422 validation_failed. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. It refuses every API token so that no token makes, lists, or revokes another. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, an instance admin's taking one as text, inviting someone to a workspace, sending an invitation anew, reading, accepting, or registering with an invitation's link, and making, listing, or revoking an API token share a rate limit of 20 requests a minute for each IP address. Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 a minute for each email address, so that each counts against the other for the same address, and changing a password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a link as text, inviting someone, sending an invitation anew, accepting one, and making, listing, or revoking an API token share one of 10 a minute for each account. No request made with an API token counts against these, so that the requests of a token, which count against its owner's account too, cannot keep the owner from finding and revoking it, after which no limit counts them. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
@@ -4659,6 +4708,24 @@ export interface Operations {
         export_id: string;
         /** The project's ID */
         project_id: string;
+      };
+    };
+    responses: {
+      200: Blob;
+    };
+  };
+  /**
+   * Download an export of a workspace
+   *
+   * Returns the archive of a ready export, as a zip, whose README and workspace.json say what it holds, and Content-Disposition names it, as an attachment. An export that is not ready is answered with 409 export_not_ready, whose details.status says where it is. Only an owner of the workspace may export it: an admin is answered with 403 owner_required, and an editor, a commenter, or a viewer with 403 insufficient_role. Only the owner who asked for an export reads it, while they are an owner, and an export of anyone else, or one that has expired, is answered with 404 not_found. **The archive contains personal data**: the members' display names and email addresses, the audit log's IP addresses and user agents, and each project's comments and the names of the people involved. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). Exports share a rate limit of 60 an hour for each IP address, and 30 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.
+   */
+  downloadWorkspaceExport: {
+    input: {
+      path: {
+        /** The export's ID */
+        export_id: string;
+        /** The workspace's ID */
+        workspace_id: string;
       };
     };
     responses: {
@@ -5232,6 +5299,24 @@ export interface Operations {
     };
     responses: {
       200: WorkspaceBody;
+    };
+  };
+  /**
+   * Read an export of a workspace
+   *
+   * Returns the export: where its build is, and, once it is ready, the archive's size, how many projects it holds, and its name. Only an owner of the workspace may export it: an admin is answered with 403 owner_required, and an editor, a commenter, or a viewer with 403 insufficient_role. Only the owner who asked for an export reads it, while they are an owner, and an export of anyone else, or one that has expired, is answered with 404 not_found. **The archive contains personal data**: the members' display names and email addresses, the audit log's IP addresses and user agents, and each project's comments and the names of the people involved. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). Requests that read share a rate limit of 1,200 a minute for each IP address, and 600 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getWorkspaceExport: {
+    input: {
+      path: {
+        /** The export's ID */
+        export_id: string;
+        /** The workspace's ID */
+        workspace_id: string;
+      };
+    };
+    responses: {
+      200: WorkspaceExportBody;
     };
   };
   /**
@@ -6033,6 +6118,28 @@ export interface Operations {
     };
   };
   /**
+   * List your exports of a workspace
+   *
+   * Lists the exports of the workspace that the user asked for and that have not expired, newest first. Only an owner of the workspace may export it: an admin is answered with 403 owner_required, and an editor, a commenter, or a viewer with 403 insufficient_role. Only the owner who asked for an export reads it, while they are an owner, and an export of anyone else, or one that has expired, is answered with 404 not_found. **The archive contains personal data**: the members' display names and email addresses, the audit log's IP addresses and user agents, and each project's comments and the names of the people involved. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). Requests that read share a rate limit of 1,200 a minute for each IP address, and 600 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listWorkspaceExports: {
+    input: {
+      path: {
+        /** The workspace's ID */
+        workspace_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageWorkspaceExportBody;
+    };
+  };
+  /**
    * List a workspace's API tokens
    *
    * Lists the API tokens of the whole workspace that are not revoked, expired ones included, in the order of their IDs, oldest first, without their secrets: every member's, to an owner or an admin of the workspace, and their own, to an editor. Anyone else with a role in it is answered with 403 insufficient_role. The tokens narrowed to a project are listed by GET /api/v1/projects/{project_id}/tokens. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It refuses every API token so that no token makes, lists, or revokes another. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, an instance admin's taking one as text, inviting someone to a workspace, sending an invitation anew, reading, accepting, or registering with an invitation's link, and making, listing, or revoking an API token share a rate limit of 20 requests a minute for each IP address. Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 a minute for each email address, so that each counts against the other for the same address, and changing a password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a link as text, inviting someone, sending an invitation anew, accepting one, and making, listing, or revoking an API token share one of 10 a minute for each account. No request made with an API token counts against these, so that the requests of a token, which count against its owner's account too, cannot keep the owner from finding and revoking it, after which no limit counts them. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
@@ -6743,10 +6850,12 @@ export const routes = {
   createProjectImport: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/project-imports" },
   createProjectToken: { method: "POST", path: "/api/v1/projects/{project_id}/tokens" },
   createWorkspace: { method: "POST", path: "/api/v1/workspaces" },
+  createWorkspaceExport: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/exports" },
   createWorkspaceToken: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/tokens" },
   deleteProject: { method: "DELETE", path: "/api/v1/projects/{project_id}" },
   diffSnapshots: { method: "POST", path: "/api/v1/projects/{project_id}/diff" },
   downloadAuthoringExport: { method: "GET", path: "/api/v1/projects/{project_id}/authoring-exports/{export_id}/download", blob: true },
+  downloadWorkspaceExport: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/exports/{export_id}/download", blob: true },
   duplicateProject: { method: "POST", path: "/api/v1/projects/{project_id}/duplicate" },
   exportDraft: { method: "GET", path: "/api/v1/projects/{project_id}/draft/export", blob: true },
   exportDraftText: { method: "GET", path: "/api/v1/projects/{project_id}/draft/text-export", blob: true },
@@ -6780,6 +6889,7 @@ export const routes = {
   getVariable: { method: "GET", path: "/api/v1/projects/{project_id}/variables/{variable_id}" },
   getVersion: { method: "GET", path: "/version" },
   getWorkspace: { method: "GET", path: "/api/v1/workspaces/{workspace_id}" },
+  getWorkspaceExport: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/exports/{export_id}" },
   getWorkspaceUsage: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/usage" },
   importSampleProject: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/sample-project" },
   issuePasswordResetLink: { method: "POST", path: "/api/v1/admin/password-reset-links" },
@@ -6815,6 +6925,7 @@ export const routes = {
   listUnconvertibleValues: { method: "GET", path: "/api/v1/projects/{project_id}/component-types/{component_type_id}/attributes/{attribute_id}/conversion" },
   listVariableUsages: { method: "GET", path: "/api/v1/projects/{project_id}/variables/{variable_id}/usages" },
   listVariables: { method: "GET", path: "/api/v1/projects/{project_id}/variables" },
+  listWorkspaceExports: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/exports" },
   listWorkspaceTokens: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/tokens" },
   listWorkspaces: { method: "GET", path: "/api/v1/workspaces" },
   login: { method: "POST", path: "/api/v1/auth/login" },

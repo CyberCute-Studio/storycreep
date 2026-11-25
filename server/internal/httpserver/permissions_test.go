@@ -46,6 +46,9 @@ type rolesFixture struct {
 	// each account's membership, by the account's role in the workspace, as
 	// {"guest": "admin"}.
 	grants map[string]string
+	// workspaceExportID is the owner's ready export of the workspace, once
+	// workspaceExport has made it.
+	workspaceExportID string
 }
 
 // newRolesFixture returns a server whose workspace has an account of each of
@@ -349,6 +352,32 @@ var permissionMatrix = []struct {
 			{name: "read the usage", success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodGet, usagePath(f.ws), nil, si.header(false))
+				}},
+		},
+	},
+	{
+		row:     "Export the workspace",
+		op:      authz.ExportWorkspace,
+		allowed: [5]bool{true, false, false, false, false},
+		ops: []matrixOp{
+			{name: "ask for a workspace export", success: http.StatusAccepted,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodPost, workspaceExportsPath(f.ws), nil, si.header(true))
+				}},
+			{name: "list the workspace exports", success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodGet, workspaceExportsPath(f.ws), nil, si.header(false))
+				}},
+			// The owner's own export, which only they read.
+			{name: "read a workspace export", success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodGet, workspaceExportsPath(f.ws)+"/"+f.workspaceExport(t), nil,
+						si.header(false))
+				}},
+			{name: "download a workspace export", success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodGet,
+						workspaceExportsPath(f.ws)+"/"+f.workspaceExport(t)+"/download", nil, si.header(false))
 				}},
 		},
 	},
@@ -1197,6 +1226,8 @@ var viewerReads = map[api.Capability]bool{
 	// Listing tokens is managing them, which needs editor at least.
 	api.ManageWorkspaceTokens: false,
 	api.ManageProjectTokens:   false,
+	// Reading the workspace's exports is exporting it, which needs owner.
+	api.ExportWorkspace: false,
 }
 
 // sampleValue returns a value that the schema s accepts, with registry for
@@ -1465,6 +1496,37 @@ func (f *rolesFixture) projectImport(t *testing.T) string {
 	return i.ID
 }
 
+// workspaceExport returns the ID of a ready export of the fixture's workspace,
+// which its owner asked for, or the one that is on its way, which it builds.
+func (f *rolesFixture) workspaceExport(t *testing.T) string {
+	t.Helper()
+	if f.workspaceExportID != "" {
+		return f.workspaceExportID
+	}
+	res := call(f.s.main, http.MethodPost, workspaceExportsPath(f.ws), nil, f.as["owner"].header(true))
+	var id string
+	switch res.status {
+	case http.StatusConflict:
+		// The owner's export that an earlier operation asked for.
+		id, _ = res.details(t)["export_id"].(string)
+	case http.StatusAccepted:
+		var e WorkspaceExportBody
+		if err := json.Unmarshal(res.body, &e); err != nil {
+			t.Fatal(err)
+		}
+		id = e.ID
+	}
+	if id == "" {
+		t.Fatalf("ask for a workspace export: %d %s", res.status, res.body)
+	}
+	if err := f.s.authoring.BuildWorkspaceExport(t.Context(), decode(t, ids.Workspace, f.ws),
+		decode(t, ids.Job, id)); err != nil {
+		t.Fatal(err)
+	}
+	f.workspaceExportID = id
+	return id
+}
+
 func (f *rolesFixture) authoringExport(t *testing.T, p string) string {
 	t.Helper()
 	res := call(f.s.main, http.MethodPost, projectPath(p)+"/authoring-exports", jsonBody(t, map[string]any{}),
@@ -1521,7 +1583,7 @@ func TestViewerReadsOnly(t *testing.T) {
 		switch {
 		case !ok:
 			t.Errorf("%s requires %s, which viewerReads does not name; add it", r, c.capability)
-		case strings.Contains(r.Pattern, "{export_id}"):
+		case c.capability == api.ReadProject && strings.Contains(r.Pattern, "{export_id}"):
 			// An authoring export is read by the user who asked for it alone
 			// (note N90), and the walk's is the owner's.
 			wantCode(t, "a viewer's "+r.String()+" of the owner's export", res, http.StatusNotFound, api.CodeNotFound)

@@ -521,3 +521,17 @@ type Variable struct {
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
 }
+
+type WorkspaceExport struct {
+	ID           pgtype.UUID
+	WorkspaceID  pgtype.UUID
+	RequestedBy  pgtype.UUID
+	Status       string
+	StorageKey   string
+	SizeBytes    pgtype.Int8
+	ProjectCount pgtype.Int4
+	FileName     pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+	FinishedAt   pgtype.Timestamptz
+	ExpiresAt    pgtype.Timestamptz
+}

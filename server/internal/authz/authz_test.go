@@ -66,6 +66,8 @@ func TestMatrix(t *testing.T) {
 		ManageOwnWorkspaceTokens: {y, y, y, n, n},
 		// Manage API tokens (others') (W).
 		ManageTokens: {y, y, n, n, n},
+		// Export the workspace (W).
+		ExportWorkspace: {y, n, n, n, n},
 	}
 	scopes := map[Operation]Scope{ReadProject: Project, UploadAssets: Project, ChangeProjectSettings: Project,
 		ManageBoards: Project, ManageFolders: Project, EditContent: Project, ManageVariablesAndComponents: Project,
@@ -88,10 +90,12 @@ func TestMatrix(t *testing.T) {
 			if got := Allows(r, op); got != allowed {
 				t.Errorf("Allows(%q, %s) = %v, want %v", r, op, got, allowed)
 			}
+			// Only an admin learns that an owner may do what only an owner
+			// may.
 			var refusal error
 			switch {
 			case allowed:
-			case op == ManageOwners:
+			case (op == ManageOwners || op == ExportWorkspace) && r == role.Admin:
 				refusal = ErrOwnerRequired
 			default:
 				refusal = ErrInsufficientRole

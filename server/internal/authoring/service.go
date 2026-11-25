@@ -83,14 +83,15 @@ const (
 var ErrNotFound = errors.New("authoring: no such export of the user's")
 
 // InProgressError is Create's error for a user who has an export of the
-// project on its way, each of which reads the project whole.
+// project on its way, and CreateWorkspaceExport's for one who has an export of
+// the workspace on its way, each of which reads what it exports whole.
 type InProgressError struct {
 	// ID is that export's public ID.
 	ID string
 }
 
 func (e *InProgressError) Error() string {
-	return "authoring: the user has an export of the project on its way: " + e.ID
+	return "authoring: the user has an export on its way: " + e.ID
 }
 
 // NotReadyError is Open's error for an export that has no file to download.
@@ -464,6 +465,7 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 		return err
 	})
 	s.registerImportJobs(r)
+	s.registerWorkspaceJobs(r)
 }
 
 func parseArgs(a jobArgs) (ws, id ids.UUID, err error) {
@@ -496,12 +498,13 @@ func (s *Service) withDB(db *database.DB) *Service {
 func onlyFails(attempt, snoozes int) bool { return attempt > buildAttempts || snoozes > 0 }
 
 // endsTheExport says whether err, of a build that ran under ctx, is a failure
-// that another attempt would repeat: a project in the trash, an asset whose
-// file is gone, or the attempt's own timeout. The server's stopping cancels
-// ctx instead, and the build then runs again after the restart.
+// that another attempt would repeat: a project in the trash, a workspace that
+// is no longer active, an asset whose file is gone, or the attempt's own
+// timeout. The server's stopping cancels ctx instead, and the build then runs
+// again after the restart.
 func endsTheExport(ctx context.Context, err error) bool {
-	return errors.Is(err, errProjectGone) || errors.Is(err, errAssetMissing) ||
-		(err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded))
+	return errors.Is(err, errProjectGone) || errors.Is(err, errWorkspaceGone) ||
+		errors.Is(err, errAssetMissing) || (err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded))
 }
 
 // fail fails the export, deletes what an attempt of it stored, and ends its
@@ -533,21 +536,22 @@ func (s *Service) fail(ctx context.Context, ws, id ids.UUID, why error) error {
 			"export_id", ids.Encode(ids.Job, id))
 		return nil
 	}
-	s.dropFailed(ctx, id, key)
+	s.dropFailed(ctx, "authoring export", id, key)
 	s.log.ErrorContext(ctx, "the authoring export failed", "export_id", ids.Encode(ids.Job, id), "error", why)
 	return jobs.Cancel(why)
 }
 
 // dropFailed deletes the archive of a failed export, which an attempt may have
 // stored before it could record that, and which nobody can download. A store
-// that does not take that leaves it to the export's expiry, so it only logs.
-func (s *Service) dropFailed(ctx context.Context, id ids.UUID, key string) {
+// that does not take that leaves it to the export's expiry, so it only logs,
+// naming the export as kind, an authoring export or a workspace export.
+func (s *Service) dropFailed(ctx context.Context, kind string, id ids.UUID, key string) {
 	store, err := s.storage.Store(ctx)
 	if err == nil {
 		err = store.Delete(ctx, key)
 	}
 	if err != nil {
-		s.log.WarnContext(ctx, "the archive of a failed authoring export stays until the export expires",
+		s.log.WarnContext(ctx, "the archive of a failed "+kind+" stays until the export expires",
 			"export_id", ids.Encode(ids.Job, id), "error", err)
 	}
 }
