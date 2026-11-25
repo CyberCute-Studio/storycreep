@@ -17,7 +17,7 @@ ALTER TABLE "user" ADD COLUMN password_changed_at timestamptz;
 -- The audit entries of each actor, and of each subject, in the order in which
 -- they were made, which the export reads a page at a time (package
 -- maintenance), and the entries whose metadata names a user, which an
--- account's removed memberships and its API tokens are found by: the log
+-- account's memberships that are gone and its API tokens are found by: the log
 -- holds every workspace's entries, and its one index leads with the
 -- workspace.
 CREATE INDEX audit_entry_actor ON audit_entry (actor_user_id, created_at, id) WHERE actor_user_id IS NOT NULL;
@@ -39,6 +39,15 @@ CREATE INDEX invite_email ON invite (email) WHERE email IS NOT NULL;
 -- the export of that person's account reads, and the account's hard deletion
 -- will delete (plan item 111).
 CREATE INDEX imported_user_source ON imported_user (source_user_id);
+
+-- A recipient's notifications of every workspace, in the order of their IDs,
+-- which the export of the recipient's account reads a page at a time, and
+-- which the cascades of the accounts' deletions read as they read the index
+-- of the recipient alone that it replaces: other members make a user's
+-- notifications, as many as they mention the user, so a page must not read
+-- all of those after it.
+DROP INDEX notification_user;
+CREATE INDEX notification_user ON notification (user_id, id);
 
 -- A personal-data export. It is an account's, of no workspace, as a session
 -- is, so the table spans workspaces and has no row-level security (§5.4): the

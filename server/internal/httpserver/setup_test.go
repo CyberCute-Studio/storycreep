@@ -306,7 +306,8 @@ var unattendedEnv = map[string]string{
 // instanceState describes what setup leaves in the database d, without what
 // differs whatever setup does: IDs, times, the password's hash, which is
 // salted, and the client's address and user agent, which unattended setup
-// has none of.
+// has none of. An audit entry's membership_id is the email address of the
+// membership's account.
 func instanceState(t *testing.T, d *dbtest.Database) string {
 	t.Helper()
 	rows, err := d.Admin(t).Query(context.Background(), `
@@ -325,8 +326,12 @@ func instanceState(t *testing.T, d *dbtest.Database) string {
 			s3_secret_access_key)
 		FROM instance
 		UNION ALL SELECT format('audit %s %s %s %s in=%s actor=%s token=%s subject=%s', a.action, a.subject_kind,
-			a.result, a.metadata, w.slug, u.email, a.actor_token_id, a.subject_id = w.id)
+			a.result, CASE WHEN a.metadata ? 'membership_id' THEN jsonb_set(a.metadata, '{membership_id}',
+				to_jsonb(coalesce(mu.email::text, 'none'))) ELSE a.metadata END,
+			w.slug, u.email, a.actor_token_id, a.subject_id = w.id)
 		FROM audit_entry a LEFT JOIN workspace w ON w.id = a.workspace_id LEFT JOIN "user" u ON u.id = a.actor_user_id
+		LEFT JOIN membership am ON am.id::text = a.metadata ->> 'membership_id'
+		LEFT JOIN "user" mu ON mu.id = am.user_id
 		ORDER BY 1`)
 	var lines []string
 	if err == nil {

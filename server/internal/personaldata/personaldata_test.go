@@ -123,7 +123,7 @@ func TestRegistries(t *testing.T) {
 			t.Errorf("%s names a file and why it has none, or neither", key)
 		}
 	}
-	for _, a := range Attributions {
+	for _, a := range attributions {
 		key := a.Table + "." + a.Column
 		if seen[key] {
 			t.Errorf("%s is listed twice", key)
@@ -172,7 +172,7 @@ func TestEveryUserReferenceIsAccounted(t *testing.T) {
 	for _, r := range References {
 		listed = append(listed, r.Table+"."+r.Column)
 	}
-	for _, a := range Attributions {
+	for _, a := range attributions {
 		listed = append(listed, a.Table+"."+a.Column)
 	}
 	for _, c := range got {
@@ -186,7 +186,7 @@ func TestEveryUserReferenceIsAccounted(t *testing.T) {
 			t.Errorf("%s is listed, but is no foreign key to \"user\"", c)
 		}
 	}
-	for _, a := range Attributions {
+	for _, a := range attributions {
 		for _, column := range []string{a.At, a.Project, "workspace_id", "id"} {
 			var n int
 			if err := conn.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns

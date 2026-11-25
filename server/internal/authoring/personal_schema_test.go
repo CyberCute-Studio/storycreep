@@ -169,7 +169,7 @@ func TestPersonalReferenceEnums(t *testing.T) {
 		return strings.Split(f.Tag.Get("enum"), ",")
 	}
 	var tables []string
-	for _, a := range personaldata.Attributions {
+	for _, a := range personaldata.Attributions() {
 		if !slices.Contains(tables, a.Table) {
 			tables = append(tables, a.Table)
 		}

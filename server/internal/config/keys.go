@@ -650,7 +650,9 @@ var keys = []key{
 			"another database on the server that it can connect to, as PostgreSQL lets every role do by default: " +
 			"on a server shared with other applications, revoke `CONNECT` on their databases from `PUBLIC`. " +
 			"`storycreep serve` and `storycreep import` need it, for the check of whether an archive's IDs are in use " +
-			"(PRD §5.2), and refuse to run without it. It is shown redacted in the same way.",
+			"(PRD §5.2), and `storycreep serve` for the personal-data export too, which reads a user's own rows of " +
+			"every workspace (PRD FR-GDPR-01), and they refuse to run without it. It is shown redacted in the same " +
+			"way.",
 		valuesDoc: "A `postgres://` URL",
 		parse: func(c *Config, v string) error {
 			d, err := ParseDatabaseURL(v)

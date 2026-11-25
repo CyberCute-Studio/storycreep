@@ -32,7 +32,7 @@ type PersonalManifest struct {
 	Format        string                  `json:"format" enum:"storycreep.personal-data" doc:"The format's name."`
 	FormatVersion int                     `json:"formatVersion" enum:"1" doc:"The version of the format."`
 	Generator     published.GeneratorInfo `json:"generator" doc:"What wrote the archive."`
-	ExportedAt    time.Time               `json:"exportedAt" doc:"When the archive's reading began, by the database's clock. Each section is read after it, as of a moment of its own, and the audit log's entries up to it."`
+	ExportedAt    time.Time               `json:"exportedAt" doc:"When the archive's reading began, by the database's clock. The account, its email links, and its sessions are read as of it, each other section after it, as of a moment of its own, and the audit log's entries up to it."`
 	UserID        string                  `json:"userId" doc:"The ID of the account that the archive is of, whose user asked for it."`
 	PersonalData  bool                    `json:"personalData" enum:"true" doc:"Whether the archive holds personal data, which it always does: all of it is the user's."`
 	Sections      []ManifestSection       `json:"sections" nullable:"false" doc:"The archive's JSON files beside this one, each with how many items it holds and its SHA-256."`
@@ -102,15 +102,16 @@ type PersonalMembership struct {
 	Grants        []MemberGrant `json:"grants" nullable:"false" doc:"The user's grants on the workspace's projects, each of which replaces their role on its project, in the order of the projects' IDs."`
 }
 
-// PersonalInvite is an invitation to the account's address, or one that the
-// user accepted, never its secret's hash, nor who made it.
+// PersonalInvite is an invitation to the account's address, once the account
+// has verified it, or one that the user accepted, never its secret's hash, nor
+// who made it.
 type PersonalInvite struct {
 	ID            string     `json:"id" doc:"The invitation's ID."`
 	WorkspaceID   string     `json:"workspaceId" doc:"The workspace that it invites to."`
 	WorkspaceName string     `json:"workspaceName" doc:"The workspace's name."`
 	Kind          string     `json:"kind" enum:"email,link" doc:"email for an invitation to the user's address, or link for one to whoever held its link, which the user accepted."`
 	Role          string     `json:"role" enum:"owner,admin,editor,commenter,viewer,guest" doc:"The role that it gives."`
-	Status        string     `json:"status" enum:"open,accepted,revoked,expired" doc:"Where it was as the archive's reading began."`
+	Status        string     `json:"status" enum:"open,accepted,revoked,expired" doc:"Where it was as the invitations were read, after the archive's reading began."`
 	CreatedAt     time.Time  `json:"createdAt" doc:"When it was made."`
 	ExpiresAt     time.Time  `json:"expiresAt" doc:"When its link expires."`
 	AcceptedAt    *time.Time `json:"acceptedAt,omitempty" doc:"When it was accepted, if it was."`
@@ -280,7 +281,7 @@ func personalReadme(m PersonalManifest) string {
 	line("")
 	line("## What it holds")
 	line("")
-	line("From every workspace of the instance, whether or not you are still a member of it:")
+	line("Your account, and your rows of every workspace of the instance, whether or not you are still a member of it:")
 	line("")
 	for _, s := range m.Sections {
 		line("- `%s`: %s, %d item(s)", s.Path, s.Name, s.Items)
@@ -302,7 +303,8 @@ func personalReadme(m PersonalManifest) string {
 	line("  and of which `attribution.json` holds who created and last changed each entity.")
 	line("- Other people's rows that name you only as who did something for them: the memberships of the members")
 	line("  whom you invited, the invitations that you made, and the notifications of the members whom you")
-	line("  mentioned. The audit log's entries of what you did, in `audit-log/acted.json`, record them.")
+	line("  mentioned. The audit log's entries of what you did, in `audit-log/acted.json`, record the invitations,")
+	line("  and `comments.json` holds the comments that mentioned them.")
 	line("- The requests for exports and imports, which are kept for 7 days, and which the audit log records.")
 	line("- Billing data: this instance keeps none. On the hosted service, the payment provider holds it, and its own")
 	line("  export gives it.")

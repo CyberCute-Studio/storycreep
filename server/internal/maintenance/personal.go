@@ -114,18 +114,19 @@ func tokens(ctx context.Context, tx pgx.Tx, user ids.UUID) ([]personaldata.Token
 }
 
 // invites returns the invitations to the address email, as addresses compare,
-// and those that the user accepted, without their hashes, nor who made them.
+// unless email is "", and those that the user accepted, without their hashes,
+// nor who made them, each with whether it had expired as of the snapshot.
 func invites(ctx context.Context, tx pgx.Tx, user ids.UUID, email string) ([]personaldata.Invite, error) {
 	rows, err := tx.Query(ctx, `SELECT i.id, i.workspace_id, w.name, i.email IS NOT NULL, i.role, i.created_at,
-			i.expires_at, i.accepted_at, i.revoked_at
+			i.expires_at, i.expires_at <= now(), i.accepted_at, i.revoked_at
 		FROM invite i JOIN workspace w ON w.id = i.workspace_id
-		WHERE i.email = $2::citext OR i.accepted_by = $1 ORDER BY i.id`, user, email)
+		WHERE ($2 <> '' AND i.email = $2::citext) OR i.accepted_by = $1 ORDER BY i.id`, user, email)
 	var out []personaldata.Invite
 	if err == nil {
 		out, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (personaldata.Invite, error) {
 			var i personaldata.Invite
 			err := r.Scan(&i.ID, &i.WorkspaceID, &i.WorkspaceName, &i.Email, &i.Role, &i.CreatedAt, &i.ExpiresAt,
-				&i.AcceptedAt, &i.RevokedAt)
+				&i.Expired, &i.AcceptedAt, &i.RevokedAt)
 			return i, err
 		})
 	}
@@ -155,9 +156,14 @@ func identities(ctx context.Context, tx pgx.Tx, user ids.UUID) ([]personaldata.I
 }
 
 // subjects returns the IDs of the user's memberships and API tokens, those
-// that are gone too, which the audit log's entries of their removal, their
-// creation, and their revocation name the user in, as the subjects of the
-// entries about the user.
+// that are gone too, as the subjects of the entries about the user: a
+// membership that was removed, or that the operator's grant-role made, and a
+// token, whose entries' metadata names the user (user_id); a membership that
+// the user made by accepting an invitation, as its creation's actor; and the
+// membership of a workspace that the user created, which its creation's
+// metadata names (membership_id). Only those entries name a membership's
+// member, so that one of another member's, which the user acted on as an
+// owner or an admin, is never among them.
 func subjects(ctx context.Context, tx pgx.Tx, user ids.UUID) ([]ids.UUID, error) {
 	rows, err := tx.Query(ctx, `SELECT id FROM membership WHERE user_id = $1
 		UNION SELECT id FROM api_token WHERE user_id = $1
@@ -165,7 +171,9 @@ func subjects(ctx context.Context, tx pgx.Tx, user ids.UUID) ([]ids.UUID, error)
 			WHERE metadata ? 'user_id' AND metadata ->> 'user_id' = $2 AND subject_id IS NOT NULL
 				AND subject_kind IN ('membership', 'api_token')
 		UNION SELECT subject_id FROM audit_entry
-			WHERE actor_user_id = $1 AND subject_kind = 'membership' AND subject_id IS NOT NULL
+			WHERE actor_user_id = $1 AND action = 'membership.create' AND subject_id IS NOT NULL
+		UNION SELECT (metadata ->> 'membership_id')::uuid FROM audit_entry
+			WHERE actor_user_id = $1 AND action = 'workspace.create' AND metadata ? 'membership_id'
 		ORDER BY 1`, user, user.String())
 	var out []ids.UUID
 	if err == nil {
@@ -178,8 +186,9 @@ func subjects(ctx context.Context, tx pgx.Tx, user ids.UUID) ([]ids.UUID, error)
 }
 
 // auditColumns are the columns of an audit entry that auditEntry scans.
-const auditColumns = `id, workspace_id, actor_user_id, actor_token_id, action, coalesce(subject_kind, ''), subject_id,
-	result, ip, coalesce(user_agent, ''), coalesce(request_id, ''), metadata, created_at`
+const auditColumns = `id, workspace_id, actor_user_id, actor_token_id, action,
+	coalesce(subject_kind, '') AS subject_kind, subject_id, result, ip, coalesce(user_agent, '') AS user_agent,
+	coalesce(request_id, '') AS request_id, metadata, created_at`
 
 // Acted returns a page of the audit entries whose actor is the user.
 func (db *DB) Acted(ctx context.Context, user ids.UUID, until time.Time, after personaldata.AuditCursor,
@@ -190,14 +199,20 @@ func (db *DB) Acted(ctx context.Context, user ids.UUID, until time.Time, after p
 }
 
 // ActedOn returns a page of the audit entries about the user, or one of
-// subjects, whose actor is someone else, or nobody.
+// subjects, whose actor is someone else, or nobody. Each subject's entries
+// are read in their order from the log's index of its subjects, at most a
+// page of them, so that a page reads no more of a subject's entries than it
+// may hold, however many there are after it, as of failed sign-ins with the
+// user's address.
 func (db *DB) ActedOn(ctx context.Context, user ids.UUID, subjects []ids.UUID, until time.Time,
 	after personaldata.AuditCursor, limit int) ([]personaldata.AuditEntry, error) {
 	about := append([]ids.UUID{user}, subjects...)
-	return db.auditPage(ctx, `SELECT `+auditColumns+` FROM audit_entry
-		WHERE subject_id = ANY($2::uuid[]) AND subject_kind IN ('user', 'membership', 'api_token')
-			AND actor_user_id IS DISTINCT FROM $1 AND created_at <= $3 AND (created_at, id) > ($4, $5)
-		ORDER BY created_at, id LIMIT $6`, user, about, until, after.At, after.ID, limit)
+	return db.auditPage(ctx, `SELECT e.* FROM (SELECT DISTINCT s FROM unnest($2::uuid[]) AS s) AS about
+		CROSS JOIN LATERAL (SELECT `+auditColumns+` FROM audit_entry
+			WHERE subject_id = about.s AND subject_kind IN ('user', 'membership', 'api_token')
+				AND actor_user_id IS DISTINCT FROM $1 AND created_at <= $3 AND (created_at, id) > ($4, $5)
+			ORDER BY created_at, id LIMIT $6) AS e
+		ORDER BY e.created_at, e.id LIMIT $6`, user, about, until, after.At, after.ID, limit)
 }
 
 // auditPage runs the query of a page of audit entries with args.
@@ -290,7 +305,7 @@ func (db *DB) Notifications(ctx context.Context, user, after ids.UUID, limit int
 }
 
 // errNoAttribution is the error of an Attribution that is not one of
-// personaldata.Attributions, whose table and columns the maintenance path
+// personaldata.Attributions(), whose table and columns the maintenance path
 // does not read.
 var errNoAttribution = errors.New("maintenance: not one of the attributions of the personal-data export")
 
@@ -298,7 +313,7 @@ var errNoAttribution = errors.New("maintenance: not one of the attributions of t
 // user.
 func (db *DB) Attribution(ctx context.Context, user ids.UUID, a personaldata.Attribution, after ids.UUID,
 	limit int) ([]personaldata.Attributed, error) {
-	if !slices.Contains(personaldata.Attributions, a) {
+	if !slices.Contains(personaldata.Attributions(), a) {
 		return nil, errNoAttribution
 	}
 	query := fmt.Sprintf("SELECT id, workspace_id, %s, %s FROM %s WHERE %s = $1 AND id > $2 ORDER BY id LIMIT $3",

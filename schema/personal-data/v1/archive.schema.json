@@ -597,7 +597,7 @@
           "type": "string"
         },
         "status": {
-          "description": "Where it was as the archive's reading began.",
+          "description": "Where it was as the invitations were read, after the archive's reading began.",
           "enum": [
             "open",
             "accepted",
@@ -631,7 +631,7 @@
       "additionalProperties": false,
       "properties": {
         "exportedAt": {
-          "description": "When the archive's reading began, by the database's clock. Each section is read after it, as of a moment of its own, and the audit log's entries up to it.",
+          "description": "When the archive's reading began, by the database's clock. The account, its email links, and its sessions are read as of it, each other section after it, as of a moment of its own, and the audit log's entries up to it.",
           "format": "date-time",
           "type": "string"
         },

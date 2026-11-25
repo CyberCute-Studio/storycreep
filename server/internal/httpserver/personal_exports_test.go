@@ -589,6 +589,103 @@ func TestPersonalDataExportOfARemovedMember(t *testing.T) {
 	}
 }
 
+// TestPersonalDataExportOfAnAdmin checks that what an owner or an admin did
+// to another member's membership is not about them: the owner's export holds
+// its change of the member's role among what it did, whole, and neither that
+// change nor an admin's later one among what others did to it, while the
+// member's export holds both, each as a workspace admin's.
+func TestPersonalDataExportOfAnAdmin(t *testing.T) {
+	t.Parallel()
+	f := newRolesFixture(t)
+	openMaintenance(t, f.s, f.d)
+	h := f.s.main
+	owner, admin, member := f.as["owner"], f.as["admin"], f.as["editor"]
+	membership := f.membership(t, "editor")
+	for _, c := range []struct {
+		by   signedIn
+		role string
+	}{{owner, "commenter"}, {admin, "viewer"}} {
+		if res := changeRole(t, h, c.by, f.ws, membership, c.role); res.status != http.StatusOK {
+			t.Fatalf("change the member's role to %s: %d %s", c.role, res.status, res.body)
+		}
+	}
+	files := personalArchive(t, f.s, owner)
+	validatePersonalArchive(t, files)
+	if acted := items[authoring.PersonalActedEntry](t, files, personaldata.ActedPath); !slices.ContainsFunc(acted,
+		func(a authoring.PersonalActedEntry) bool {
+			return a.Action == "membership.role_change" && a.SubjectID == membership
+		}) {
+		t.Errorf("the owner's archive lacks its change of the member's role: %+v", acted)
+	}
+	if on := items[authoring.PersonalActedOnEntry](t, files, personaldata.ActedOnPath); slices.ContainsFunc(on,
+		func(a authoring.PersonalActedOnEntry) bool { return a.Action == "membership.role_change" }) {
+		t.Errorf("the owner's archive holds a change of another member's role as done to the owner: %+v", on)
+	}
+	on := items[authoring.PersonalActedOnEntry](t, personalArchive(t, f.s, member), personaldata.ActedOnPath)
+	n := 0
+	for _, a := range on {
+		if a.Action == "membership.role_change" && a.Actor == personaldata.LabelWorkspaceAdmin {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("the member's archive holds %d changes of their role by a workspace admin, want 2: %+v", n, on)
+	}
+}
+
+// TestPersonalDataExportOfAnUnverifiedAddress checks that an account that has
+// not verified its address, which anyone may have registered, learns of no
+// invitation to the address from its export, but of those that it accepted,
+// and of each once it has verified the address.
+func TestPersonalDataExportOfAnUnverifiedAddress(t *testing.T) {
+	t.Parallel()
+	f := newRolesFixture(t)
+	openMaintenance(t, f.s, f.d)
+	ctx := context.Background()
+	user := f.as["viewer"]
+	u, owner := decode(t, ids.User, user.body.UserID), decode(t, ids.User, f.as["owner"].body.UserID)
+	if _, err := f.admin.Exec(ctx, `UPDATE "user" SET email_verified_at = NULL WHERE id = $1`, u); err != nil {
+		t.Fatal(err)
+	}
+	other := ids.New()
+	if _, err := f.admin.Exec(ctx, `INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Quay', $2, 'free')`,
+		other, "quay-"+other.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	// An invitation to the address, and a link invitation that the user
+	// accepted.
+	addressed, accepted := ids.New(), ids.New()
+	if _, err := f.admin.Exec(ctx, `INSERT INTO invite (id, workspace_id, email, role, token_hash, expires_at,
+		created_by) VALUES ($1, $2, 'as-viewer@example.com', 'editor', $3, now() + interval '14 days', $4)`, addressed,
+		other, bytes.Repeat([]byte{8}, 32), owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.admin.Exec(ctx, `INSERT INTO invite (id, workspace_id, role, token_hash, expires_at, created_by,
+		accepted_at, accepted_by) VALUES ($1, $2, 'viewer', $3, now() + interval '14 days', $4, now(), $5)`, accepted,
+		other, bytes.Repeat([]byte{9}, 32), owner, u); err != nil {
+		t.Fatal(err)
+	}
+	invited := func() []string {
+		t.Helper()
+		var got []string
+		for _, i := range items[authoring.PersonalInvite](t, personalArchive(t, f.s, user), personaldata.InvitesPath) {
+			got = append(got, i.ID+" "+i.Status)
+		}
+		return got
+	}
+	if got, want := invited(), []string{ids.Encode(ids.Invite, accepted) + " accepted"}; !slices.Equal(got, want) {
+		t.Errorf("the unverified account's invitations are %q, want only the one that it accepted, %q", got, want)
+	}
+	if _, err := f.admin.Exec(ctx, `UPDATE "user" SET email_verified_at = now() WHERE id = $1`, u); err != nil {
+		t.Fatal(err)
+	}
+	// In the order of their IDs: the invitation to the address was made first.
+	want := []string{ids.Encode(ids.Invite, addressed) + " open", ids.Encode(ids.Invite, accepted) + " accepted"}
+	if got := invited(); !slices.Equal(got, want) {
+		t.Errorf("the verified account's invitations are %q, want %q", got, want)
+	}
+}
+
 // TestPersonalDataExportAccess checks who reads a personal-data export: only
 // its user, signed in, as an API token is refused and another user finds none;
 // the export expires seven days after it was asked for; a user has one on its

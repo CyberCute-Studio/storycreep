@@ -18,7 +18,10 @@ type Reader interface {
 	// Holdings returns the user's memberships, with their grants, API tokens,
 	// invitations, and imported identities, of every workspace, as of one
 	// moment, and the subjects of the audit log's entries about the user.
-	// email is the user's address, which the invitations are to.
+	// email is the user's address, which the invitations are to, or "" for an
+	// account that has not verified its address, which anyone may have
+	// registered, so that it learns of no invitation to the address but those
+	// that it accepted.
 	Holdings(ctx context.Context, user ids.UUID, email string) (Holdings, error)
 	// Acted returns at most limit of the audit entries whose actor is the
 	// user, made by until, in the order in which they were made, after the
@@ -38,7 +41,7 @@ type Reader interface {
 	Notifications(ctx context.Context, user, after ids.UUID, limit int) ([]Notification, error)
 	// Attribution returns at most limit of the rows of a's table whose column
 	// is the user, in the order of their IDs, after the row after. a is one
-	// of Attributions.
+	// of Attributions().
 	Attribution(ctx context.Context, user ids.UUID, a Attribution, after ids.UUID, limit int) ([]Attributed, error)
 }
 
@@ -50,18 +53,18 @@ type Holdings struct {
 	// Tokens are the user's API tokens, revoked ones too, in the order of
 	// their IDs.
 	Tokens []Token
-	// Invites are the invitations to the user's address, and those that the
-	// user accepted, in the order of their IDs.
+	// Invites are the invitations to the user's address, if it is verified,
+	// and those that the user accepted, in the order of their IDs.
 	Invites []Invite
 	// Identities are the imported identities of other workspaces that stand
 	// for the user, as an archive that named the user made them (FR-DATA-01),
 	// in the order of their workspaces' IDs and their display names.
 	Identities []Identity
 	// Subjects are the IDs of what an audit entry about the user may be of,
-	// beside the account: its memberships, those that were removed too, as
-	// the log's entries of their removal name the user, and its API tokens,
-	// those of deleted projects too, as the log's entries of their creation
-	// name the user.
+	// beside the account: its memberships, those that are gone too, as the
+	// log's entries of their removal or their creation name the user, and its
+	// API tokens, those of deleted projects too, as the log's entries of their
+	// creation name the user.
 	Subjects []ids.UUID
 }
 
@@ -100,10 +103,12 @@ type Invite struct {
 	WorkspaceName   string
 	// Email says whether it is to an address, rather than whoever holds its
 	// link.
-	Email      bool
-	Role       string
-	CreatedAt  time.Time
-	ExpiresAt  time.Time
+	Email     bool
+	Role      string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	// Expired says whether it had expired as of the moment that it was read.
+	Expired    bool
 	AcceptedAt *time.Time
 	RevokedAt  *time.Time
 }

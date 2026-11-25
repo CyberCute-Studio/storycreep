@@ -104,7 +104,13 @@ func (s *Service) readPersonal(ctx context.Context, row queries.PersonalDataExpo
 	if err != nil {
 		return nil, err
 	}
-	if c.holdings, err = s.personal.Holdings(ctx, user, c.account.Email); err != nil {
+	// The invitations to an address that the account has not verified, which
+	// anyone may have registered, are not the user's to see.
+	email := ""
+	if c.account.EmailVerifiedAt != nil {
+		email = c.account.Email
+	}
+	if c.holdings, err = s.personal.Holdings(ctx, user, email); err != nil {
 		return nil, fmt.Errorf("authoring: read the user's memberships, tokens, and invitations: %w", err)
 	}
 	return c, nil
@@ -193,7 +199,7 @@ func (s *Service) writePersonal(ctx context.Context, w io.Writer, user ids.UUID,
 		return err
 	}
 	if err := whole("invitations", personaldata.InvitesPath, len(h.Invites),
-		Items[PersonalInvite]{Items: personalInvites(h.Invites, at)}); err != nil {
+		Items[PersonalInvite]{Items: personalInvites(h.Invites)}); err != nil {
 		return err
 	}
 	if err := whole("imported identities", personaldata.IdentitiesPath, len(h.Identities),
@@ -235,7 +241,7 @@ func (s *Service) writePersonal(ctx context.Context, w io.Writer, user ids.UUID,
 		return err
 	}
 	if err := paged("attribution", personaldata.AttributionPath, func(add func(any) error) error {
-		for _, a := range personaldata.Attributions {
+		for _, a := range personaldata.Attributions() {
 			kind, kinded := kindNamed(a.Table)
 			err := pageByID(func(after ids.UUID) ([]personaldata.Attributed, error) {
 				return s.personal.Attribution(ctx, user, a, after, referencePage)
@@ -447,9 +453,9 @@ func personalMemberships(in []personaldata.Membership) []PersonalMembership {
 	return out
 }
 
-// personalInvites returns the invitations in, each with where it was at the
-// time at.
-func personalInvites(in []personaldata.Invite, at time.Time) []PersonalInvite {
+// personalInvites returns the invitations in, each with where it was as it was
+// read.
+func personalInvites(in []personaldata.Invite) []PersonalInvite {
 	out := make([]PersonalInvite, len(in))
 	for i, inv := range in {
 		kind, status := "link", "open"
@@ -461,7 +467,7 @@ func personalInvites(in []personaldata.Invite, at time.Time) []PersonalInvite {
 			status = "accepted"
 		case inv.RevokedAt != nil:
 			status = "revoked"
-		case !inv.ExpiresAt.After(at):
+		case inv.Expired:
 			status = "expired"
 		}
 		out[i] = PersonalInvite{ID: ids.Encode(ids.Invite, inv.ID), WorkspaceID: ids.Encode(ids.Workspace, inv.WorkspaceID),

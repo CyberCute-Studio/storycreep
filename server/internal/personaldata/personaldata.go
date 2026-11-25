@@ -16,6 +16,8 @@
 // types of what it reads, so that neither package imports the other.
 package personaldata
 
+import "slices"
+
 // The archive's files, by their paths in the zip, which package authoring's
 // format describes (schema/personal-data).
 const (
@@ -117,9 +119,10 @@ var References = []UserReference{
 	{Table: "comment", Column: "created_by", Path: CommentsPath},
 	{Table: "notification", Column: "user_id", Path: NotificationsPath},
 	{Table: "membership", Column: "invited_by", Why: whyOthers + "the membership of a member whom the user " +
-		"invited, which the audit log's entries of the invitation, of which the user is the actor, record"},
+		"invited, whose invitation the audit log's entries of which the user is the actor record"},
 	{Table: "invite", Column: "created_by", Why: whyOthers + "an invitation that the user made, to someone " +
-		"else's address, which the audit log's entries of the invitation, of which the user is the actor, record"},
+		"else's address or to whoever holds its link, which the audit log's entries of the invitation, of " +
+		"which the user is the actor, record"},
 	{Table: "invite", Column: "link_holder", Why: whyOthers + "an invitation whose link the user was given to " +
 		"pass on, which the audit log's entries of the invitation, of which the user is the actor, record"},
 	{Table: "notification", Column: "actor_id", Why: whyOthers + "the notification of a member whom the user " +
@@ -152,12 +155,12 @@ type Attribution struct {
 	Project string
 }
 
-// Attributions are the columns of attribution, each a foreign key to "user",
+// attributions are the columns of attribution, each a foreign key to "user",
 // which TestEveryUserReferenceIsAccounted counts among the references. A row
 // of the trash is held too, as it still names the user. Each table's rows are
 // held under the table's name, as entity, with the ID of the kind of the same
 // name (package ids), or as a UUID where there is no such kind.
-var Attributions = []Attribution{
+var attributions = []Attribution{
 	{Table: "project", Column: "created_by", Relation: "created", At: "created_at", Project: "id"},
 	{Table: "project", Column: "updated_by", Relation: "updated", At: "updated_at", Project: "id"},
 	{Table: "folder", Column: "created_by", Relation: "created", At: "created_at", Project: "project_id"},
@@ -186,6 +189,12 @@ var Attributions = []Attribution{
 	{Table: "snapshot", Column: "published_by", Relation: "published", At: "published_at", Project: "project_id"},
 	{Table: "comment", Column: "resolved_by", Relation: "resolved", At: "resolved_at", Project: "project_id"},
 }
+
+// Attributions returns the columns of attribution, in their order, which
+// attribution.json holds them in: a copy, so that no caller changes the list
+// that the maintenance path's read of attribution is held to (package
+// maintenance).
+func Attributions() []Attribution { return slices.Clone(attributions) }
 
 // Relations are the relations of Attributions, which the format's enum lists.
 var Relations = []string{"created", "updated", "uploaded", "published", "resolved"}
@@ -220,6 +229,7 @@ var AccountColumns = []AccountColumn{
 		"was last set (password_changed_at)"},
 	{Column: "updated_at", Why: "when the row last changed, of any of its columns, which says nothing of the user " +
 		"beside the values that account.json holds"},
-	{Column: "personal_workspace_created_at", Why: "when the account's first sign-in gave it its personal " +
-		"workspace, whose creation the audit log records as the user's (workspace.create)"},
+	{Column: "personal_workspace_created_at", Why: "when the account was given its personal workspace, at its " +
+		"first sign-in, the verification of its address, or first-run setup, whose creation the audit log " +
+		"records as the user's (workspace.create)"},
 }

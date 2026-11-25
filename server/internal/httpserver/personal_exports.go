@@ -101,9 +101,10 @@ func registerPersonalExports(m *api.Mux, exports *authoring.Service) {
 			"schema/personal-data/v1, and answers 202 with the export, queued, whose URL Location names. A job builds " +
 			"it, without an operator. The archive holds, from every workspace, whether or not the user is still a " +
 			"member of it, what PRD §9.6 says: the account and its credentials' metadata, its email links' metadata, " +
-			"sessions, API tokens, memberships and grants, the invitations to its address, the audit log's entries " +
-			"of what the user did, whole, and those of what others did to them, with the actor as a role alone, the " +
-			"comments that they wrote, their notifications, references to what they created or last changed, and " +
+			"sessions, API tokens, memberships and grants, the invitations to its address, once it is verified, " +
+			"and those that the user accepted, the audit log's entries of what the user did, whole, and those of " +
+			"what others did to them, with the actor as a role alone, the comments that they wrote, their " +
+			"notifications, references to what they created, last changed, uploaded, published, or resolved, and " +
 			"the imported identities that stand for them (PRD FR-GDPR-01). The archive is kept for seven days. A " +
 			"user has one export on its way at a time, and another request is answered with 409 " +
 			"export_in_progress, whose details.export_id names it. Until the instance's first-run setup has " +

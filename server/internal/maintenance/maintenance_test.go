@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -162,7 +163,7 @@ func TestAttributionReadsTheInventorysAlone(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	db := open(t, dbtest.New(t).MaintenanceURL)
-	for _, a := range personaldata.Attributions {
+	for _, a := range personaldata.Attributions() {
 		if _, err := db.Attribution(ctx, ids.New(), a, ids.UUID{}, 10); err != nil {
 			t.Errorf("%s.%s: %v", a.Table, a.Column, err)
 		}
@@ -172,4 +173,135 @@ func TestAttributionReadsTheInventorysAlone(t *testing.T) {
 	if _, err := db.Attribution(ctx, ids.New(), other, ids.UUID{}, 10); !errors.Is(err, errNoAttribution) {
 		t.Errorf("a read of session.user_id gives %v, want %v", err, errNoAttribution)
 	}
+}
+
+// TestHoldingsSubjects checks which memberships and API tokens the entries
+// about a user are found by: their own, and those that are gone, whose
+// removal, whose creation by the operator, whose creation by the user's
+// acceptance of an invitation, or whose workspace's creation by the user
+// names the user, and never the membership of another member whom the user
+// acted on, as an owner or an admin does.
+func TestHoldingsSubjects(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	db := open(t, d.MaintenanceURL)
+	user, other, ws := ids.New(), ids.New(), ids.New()
+	for _, u := range []ids.UUID{user, other} {
+		if _, err := admin.Exec(ctx, `INSERT INTO "user" (id, email, display_name) VALUES ($1, $2, 'Someone')`, u,
+			u.String()+"@example.com"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := admin.Exec(ctx, `INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Harbour', $2, 'free')`,
+		ws, "harbour-"+ws.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	current := ids.New()
+	if _, err := admin.Exec(ctx, `INSERT INTO membership (id, workspace_id, user_id, role)
+		VALUES ($1, $2, $3, 'editor')`, current, ws, user); err != nil {
+		t.Fatal(err)
+	}
+	removed, granted, joined, created, token := ids.New(), ids.New(), ids.New(), ids.New(), ids.New()
+	actedOn, othersGranted := ids.New(), ids.New()
+	entry := func(action, kind string, subject ids.UUID, actor *ids.UUID, metadata string) {
+		t.Helper()
+		if _, err := admin.Exec(ctx, `INSERT INTO audit_entry (id, workspace_id, actor_user_id, action, subject_kind,
+			subject_id, result, metadata) VALUES ($1, $2, $3, $4, $5, $6, 'success', $7)`, ids.New(), ids.New(), actor,
+			action, kind, subject, metadata); err != nil {
+			t.Fatal(err)
+		}
+	}
+	u := user.String()
+	entry("membership.remove", "membership", removed, &other, `{"role": "viewer", "user_id": "`+u+`"}`)
+	entry("membership.create", "membership", granted, nil, `{"role": "viewer", "user_id": "`+u+`"}`)
+	entry("membership.create", "membership", joined, &user, `{"role": "viewer"}`)
+	entry("workspace.create", "workspace", ids.New(), &user, `{"personal": true, "membership_id": "`+created.String()+`"}`)
+	entry("token.create", "api_token", token, &user, `{"user_id": "`+u+`"}`)
+	// Another member's membership, whose role the user changed, and one that
+	// the operator made for the other member.
+	entry("membership.role_change", "membership", actedOn, &user, `{"role": "viewer", "previous_role": "editor"}`)
+	entry("membership.create", "membership", othersGranted, nil, `{"role": "viewer", "user_id": "`+other.String()+`"}`)
+
+	h, err := db.Holdings(ctx, user, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ids.UUID{current, removed, granted, joined, created, token}
+	slices.SortFunc(want, func(a, b ids.UUID) int { return strings.Compare(a.String(), b.String()) })
+	if !slices.Equal(h.Subjects, want) {
+		t.Errorf("the subjects are %v, want %v", h.Subjects, want)
+	}
+}
+
+// TestActedOnPages checks that the entries about a user and their subjects,
+// whose actor is someone else or nobody, are read a page at a time, in the
+// order in which they were made, an entry's ID breaking a tie, whole and
+// once, however the subjects' entries interleave, and that the user's own
+// entries, and those about another subject, are never among them.
+func TestActedOnPages(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	db := open(t, d.MaintenanceURL)
+	user, other, membership, token, elsewhere := ids.New(), ids.New(), ids.New(), ids.New(), ids.New()
+	start := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	actions := map[string]string{"user": "auth.login", "membership": "membership.role_change",
+		"api_token": "token.revoke"}
+	var want []ids.UUID
+	add := func(minute int, kind string, subject ids.UUID, actor *ids.UUID, about bool) {
+		t.Helper()
+		id := ids.New()
+		if _, err := admin.Exec(ctx, `INSERT INTO audit_entry (id, actor_user_id, action, subject_kind, subject_id,
+			result, created_at) VALUES ($1, $2, $3, $4, $5, 'success', $6)`, id, actor, actions[kind], kind, subject,
+			start.Add(time.Duration(minute)*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		if about {
+			want = append(want, id)
+		}
+	}
+	for i := range 7 {
+		add(i, "user", user, nil, true)
+		add(i, "membership", membership, &other, true)
+		add(i, "user", user, &user, false)
+		add(i, "membership", elsewhere, &other, false)
+	}
+	add(3, "api_token", token, &other, true)
+	add(10, "user", user, nil, false) // after until
+	got, after := []ids.UUID{}, personaldata.AuditCursor{}
+	for {
+		page, err := db.ActedOn(ctx, user, []ids.UUID{membership, token}, start.Add(9*time.Minute), after, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range page {
+			got = append(got, e.ID)
+		}
+		if len(page) < 2 {
+			break
+		}
+		after = page[len(page)-1].Cursor()
+	}
+	if want = sortedByMade(t, admin, want); !slices.Equal(got, want) {
+		t.Errorf("the pages hold %v, want %v", got, want)
+	}
+}
+
+// sortedByMade returns the audit entries list in the order in which they were
+// made, then by ID.
+func sortedByMade(t *testing.T, conn *pgx.Conn, list []ids.UUID) []ids.UUID {
+	t.Helper()
+	rows, err := conn.Query(context.Background(), `SELECT id FROM audit_entry WHERE id = ANY($1)
+		ORDER BY created_at, id`, list)
+	var out []ids.UUID
+	if err == nil {
+		out, err = pgx.CollectRows(rows, pgx.RowTo[ids.UUID])
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
