@@ -275,7 +275,8 @@ func (q *Queries) SetEmailTokenHash(ctx context.Context, arg SetEmailTokenHashPa
 }
 
 const setPasswordHash = `-- name: SetPasswordHash :execrows
-UPDATE "user" SET password_hash = $1, updated_at = now() WHERE id = $2 AND status = 'active'
+UPDATE "user" SET password_hash = $1, password_changed_at = now(), updated_at = now()
+WHERE id = $2 AND status = 'active'
 `
 
 type SetPasswordHashParams struct {
@@ -284,7 +285,8 @@ type SetPasswordHashParams struct {
 }
 
 // SetPasswordHash replaces the hash of the active account's password, as
-// resetting the password does, whatever the hash was.
+// resetting the password does, whatever the hash was, and records when the
+// password was set, which the personal-data export holds (PRD §9.6).
 func (q *Queries) SetPasswordHash(ctx context.Context, arg SetPasswordHashParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setPasswordHash, arg.PasswordHash, arg.ID)
 	if err != nil {

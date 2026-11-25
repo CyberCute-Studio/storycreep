@@ -22,6 +22,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
+	"github.com/CyberCute-Studio/storycreep/server/internal/personaldata"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/snapshot"
 )
@@ -83,8 +84,10 @@ const (
 var ErrNotFound = errors.New("authoring: no such export of the user's")
 
 // InProgressError is Create's error for a user who has an export of the
-// project on its way, and CreateWorkspaceExport's for one who has an export of
-// the workspace on its way, each of which reads what it exports whole.
+// project on its way, CreateWorkspaceExport's for one who has an export of the
+// workspace on its way, and CreatePersonalExport's for one who has an export
+// of their personal data on its way, each of which reads what it exports
+// whole.
 type InProgressError struct {
 	// ID is that export's public ID.
 	ID string
@@ -122,6 +125,9 @@ type Options struct {
 	// IDsInUse is the import's collision check, of the maintenance path
 	// (PRD §5.2), which answers one boolean.
 	IDsInUse func(ctx context.Context, list []ids.UUID) (bool, error)
+	// Personal reads a user's rows of every workspace for the personal-data
+	// export, through the maintenance path (PRD FR-GDPR-01, §5.4).
+	Personal personaldata.Reader
 	Log      *slog.Logger
 }
 
@@ -135,6 +141,7 @@ type Service struct {
 	assets         *asset.Service
 	pipeline       *commands.Pipeline
 	idsInUse       func(ctx context.Context, list []ids.UUID) (bool, error)
+	personal       personaldata.Reader
 	log            *slog.Logger
 }
 
@@ -145,7 +152,8 @@ func New(db DB, o Options) *Service {
 		log = slog.New(slog.DiscardHandler)
 	}
 	return &Service{db: db, projects: o.Projects, queue: o.Queue, storage: o.Storage,
-		importMaxBytes: o.ImportMaxBytes, assets: o.Assets, pipeline: o.Pipeline, idsInUse: o.IDsInUse, log: log}
+		importMaxBytes: o.ImportMaxBytes, assets: o.Assets, pipeline: o.Pipeline, idsInUse: o.IDsInUse,
+		personal: o.Personal, log: log}
 }
 
 // Request is what an export is asked for.
@@ -466,6 +474,7 @@ func (s *Service) RegisterJobs(r *jobs.Registry) {
 	})
 	s.registerImportJobs(r)
 	s.registerWorkspaceJobs(r)
+	s.registerPersonalJobs(r)
 }
 
 func parseArgs(a jobArgs) (ws, id ids.UUID, err error) {
@@ -498,12 +507,12 @@ func (s *Service) withDB(db *database.DB) *Service {
 func onlyFails(attempt, snoozes int) bool { return attempt > buildAttempts || snoozes > 0 }
 
 // endsTheExport says whether err, of a build that ran under ctx, is a failure
-// that another attempt would repeat: a project in the trash, a workspace that
-// is no longer active, an asset whose file is gone, or the attempt's own
-// timeout. The server's stopping cancels ctx instead, and the build then runs
-// again after the restart.
+// that another attempt would repeat: a project in the trash, a workspace or an
+// account that is no longer active, an asset whose file is gone, or the
+// attempt's own timeout. The server's stopping cancels ctx instead, and the
+// build then runs again after the restart.
 func endsTheExport(ctx context.Context, err error) bool {
-	return errors.Is(err, errProjectGone) || errors.Is(err, errWorkspaceGone) ||
+	return errors.Is(err, errProjectGone) || errors.Is(err, errWorkspaceGone) || errors.Is(err, errAccountGone) ||
 		errors.Is(err, errAssetMissing) || (err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded))
 }
 
@@ -544,7 +553,8 @@ func (s *Service) fail(ctx context.Context, ws, id ids.UUID, why error) error {
 // dropFailed deletes the archive of a failed export, which an attempt may have
 // stored before it could record that, and which nobody can download. A store
 // that does not take that leaves it to the export's expiry, so it only logs,
-// naming the export as kind, an authoring export or a workspace export.
+// naming the export as kind, an authoring export, a workspace export, or a
+// personal-data export.
 func (s *Service) dropFailed(ctx context.Context, kind string, id ids.UUID, key string) {
 	store, err := s.storage.Store(ctx)
 	if err == nil {

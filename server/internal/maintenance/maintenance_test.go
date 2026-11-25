@@ -15,6 +15,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/isolationtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/personaldata"
 )
 
 // TestMain runs the tests with dbtest.Run, which keeps the libpq environment
@@ -150,5 +151,25 @@ func TestOpenRefusesOtherLogins(t *testing.T) {
 				"acting as storycreep_maintenance")) {
 			t.Errorf("%s: Open returned %v, which does not name the maintenance login's key and rule", tt.name, err)
 		}
+	}
+}
+
+// TestAttributionReadsTheInventorysAlone checks that the personal-data
+// export's read of attribution runs for each of the inventory's attributions,
+// and refuses any other table or column, so that no caller reads another
+// table of every workspace through it (PRD §5.4).
+func TestAttributionReadsTheInventorysAlone(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := open(t, dbtest.New(t).MaintenanceURL)
+	for _, a := range personaldata.Attributions {
+		if _, err := db.Attribution(ctx, ids.New(), a, ids.UUID{}, 10); err != nil {
+			t.Errorf("%s.%s: %v", a.Table, a.Column, err)
+		}
+	}
+	other := personaldata.Attribution{Table: "session", Column: "user_id", Relation: "created", At: "created_at",
+		Project: "id"}
+	if _, err := db.Attribution(ctx, ids.New(), other, ids.UUID{}, 10); !errors.Is(err, errNoAttribution) {
+		t.Errorf("a read of session.user_id gives %v, want %v", err, errNoAttribution)
 	}
 }

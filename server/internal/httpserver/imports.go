@@ -20,32 +20,98 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
 	"github.com/CyberCute-Studio/storycreep/server/internal/maintenance"
+	"github.com/CyberCute-Studio/storycreep/server/internal/personaldata"
 )
 
 // maintenanceRef opens the maintenance path's pool when the import's collision
-// check first needs it, which is all that the server asks of it (PRD §5.2,
-// §5.4), so that a server waiting for its migrations does not need the login
-// that migrating provisions.
+// check, or the personal-data export's build, first needs it, which is all
+// that the server asks of it (PRD §5.2, §5.4, FR-GDPR-01), so that a server
+// waiting for its migrations does not need the login that migrating
+// provisions.
 type maintenanceRef struct {
 	cfg *config.Config
 	mu  sync.Mutex
 	db  *maintenance.DB
 }
 
-// AnyIDInUse says whether any of list is in use on the instance.
-func (r *maintenanceRef) AnyIDInUse(ctx context.Context, list []ids.UUID) (bool, error) {
+var _ personaldata.Reader = (*maintenanceRef)(nil)
+
+// open returns the pool, opening it if it is not open.
+func (r *maintenanceRef) open(ctx context.Context) (*maintenance.DB, error) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.db == nil {
 		db, err := maintenance.OpenConfigured(ctx, r.cfg)
 		if err != nil {
-			r.mu.Unlock()
-			return false, err
+			return nil, err
 		}
 		r.db = db
 	}
-	db := r.db
-	r.mu.Unlock()
+	return r.db, nil
+}
+
+// AnyIDInUse says whether any of list is in use on the instance.
+func (r *maintenanceRef) AnyIDInUse(ctx context.Context, list []ids.UUID) (bool, error) {
+	db, err := r.open(ctx)
+	if err != nil {
+		return false, err
+	}
 	return db.AnyIDInUse(ctx, list)
+}
+
+// Holdings is maintenance.DB.Holdings, as are the methods below, of the
+// personal-data export's personaldata.Reader.
+func (r *maintenanceRef) Holdings(ctx context.Context, user ids.UUID, email string) (personaldata.Holdings, error) {
+	db, err := r.open(ctx)
+	if err != nil {
+		return personaldata.Holdings{}, err
+	}
+	return db.Holdings(ctx, user, email)
+}
+
+func (r *maintenanceRef) Acted(ctx context.Context, user ids.UUID, until time.Time, after personaldata.AuditCursor,
+	limit int) ([]personaldata.AuditEntry, error) {
+	db, err := r.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return db.Acted(ctx, user, until, after, limit)
+}
+
+func (r *maintenanceRef) ActedOn(ctx context.Context, user ids.UUID, subjects []ids.UUID, until time.Time,
+	after personaldata.AuditCursor, limit int) ([]personaldata.AuditEntry, error) {
+	db, err := r.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return db.ActedOn(ctx, user, subjects, until, after, limit)
+}
+
+func (r *maintenanceRef) Comments(ctx context.Context, user, after ids.UUID, limit int) ([]personaldata.Comment,
+	error) {
+	db, err := r.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return db.Comments(ctx, user, after, limit)
+}
+
+func (r *maintenanceRef) Notifications(ctx context.Context, user, after ids.UUID, limit int) (
+	[]personaldata.Notification, error) {
+	db, err := r.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return db.Notifications(ctx, user, after, limit)
+}
+
+func (r *maintenanceRef) Attribution(ctx context.Context, user ids.UUID, a personaldata.Attribution, after ids.UUID,
+	limit int) ([]personaldata.Attributed, error) {
+	db, err := r.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return db.Attribution(ctx, user, a, after, limit)
 }
 
 // close closes the pool, if it was opened.

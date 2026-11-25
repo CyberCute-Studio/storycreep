@@ -123,8 +123,10 @@ WHERE id = @id AND email = @email AND status = 'active' AND email_verified_at IS
 
 -- name: SetPasswordHash :execrows
 -- SetPasswordHash replaces the hash of the active account's password, as
--- resetting the password does, whatever the hash was.
-UPDATE "user" SET password_hash = @password_hash, updated_at = now() WHERE id = @id AND status = 'active';
+-- resetting the password does, whatever the hash was, and records when the
+-- password was set, which the personal-data export holds (PRD §9.6).
+UPDATE "user" SET password_hash = @password_hash, password_changed_at = now(), updated_at = now()
+WHERE id = @id AND status = 'active';
 
 -- name: UserEmail :one
 -- UserEmail returns the address of an active account, and whether it is

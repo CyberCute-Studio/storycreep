@@ -24,7 +24,9 @@ const packageDir = "internal/maintenance"
 // package rather than being written in it. Adding one adds a caller of the
 // maintenance path, which the PRD must name first. The server's startup and
 // the command line open the pool, and hand the import's collision check (§5.2,
-// which returns one boolean) to package authoring as a function.
+// which returns one boolean) to package authoring as a function, and the
+// server's startup the personal-data export's reads (FR-GDPR-01), as a
+// personaldata.Reader.
 var allowedImporters = []string{"internal/httpserver", "internal/cli"}
 
 // guardedNames are the names, besides this package, through which code could

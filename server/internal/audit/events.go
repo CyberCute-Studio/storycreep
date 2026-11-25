@@ -223,6 +223,11 @@ const (
 	// account.
 	ActionInstanceAdminGrant  Action = "instance.admin_grant"
 	ActionInstanceAdminRevoke Action = "instance.admin_revoke"
+	// ActionPersonalDataExport is a user's request for an export of their own
+	// personal data (FR-GDPR-01), which holds their rows of every workspace,
+	// by its actor, the user. It belongs to no workspace, its subject is the
+	// account, and its metadata's export_id names the export.
+	ActionPersonalDataExport Action = "account.data_export"
 )
 
 // Result is how an event ended.
@@ -317,6 +322,19 @@ var events = []eventSpec{
 		metadata: []string{"reason", "scope"}},
 	{action: ActionInstanceAdminGrant, subject: "user", results: []Result{ResultSuccess}},
 	{action: ActionInstanceAdminRevoke, subject: "user", results: []Result{ResultSuccess}},
+	{action: ActionPersonalDataExport, subject: "user", results: []Result{ResultSuccess},
+		metadata: []string{"export_id"}},
+}
+
+// Actions returns every registered action, in the order of the registry, as
+// the personal-data export's labels of their actors are held to (package
+// personaldata).
+func Actions() []Action {
+	out := make([]Action, len(events))
+	for i, s := range events {
+		out[i] = s.action
+	}
+	return out
 }
 
 // lookup returns the registration of a, and false if a is not registered.

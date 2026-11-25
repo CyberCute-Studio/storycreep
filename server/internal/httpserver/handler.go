@@ -224,7 +224,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	})
 	s.authoring = authoring.New(readyDB{s.ready}, authoring.Options{Projects: s.projects, Queue: s.queue,
 		Storage: s.assets.Storage(), ImportMaxBytes: cfg.ImportMaxBytes, Assets: s.assets, Pipeline: s.commands,
-		IDsInUse: s.maintenance.AnyIDInUse, Log: log})
+		IDsInUse: s.maintenance.AnyIDInUse, Personal: s.maintenance, Log: log})
 	s.tokens = apitoken.New(readyDB{s.ready}, apitoken.Options{
 		Policy: role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},
 	})
@@ -311,6 +311,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerTextExport(s.main, s.snapshots)
 	registerAuthoringExports(s.main, s.authoring)
 	registerWorkspaceExports(s.main, s.authoring)
+	registerPersonalExports(s.main, s.authoring)
 	// One budget of memory for the two routes that hold a file's bytes.
 	uploads := newSlots(uploadSlots(max(s.assets.MaxBytes(), authoring.ChunkBytes)))
 	registerProjectImports(s.main, s.authoring, uploads)

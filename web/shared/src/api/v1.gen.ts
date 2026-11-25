@@ -2757,6 +2757,12 @@ export interface PageNotificationBody {
   next_cursor: string | null;
 }
 
+export interface PagePersonalExportBody {
+  items: Array<PersonalExportBody>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
 export interface PagePlayStateSummary {
   items: Array<PlayStateSummary>;
   /** The cursor of the next page, or null if this is the last page */
@@ -2851,6 +2857,25 @@ export interface PasswordBody {
 export interface PasswordResetBody {
   /** The email address of the account whose password to reset, in any case */
   email: string;
+}
+
+export interface PersonalExportBody {
+  /** Whether the archive holds personal data, which it always does. */
+  contains_personal_data: boolean;
+  /** When the export was asked for. */
+  created_at: string;
+  /** When the export and its file are deleted, seven days after it was asked for. */
+  expires_at: string;
+  /** The name that a ready archive is downloaded under. */
+  file_name?: string;
+  /** When its build ended. */
+  finished_at?: string;
+  /** The export's ID, a job's. */
+  id: string;
+  /** The archive's size, once it is ready. */
+  size_bytes?: number;
+  /** Where the export is: queued, building, ready, with a file to download, or failed. */
+  status: "queued" | "building" | "ready" | "failed";
 }
 
 export interface PlayStateBody {
@@ -4535,6 +4560,22 @@ export interface Operations {
     };
   };
   /**
+   * Export your personal data
+   *
+   * Asks for a zip of what the instance holds of the signed-in account, in the format of schema/personal-data/v1, and answers 202 with the export, queued, whose URL Location names. A job builds it, without an operator. The archive holds, from every workspace, whether or not the user is still a member of it, what PRD §9.6 says: the account and its credentials' metadata, its email links' metadata, sessions, API tokens, memberships and grants, the invitations to its address, the audit log's entries of what the user did, whole, and those of what others did to them, with the actor as a role alone, the comments that they wrote, their notifications, references to what they created or last changed, and the imported identities that stand for them (PRD FR-GDPR-01). The archive is kept for seven days. A user has one export on its way at a time, and another request is answered with 409 export_in_progress, whose details.export_id names it. Until the instance's first-run setup has completed, which may yet choose where files are stored, the answer is 403 setup_required, unless STORYCREEP_ASSET_STORAGE names where they are. Only the user who asked for an export reads it, signed in, and an export of anyone else, or one that has expired, is answered with 404 not_found. **The archive contains personal data**, all of it the user's: the account and its email address, the IP addresses and user agents of its sessions and of the audit log's entries of what the user did, and the comments that they wrote. It holds no password, no hash of one, and no secret of a session, an API token, or a link. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Exports share a rate limit of 60 an hour for each IP address, and 30 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.
+   */
+  createPersonalDataExport: {
+    input: {
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+    };
+    responses: {
+      202: PersonalExportBody;
+    };
+  };
+  /**
    * Create a project
    *
    * Creates a project in the workspace. Only an owner or an admin of the workspace may, and anyone else with a role in it is answered with 403 insufficient_role. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. A name, a description, or a default locale that its field does not allow is answered with 422 validation_failed, and a workspace that has as many projects as its plan allows with 409 limit_exceeded; archived projects and those in the trash do not count. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Requests that change something share a rate limit of 600 a minute for each IP address, and 300 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
@@ -4708,6 +4749,22 @@ export interface Operations {
         export_id: string;
         /** The project's ID */
         project_id: string;
+      };
+    };
+    responses: {
+      200: Blob;
+    };
+  };
+  /**
+   * Download a personal-data export
+   *
+   * Returns the archive of a ready export, as a zip, whose README and personal-data.json say what it holds, and Content-Disposition names it, as an attachment. An export that is not ready is answered with 409 export_not_ready, whose details.status says where it is. Only the user who asked for an export reads it, signed in, and an export of anyone else, or one that has expired, is answered with 404 not_found. **The archive contains personal data**, all of it the user's: the account and its email address, the IP addresses and user agents of its sessions and of the audit log's entries of what the user did, and the comments that they wrote. It holds no password, no hash of one, and no secret of a session, an API token, or a link. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). Exports share a rate limit of 60 an hour for each IP address, and 30 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is export, and whose Retry-After header says how many seconds to wait.
+   */
+  downloadPersonalDataExport: {
+    input: {
+      path: {
+        /** The export's ID */
+        export_id: string;
       };
     };
     responses: {
@@ -5121,6 +5178,22 @@ export interface Operations {
     responses: {
       200: Record<string, unknown>;
       304: undefined;
+    };
+  };
+  /**
+   * Read a personal-data export
+   *
+   * Returns the export: where its build is, and, once it is ready, the archive's size and its name. Only the user who asked for an export reads it, signed in, and an export of anyone else, or one that has expired, is answered with 404 not_found. **The archive contains personal data**, all of it the user's: the account and its email address, the IP addresses and user agents of its sessions and of the audit log's entries of what the user did, and the comments that they wrote. It holds no password, no hash of one, and no secret of a session, an API token, or a link. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). Requests that read share a rate limit of 1,200 a minute for each IP address, and 600 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getPersonalDataExport: {
+    input: {
+      path: {
+        /** The export's ID */
+        export_id: string;
+      };
+    };
+    responses: {
+      200: PersonalExportBody;
     };
   };
   /**
@@ -5797,6 +5870,24 @@ export interface Operations {
     };
     responses: {
       200: PageNotificationBody;
+    };
+  };
+  /**
+   * List your personal-data exports
+   *
+   * Lists the signed-in account's personal-data exports that have not expired, newest first. Only the user who asked for an export reads it, signed in, and an export of anyone else, or one that has expired, is answered with 404 not_found. **The archive contains personal data**, all of it the user's: the account and its email address, the IP addresses and user agents of its sessions and of the audit log's entries of what the user did, and the comments that they wrote. It holds no password, no hash of one, and no secret of a session, an API token, or a link. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). Requests that read share a rate limit of 1,200 a minute for each IP address, and 600 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listPersonalDataExports: {
+    input: {
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PagePersonalExportBody;
     };
   };
   /**
@@ -6846,6 +6937,7 @@ export const routes = {
   countUnreadNotifications: { method: "GET", path: "/api/v1/notifications/unread" },
   createAuthoringExport: { method: "POST", path: "/api/v1/projects/{project_id}/authoring-exports" },
   createInvite: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/invites" },
+  createPersonalDataExport: { method: "POST", path: "/api/v1/auth/account/data-exports" },
   createProject: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/projects" },
   createProjectImport: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/project-imports" },
   createProjectToken: { method: "POST", path: "/api/v1/projects/{project_id}/tokens" },
@@ -6855,6 +6947,7 @@ export const routes = {
   deleteProject: { method: "DELETE", path: "/api/v1/projects/{project_id}" },
   diffSnapshots: { method: "POST", path: "/api/v1/projects/{project_id}/diff" },
   downloadAuthoringExport: { method: "GET", path: "/api/v1/projects/{project_id}/authoring-exports/{export_id}/download", blob: true },
+  downloadPersonalDataExport: { method: "GET", path: "/api/v1/auth/account/data-exports/{export_id}/download", blob: true },
   downloadWorkspaceExport: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/exports/{export_id}/download", blob: true },
   duplicateProject: { method: "POST", path: "/api/v1/projects/{project_id}/duplicate" },
   exportDraft: { method: "GET", path: "/api/v1/projects/{project_id}/draft/export", blob: true },
@@ -6877,6 +6970,7 @@ export const routes = {
   getNode: { method: "GET", path: "/api/v1/projects/{project_id}/nodes/{node_id}" },
   getNodeStatistics: { method: "GET", path: "/api/v1/projects/{project_id}/nodes/{node_id}/statistics" },
   getOpenAPIDocument: { method: "GET", path: "/api/v1/openapi.json" },
+  getPersonalDataExport: { method: "GET", path: "/api/v1/auth/account/data-exports/{export_id}" },
   getPlayState: { method: "GET", path: "/api/v1/projects/{project_id}/play-states/{play_state_id}" },
   getProject: { method: "GET", path: "/api/v1/projects/{project_id}" },
   getProjectImport: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/project-imports/{import_id}" },
@@ -6911,6 +7005,7 @@ export const routes = {
   listMembers: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/members" },
   listNodeReferrers: { method: "GET", path: "/api/v1/projects/{project_id}/nodes/{node_id}/referenced-by" },
   listNotifications: { method: "GET", path: "/api/v1/notifications" },
+  listPersonalDataExports: { method: "GET", path: "/api/v1/auth/account/data-exports" },
   listPlayStates: { method: "GET", path: "/api/v1/projects/{project_id}/play-states" },
   listProjectGrants: { method: "GET", path: "/api/v1/projects/{project_id}/grants" },
   listProjectImports: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/project-imports" },
