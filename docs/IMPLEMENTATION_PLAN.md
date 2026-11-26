@@ -934,7 +934,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 ### Milestone N — Offline and PWA
 
 ### 88. Installable PWA shell
-**Status:** todo · **Depends on:** 60
+**Status:** done ([#104](https://github.com/CyberCute-Studio/storycreep/pull/104)) · **Depends on:** 60
 **PRD:** FR-OFF-01
 - Web app manifest and icons: `vite-plugin-pwa` writes the manifest of `web/app/src/pwa/manifest.ts`, which opens the installed app at `/app/`, and links it from the entry page; `web/app/scripts/icons.ts` renders the icons from the favicon (N95).
 - A Workbox shell cache versioned per build: the worker of `web/app/src/sw/sw.ts` keeps every other file of the build, and answers a navigation that the server answers with the entry page, by the paths of `schema/app-shell/paths.json`, with the shell that it keeps, before the network, with a nonce of its own. A new build's worker waits for the reload that the header offers, which does not break an edit in progress (`web/app/src/pwa/worker.ts` and `ShellControls.tsx`, N95). No stale API caching: the worker keeps no answer of the server's but the build's files.
