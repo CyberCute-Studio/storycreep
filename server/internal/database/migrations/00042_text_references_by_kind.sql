@@ -66,8 +66,12 @@ WITH named AS (
 	WHERE expression_id IS NULL
 	GROUP BY 1, 2, 3, 4
 )
-SELECT workspace_id, project_id, kind, id
-FROM names FULL JOIN indexed USING (workspace_id, project_id, kind, id)
+SELECT coalesce(names.workspace_id, indexed.workspace_id) AS workspace_id,
+	coalesce(names.project_id, indexed.project_id) AS project_id, coalesce(names.kind, indexed.kind) AS kind,
+	coalesce(names.id, indexed.id) AS id
+FROM names
+FULL JOIN indexed ON indexed.workspace_id = names.workspace_id AND indexed.project_id = names.project_id
+	AND indexed.kind = names.kind AND indexed.id = names.id
 WHERE names.n IS DISTINCT FROM indexed.n;
 
 -- The rows of each such owner.
