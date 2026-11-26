@@ -24,6 +24,7 @@ import {
 } from "@tanstack/react-query";
 import type { i18n as I18n } from "i18next";
 import type { ErrorLog } from "./errors/log";
+import { orKept } from "./offline/kept";
 
 /** The locale that the page is shown in, once requestsIn has been told it. */
 let pageLocale: string | undefined;
@@ -86,6 +87,15 @@ declare module "@tanstack/react-query" {
 }
 
 /**
+ * How a query that a page reads from the device once the server does not
+ * answer (offline/kept.ts) is read: whatever the browser says of its
+ * connection, rather than waiting, unsent, for it to come back, as TanStack
+ * Query's queries do by default once the browser has said that it has
+ * none, so that a page that goes offline reads it from the device at once.
+ */
+export const readOffline = { networkMode: "always" } as const;
+
+/**
  * The server's version, which the error console's reports name. The app asks
  * for it once, when it starts (requestVersion), and the console reads it
  * from the cache without asking (enabled: false), so that a report names the
@@ -110,9 +120,14 @@ export const versionQuery = queryOptions({
  */
 export const instanceQuery = queryOptions({
   queryKey: ["instance"],
-  queryFn: async ({ signal }): Promise<InstanceBody> =>
-    (await api.call("getInstance", {}, { signal })).body,
+  queryFn: ({ signal, client }): Promise<InstanceBody> =>
+    orKept(
+      client,
+      async () => (await api.call("getInstance", {}, { signal })).body,
+      async (kept) => (await kept.session())?.instance,
+    ),
   staleTime: Number.POSITIVE_INFINITY,
+  ...readOffline,
 });
 
 /**
@@ -174,8 +189,18 @@ export async function fetchSession(
  */
 export const sessionQuery = queryOptions({
   queryKey: ["session"],
-  queryFn: ({ signal }): Promise<SignedInBody | null> => fetchSession(signal),
+  // A page that the server does not answer, as offline, is signed in to the
+  // account that the device keeps the session of, which keeps projects
+  // offline (PRD FR-OFF-02): the page asks the server again once the
+  // browser is online (main.tsx).
+  queryFn: ({ signal, client }): Promise<SignedInBody | null> =>
+    orKept(
+      client,
+      () => fetchSession(signal),
+      async (kept) => (await kept.session())?.session,
+    ),
   ...readByThePage,
+  ...readOffline,
 });
 
 /**
@@ -185,9 +210,18 @@ export const sessionQuery = queryOptions({
  */
 export const accountQuery = queryOptions({
   queryKey: ["account"],
-  queryFn: async ({ signal }): Promise<AccountBody> =>
-    (await api.call("getAccount", {}, { signal })).body,
+  queryFn: ({ signal, client }): Promise<AccountBody> =>
+    orKept(
+      client,
+      async () => (await api.call("getAccount", {}, { signal })).body,
+      async (kept) => {
+        const session = await kept.session();
+        const userId = client.getQueryData(sessionQuery.queryKey)?.user_id;
+        return session?.user_id === userId ? session?.account : undefined;
+      },
+    ),
   ...readByThePage,
+  ...readOffline,
 });
 
 /**

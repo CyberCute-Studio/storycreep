@@ -1,0 +1,94 @@
+// The switch of a project's pages that makes the project available offline
+// (PRD FR-OFF-02), with what the device keeps of it: whether it downloads,
+// as of when the copy is, why it is kept, and why it could not be. Over
+// plain HTTP, where browsers give a page no service worker and no
+// persistent storage, it is unavailable, and says so (FR-OFF-01), as the
+// header's warning does with the link to how to serve the instance over
+// HTTPS.
+
+import { formatDateTime } from "@storycreep/shared/i18n";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
+import { CheckboxField } from "../ui/Field";
+import type { PinView } from "./keeper";
+import { useOnline } from "./online";
+import { useKeeper, useOffline } from "./react";
+
+/** Returns what the device keeps of pin, as the switch and the storage panel say it, in the locale of t's. */
+export function pinStatus(
+  pin: PinView | undefined,
+  online: boolean,
+  t: TFunction,
+  locale: string,
+): string {
+  if (pin === undefined) {
+    return t("offline.status.none");
+  }
+  const time =
+    pin.copy === undefined
+      ? undefined
+      : formatDateTime(locale, new Date(pin.copy.savedAt));
+  let status: string;
+  if (pin.status === "failed") {
+    const full = pin.failure === "quota";
+    status =
+      time === undefined
+        ? t(full ? "offline.status.full" : "offline.status.failed")
+        : t(
+            full
+              ? "offline.status.full_behind"
+              : "offline.status.failed_behind",
+            {
+              time,
+            },
+          );
+  } else if (pin.status === "ready" && time !== undefined) {
+    status = t("offline.status.ready", { time });
+  } else {
+    status = t(
+      online ? "offline.status.downloading" : "offline.status.waiting",
+    );
+  }
+  return pin.auto && !pin.chosen
+    ? `${status} ${t("offline.status.last_opened")}`
+    : status;
+}
+
+/** The project of projectId's switch of keeping it offline, named name. */
+export function OfflineSwitch({
+  projectId,
+  name,
+}: {
+  projectId: string;
+  name: string;
+}) {
+  const { t, i18n } = useTranslation();
+  const keeper = useKeeper();
+  const available = useOffline((s) => s.available);
+  const pin = useOffline((s) => s.pins.get(projectId));
+  const online = useOnline();
+  if (keeper === undefined) {
+    return null;
+  }
+  const hint =
+    available === false
+      ? t(
+          keeper.options.secure
+            ? "offline.unavailable_storage"
+            : "offline.unavailable_insecure",
+        )
+      : pinStatus(pin, online, t, i18n.language);
+  return (
+    <CheckboxField
+      label={t("offline.switch")}
+      hint={hint}
+      checked={pin?.chosen ?? false}
+      disabled={available !== true}
+      onChange={(event) =>
+        void (event.currentTarget.checked
+          ? keeper.pin(projectId, name)
+          : keeper.unchoose(projectId))
+      }
+    />
+  );
+}

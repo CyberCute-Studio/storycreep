@@ -29,6 +29,7 @@ import {
   type BranchOutput,
   type CommandBody,
   type CommandResultBody,
+  NetworkError,
   type ProjectBody,
   type UndoCommandBody,
 } from "@storycreep/shared/api";
@@ -69,6 +70,7 @@ import {
   type Project,
   partOf,
   placeOf,
+  projectOf,
   typeOfAttribute,
 } from "./doc";
 import { Follower } from "./follow";
@@ -500,12 +502,37 @@ export interface DocumentOptions {
   storage?: Storage;
   /** Returns the time now, as the server writes it. */
   now?: () => string;
+  /**
+   * The device's copies of the projects that the account keeps offline
+   * (PRD FR-OFF-02, offline/keeper.ts), which the document starts from
+   * where the device has one (start); none if not set.
+   */
+  copies?: CopySource;
+  /**
+   * Reports whether the browser says that it has a connection, as
+   * navigator.onLine does, without which the document reads nothing anew
+   * (refresh); always, if not set.
+   */
+  online?: () => boolean;
 }
 
-/** Returns the project of body, as the document holds it. */
-function projectOf(body: { role?: unknown; seq?: unknown } & Project): Project {
-  const { role: _role, seq: _seq, ...project } = body;
-  return project as Project;
+/** A copy of a project that the device keeps, as a document starts from it (PRD FR-OFF-02). */
+export interface StartingCopy {
+  /** The document as of the copy's seq, holding the parts that the copy holds. */
+  doc: Doc;
+  /** The token of the copy's write, which the next write of it compares with the one that it was made on (offline/db.ts). */
+  version: string;
+  /** About how many bytes the copy takes. */
+  bytes: number;
+}
+
+/** Where a document finds the copy of its project that the device keeps (DocumentOptions.copies). */
+export interface CopySource {
+  /** Resolves to the copy of projectId that the device keeps for userId, or to undefined for none, without rejecting. */
+  readCopy(
+    userId: string,
+    projectId: string,
+  ): Promise<StartingCopy | undefined>;
 }
 
 /**
@@ -765,6 +792,10 @@ export class ProjectDocument {
   private readonly comments: Follower;
   private unsubscribe: (() => void) | undefined;
   private disposed = false;
+  /** The copy of the project that the device keeps that the document started from, if it did (start). */
+  private startedFrom: StartingCopy | undefined;
+  /** Whether the real-time channel has been live since the document subscribed. */
+  private wasLive = false;
 
   constructor(projectId: string, options: DocumentOptions) {
     this.projectId = projectId;
@@ -823,6 +854,35 @@ export class ProjectDocument {
     return this.confirmed;
   }
 
+  /** The copy of the project that the device keeps that the document started from, or undefined if it started from the server alone. */
+  get copy(): StartingCopy | undefined {
+    return this.startedFrom;
+  }
+
+  /**
+   * Reports whether the document has read the project, and has nothing left
+   * to read from the server of what it holds: no part, component, or entity
+   * that a read, or a reading anew, is under way of, or waits to be read, as
+   * one whose change an operation's appliers could not know, which it holds
+   * at the operation's revision, as they predicted it, until the read has
+   * corrected it. What the document holds then is what the server had as of
+   * its seq, which the device's copy of it may be written of (offline/keeper.ts).
+   */
+  get settled(): boolean {
+    return (
+      this.started &&
+      !this.startFailed &&
+      !this.disposed &&
+      this.buffer === undefined &&
+      this.resyncing === undefined &&
+      this.partReads === 0 &&
+      this.seqChecks === 0 &&
+      this.toRead.size === 0 &&
+      !this.reading &&
+      this.rereads.size === 0
+    );
+  }
+
   /** Reads the project, as start does, and records once it has, or has failed to. */
   private begin(): Promise<void> {
     const starting = this.start();
@@ -877,13 +937,45 @@ export class ProjectDocument {
   }
 
   private async start(): Promise<void> {
+    // The copy of the project that the device keeps, where it keeps one
+    // (PRD FR-OFF-02), read while the project is, which the document starts
+    // from, holding every part that it holds as of its seq, whose
+    // operations since the channel brings, as it does those of a document
+    // that the socket missed, rather than have the parts read anew. A copy
+    // of a seq past the project's is of what the server no longer has, as a
+    // database restored from an older backup, and is passed over.
+    const copying =
+      this.userId === undefined || this.options.copies === undefined
+        ? undefined
+        : this.options.copies
+            .readCopy(this.userId, this.projectId)
+            .catch(() => undefined);
     const body = await this.options.queryClient.ensureQueryData(
       projectQuery(this.projectId),
     );
+    const copy = await copying;
     if (this.disposed) {
       return;
     }
-    this.confirmed = { ...emptyDoc(body.seq), project: projectOf(body) };
+    if (
+      copy !== undefined &&
+      copy.doc.seq <= body.seq &&
+      copy.doc.project?.id === this.projectId
+    ) {
+      this.startedFrom = copy;
+      this.confirmed = copy.doc;
+      // A part that a page asked for meanwhile waits for this, and finds
+      // that the document holds it (load).
+      for (const part of copy.doc.parts) {
+        if (!this.loads.has(part)) {
+          const read = Promise.resolve();
+          this.loads.set(part, read);
+          this.finished.add(read);
+        }
+      }
+    } else {
+      this.confirmed = { ...emptyDoc(body.seq), project: projectOf(body) };
+    }
     // A read of the project as of a seq before the steps of the history, kept
     // over a reload, may be one that the query client kept from before them,
     // or of a database restored from an older backup since, behind them,
@@ -943,6 +1035,8 @@ export class ProjectDocument {
         // once the socket is back, are not sent again.
         if (!live) {
           this.answeredAt.clear();
+        } else {
+          this.wasLive = true;
         }
         this.store.setState({ live });
         // The answers to the page's batches past what the document has, as
@@ -972,6 +1066,50 @@ export class ProjectDocument {
     // An undo that waits for the document to have the operations up to the
     // batch that it undoes, as of a history kept over a reload, has them.
     this.settle();
+    // A copy behind what the server has is brought up to it by the
+    // channel, once it is live; where it is not live a while after, as
+    // behind a proxy that refuses the socket, or does not bring them, the
+    // project is read anew, rather than shown as the copy has it.
+    if (this.startedFrom !== undefined && body.seq > this.confirmed.seq) {
+      const behind = body.seq;
+      void this.whenLive(confirmWait)
+        .then(() => this.whenConfirmed(behind, confirmWait))
+        .then(() => {
+          if (
+            !this.disposed &&
+            this.confirmed.seq < behind &&
+            !this.store.getState().live &&
+            this.buffer === undefined
+          ) {
+            void this.resync(behind);
+          }
+        });
+    }
+  }
+
+  /**
+   * Resolves once the real-time channel is live, or has been since the
+   * document subscribed, or after wait milliseconds, whichever comes first,
+   * leaving no timer, nor listener, behind (whenConfirmed).
+   */
+  private whenLive(wait: number): Promise<void> {
+    if (this.wasLive || this.store.getState().live) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      let stop = () => {};
+      const done = () => {
+        stop();
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(done, wait);
+      stop = this.store.subscribe((state) => {
+        if (state.live || this.disposed) {
+          done();
+        }
+      });
+    });
   }
 
   /**
@@ -1014,6 +1152,12 @@ export class ProjectDocument {
       const watcher = this.watch(this.confirmed.seq);
       try {
         await this.whenReady();
+        // The device's copy that the document started from holds the part,
+        // as a page asked for it before the copy had been read, which the
+        // document keeps current from then on.
+        if (this.startedFrom !== undefined && this.confirmed.parts.has(part)) {
+          return;
+        }
         const since = this.confirmed.seq;
         watcher.since = since;
         generation = this.generation;
@@ -1089,10 +1233,23 @@ export class ProjectDocument {
    * opened, and resolves once it has, or has failed to, which has the
    * project read anew, and records it (readFailed). The document is busy
    * meanwhile, so that it is not dropped under the loader that waits.
+   * While the browser has no connection, it reads nothing, and resolves at
+   * once: what the document holds, as the device's copy of the project, is
+   * what there is to show, and the channel brings what changed once the
+   * browser is online again (PRD FR-OFF-02). A document that started from
+   * the copy waits a while for the channel first, which brings what changed
+   * since the copy's seq, rather than read the part anew because the
+   * socket is still being opened, as while the page loads.
    */
   async refresh(part?: Part): Promise<void> {
+    if (!this.isOnline()) {
+      return;
+    }
     this.refreshes++;
     try {
+      if (this.startedFrom !== undefined) {
+        await this.whenLive(confirmWait);
+      }
       if (this.store.getState().live && this.buffer === undefined) {
         await this.whenConfirmed(this.subscribedTo, confirmWait);
         // The project read anew meanwhile, as once the server's seq went back
@@ -2137,9 +2294,21 @@ export class ProjectDocument {
     if (sessionDoubtedBy(error)) {
       this.options.checkSession?.();
     }
-    if (record && !signedOutBy(error)) {
+    // A request that no answer came to while the browser has no connection
+    // is no error of the app's: the device's copy is what the page shows
+    // then (PRD FR-OFF-02).
+    if (
+      record &&
+      !signedOutBy(error) &&
+      !(error instanceof NetworkError && !this.isOnline())
+    ) {
       this.options.log.record("request", error);
     }
+  }
+
+  /** Reports whether the browser says that it has a connection (DocumentOptions.online). */
+  private isOnline(): boolean {
+    return this.options.online?.() ?? true;
   }
 
   /** The project can no longer be read: the project's pages show the page of no page. */

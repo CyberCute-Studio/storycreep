@@ -12,6 +12,13 @@ import { useTranslation } from "react-i18next";
 import { requireSession } from "../auth/session";
 import { useCommandHandlers } from "../commands/registry";
 import { useDocumentState, useProjectDocument } from "../document/react";
+import {
+  NeedsConnection,
+  OfflineNotice,
+  offlinePages,
+} from "../offline/OfflinePages";
+import { OfflineSwitch } from "../offline/OfflineSwitch";
+import { useOnline } from "../offline/online";
 import { HistoryOwned, LayoutHistory } from "../project/History";
 import { editsProject, managesProject, projectQuery } from "../project/queries";
 import { askSearchFocus, forgetSearchFocus } from "../search/focus";
@@ -102,6 +109,18 @@ function ProjectPages({ projectId }: { projectId: string }) {
   });
   const navigate = useNavigate();
   const router = useRouter();
+  // The project is the last that the account opened on the device, which
+  // the device keeps offline (PRD FR-OFF-02).
+  const keeper = router.options.context.offline;
+  useEffect(() => {
+    keeper?.opened(projectId, project.name);
+  }, [keeper, projectId, project.name]);
+  // Offline, a page that reads the server alone says that it needs a
+  // connection, in place of a page that would wait for it.
+  const connected = useOnline();
+  const offlinePage = useChildMatches({
+    select: (matches) => matches.some((m) => offlinePages.has(m.routeId)),
+  });
   // The focus that the search's command asked for its page is forgotten
   // once a page that is not the search's has been shown in its place, as
   // one whose navigation overtook the search's, or once the project's
@@ -303,8 +322,10 @@ function ProjectPages({ projectId }: { projectId: string }) {
               : t("project.archived")}
           </p>
         )}
+        <OfflineSwitch projectId={projectId} name={project.name} />
+        {!connected && <OfflineNotice projectId={projectId} />}
       </div>
-      <Outlet />
+      {connected || offlinePage ? <Outlet /> : <NeedsConnection />}
     </div>
   );
 }

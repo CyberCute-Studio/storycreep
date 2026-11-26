@@ -24,6 +24,10 @@ import { captureGlobalErrors, rootErrorOptions } from "./errors/capture";
 import { errorLog } from "./errors/log";
 import { createAppI18n } from "./i18n";
 import { cspNonce } from "./nonce";
+import { copySource, OfflineDatabase } from "./offline/db";
+import { OfflineKeeper, tabsBroadcast, writerLock } from "./offline/keeper";
+import { keepReads } from "./offline/kept";
+import { onConnection, online } from "./offline/online";
 import { startShell } from "./pwa/worker";
 import { createAppRouter } from "./router";
 import "./styles.css";
@@ -57,13 +61,36 @@ const realtime = createRealtime({
   log: errorLog,
   window,
 });
+// What the device keeps of the projects that the account keeps offline
+// (PRD FR-OFF-02), which a project's document starts from, and which the
+// page's queries read once the server does not answer, as offline, in a
+// secure context alone, which a page over plain HTTP is not (FR-OFF-01).
+const secure = window.isSecureContext;
+const offlineDb = new OfflineDatabase();
 const documents = new Documents({
   queryClient,
   realtime,
   log: errorLog,
   checkSession: () => void session.check(),
   storage: tabStorage(),
+  copies: copySource(offlineDb, secure),
+  online: () => online(),
 });
+const offline = new OfflineKeeper({
+  queryClient,
+  documents,
+  log: errorLog,
+  db: offlineDb,
+  secure,
+  online: () => online(),
+  onConnection: (listener) => onConnection(listener),
+  lock: writerLock(navigator),
+  broadcast: secure ? tabsBroadcast() : undefined,
+  storage: navigator.storage,
+});
+if (secure) {
+  keepReads(queryClient, offline.reads);
+}
 /**
  * How long, in milliseconds, a reload for a new version of the app waits
  * at most for the page's batches and saves, which the server answers in far
@@ -91,6 +118,7 @@ const router = createAppRouter({
   documents,
   realtime,
   pwa,
+  offline,
 });
 // A page whose session has ended elsewhere, or that another tab signed in
 // to another account, or to one, shows itself again, through the guards of
@@ -100,6 +128,15 @@ const session = followSession(
   document,
   sessionChanges(queryClient, router),
 );
+// A page that started offline from the session that the device keeps, which
+// has no CSRF token, asks the server for its own once the browser is online
+// again, and so does any other, whose session may have ended meanwhile.
+onConnection((connected) => {
+  if (connected) {
+    void session.check();
+  }
+});
+offline.start();
 /**
  * Returns the tab's session storage, which keeps the undo histories over a
  * reload (PRD FR-EDIT-08 AC3), or undefined where the browser refuses it, as

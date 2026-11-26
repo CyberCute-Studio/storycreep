@@ -21,6 +21,7 @@ import { Route as SignupRouteImport } from './routes/signup'
 import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as AccountIndexRouteImport } from './routes/account.index'
 import { Route as AccountDataRouteImport } from './routes/account.data'
+import { Route as AccountOfflineRouteImport } from './routes/account.offline'
 import { Route as AccountSessionsRouteImport } from './routes/account.sessions'
 import { Route as AccountTokensRouteImport } from './routes/account.tokens'
 import { Route as ProjectsIndexRouteImport } from './routes/projects.index'
@@ -105,6 +106,11 @@ const AccountIndexRoute = AccountIndexRouteImport.update({
 const AccountDataRoute = AccountDataRouteImport.update({
   id: '/data',
   path: '/data',
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountOfflineRoute = AccountOfflineRouteImport.update({
+  id: '/offline',
+  path: '/offline',
   getParentRoute: () => AccountRoute,
 } as any)
 const AccountSessionsRoute = AccountSessionsRouteImport.update({
@@ -261,6 +267,7 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/verify-email': typeof VerifyEmailRoute
   '/account/data': typeof AccountDataRoute
+  '/account/offline': typeof AccountOfflineRoute
   '/account/sessions': typeof AccountSessionsRoute
   '/account/tokens': typeof AccountTokensRoute
   '/projects/$projectId': typeof ProjectsProjectIdRouteWithChildren
@@ -299,6 +306,7 @@ export interface FileRoutesByTo {
   '/signup': typeof SignupRoute
   '/verify-email': typeof VerifyEmailRoute
   '/account/data': typeof AccountDataRoute
+  '/account/offline': typeof AccountOfflineRoute
   '/account/sessions': typeof AccountSessionsRoute
   '/account/tokens': typeof AccountTokensRoute
   '/account': typeof AccountIndexRoute
@@ -337,6 +345,7 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/verify-email': typeof VerifyEmailRoute
   '/account/data': typeof AccountDataRoute
+  '/account/offline': typeof AccountOfflineRoute
   '/account/sessions': typeof AccountSessionsRoute
   '/account/tokens': typeof AccountTokensRoute
   '/projects/$projectId': typeof ProjectsProjectIdRouteWithChildren
@@ -378,6 +387,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/verify-email'
     | '/account/data'
+    | '/account/offline'
     | '/account/sessions'
     | '/account/tokens'
     | '/projects/$projectId'
@@ -416,6 +426,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/verify-email'
     | '/account/data'
+    | '/account/offline'
     | '/account/sessions'
     | '/account/tokens'
     | '/account'
@@ -453,6 +464,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/verify-email'
     | '/account/data'
+    | '/account/offline'
     | '/account/sessions'
     | '/account/tokens'
     | '/projects/$projectId'
@@ -581,6 +593,13 @@ declare module '@tanstack/react-router' {
       path: '/data'
       fullPath: '/account/data'
       preLoaderRoute: typeof AccountDataRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    '/account/offline': {
+      id: '/account/offline'
+      path: '/offline'
+      fullPath: '/account/offline'
+      preLoaderRoute: typeof AccountOfflineRouteImport
       parentRoute: typeof AccountRoute
     }
     '/account/sessions': {
@@ -763,6 +782,7 @@ declare module '@tanstack/react-router' {
 
 interface AccountRouteChildren {
   AccountDataRoute: typeof AccountDataRoute
+  AccountOfflineRoute: typeof AccountOfflineRoute
   AccountSessionsRoute: typeof AccountSessionsRoute
   AccountTokensRoute: typeof AccountTokensRoute
   AccountIndexRoute: typeof AccountIndexRoute
@@ -770,6 +790,7 @@ interface AccountRouteChildren {
 
 const AccountRouteChildren: AccountRouteChildren = {
   AccountDataRoute: AccountDataRoute,
+  AccountOfflineRoute: AccountOfflineRoute,
   AccountSessionsRoute: AccountSessionsRoute,
   AccountTokensRoute: AccountTokensRoute,
   AccountIndexRoute: AccountIndexRoute,

@@ -18,11 +18,19 @@ import {
   queryOptions,
   useMutation,
 } from "@tanstack/react-query";
-import { allAtOnce, api, everyPage, pagedQuery } from "../api";
+import {
+  allAtOnce,
+  api,
+  everyPage,
+  pagedQuery,
+  readOffline,
+  sessionQuery,
+} from "../api";
 import type { Part } from "../document/doc";
 import type { Documents } from "../document/documents";
 import { useProjectDocument } from "../document/react";
 import type { Command, ProjectDocument } from "../document/store";
+import { orKept } from "../offline/kept";
 import { found } from "../shell/found";
 
 export type { Command } from "../document/store";
@@ -33,14 +41,28 @@ export function projectQuery(projectId: string) {
     queryKey: ["projects", projectId],
     // A project that the user may not see shows the page of no page.
     meta: { showsRefusals: true },
-    queryFn: async ({ signal }): Promise<ProjectBody> =>
-      (
-        await api.call(
-          "getProject",
-          { path: { project_id: projectId } },
-          { signal },
-        )
-      ).body,
+    // A page that the server does not answer, as offline, reads the project
+    // of the device's copy of it, with the role that the account had on it,
+    // where the device keeps one (PRD FR-OFF-02).
+    queryFn: ({ signal, client }): Promise<ProjectBody> =>
+      orKept(
+        client,
+        async () =>
+          (
+            await api.call(
+              "getProject",
+              { path: { project_id: projectId } },
+              { signal },
+            )
+          ).body,
+        async (kept) => {
+          const userId = client.getQueryData(sessionQuery.queryKey)?.user_id;
+          return userId === undefined
+            ? undefined
+            : kept.project(userId, projectId);
+        },
+      ),
+    ...readOffline,
   });
 }
 

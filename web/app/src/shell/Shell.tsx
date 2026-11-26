@@ -2,7 +2,8 @@
 // content, the header, which warns of a page that travels unencrypted (PRD
 // NFR-SEC-15), and says then that the app runs online alone, with a link to
 // how to serve it over HTTPS (FR-OFF-01), offers to install the app while
-// the browser does, and says that a new version is ready, opens the command
+// the browser does, and says that a new version is ready, and which project
+// the device's storage could not keep offline (FR-OFF-02), opens the command
 // palette (FR-EDIT-10), leads to the account's notifications with how many
 // are unread (FR-COMMENT-02), names the signed-in account, and signs it
 // out, and the content, as the page's
@@ -29,6 +30,7 @@ import { CommandsProvider } from "../commands/registry";
 import { ErrorConsoleButton } from "../errors/ErrorConsole";
 import { NotificationsLink } from "../notifications/NotificationsLink";
 import { useNotificationListener } from "../notifications/queries";
+import { OfflineNotices } from "../offline/OfflineNotices";
 import { PRODUCT_NAME, TLS_DOCS_URL } from "../product";
 import { InstallButton, UpdateNotice } from "../pwa/ShellControls";
 import { Button } from "../ui/Button";
@@ -83,6 +85,7 @@ export function Shell({ children }: { children: ReactNode }) {
               </div>
             </div>
             {pwa && <UpdateNotice shell={pwa} />}
+            <OfflineNotices />
             <Alert
               message={failure}
               className="border-t border-border px-4 py-3 text-danger"
