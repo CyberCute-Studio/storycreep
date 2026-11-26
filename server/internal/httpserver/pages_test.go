@@ -3,6 +3,7 @@ package httpserver
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -234,6 +235,58 @@ func TestPagesOfBundle(t *testing.T) {
 		}
 		if strings.Contains(string(res.body), "<script") {
 			t.Errorf("GET %s: the entry page, which a browser would not run as the script it asked for", path)
+		}
+	}
+}
+
+// TestShellPaths checks the paths of schema/app-shell/paths.json, which the
+// web app's service worker runs too (web/app/src/sw/shell.ts): the server
+// answers each of entry with the entry page, which the worker answers a
+// navigation to it with, from its cache, and each of other otherwise, which
+// the worker passes on to the server.
+func TestShellPaths(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "schema", "app-shell", "paths.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths struct {
+		Entry []string `json:"entry"`
+		Other []string `json:"other"`
+	}
+	if err := json.Unmarshal(data, &paths); err != nil {
+		t.Fatal(err)
+	}
+	if len(paths.Entry) == 0 || len(paths.Other) == 0 {
+		t.Fatal("schema/app-shell/paths.json: entry and other must each name a path")
+	}
+	page := []byte(`<!doctype html><script type="module" src="/app/assets/index-abc.js" nonce="` +
+		noncePlaceholder + `"></script>`)
+	app := fstest.MapFS{
+		"index.html":           {Data: page},
+		"favicon.svg":          {Data: []byte("<svg></svg>")},
+		"manifest.webmanifest": {Data: []byte("{}")},
+		"sw.js":                {Data: []byte("export {};")},
+		"icons/icon-192.png":   {Data: []byte("png")},
+		"assets/index-abc.js":  {Data: []byte("export {};")},
+	}
+	m := api.NewMux(api.MuxOptions{
+		Middleware: []func(http.Handler) http.Handler{securityHeaders(false)},
+	})
+	registerPages(m, app, fstest.MapFS{"index.html": {Data: []byte("site")}}, false, nil)
+	// Only the entry page has a policy with a nonce.
+	isEntry := func(res response) bool {
+		return res.status == http.StatusOK && entryNonce.MatchString(res.header.Get("Content-Security-Policy"))
+	}
+	for _, p := range paths.Entry {
+		res := do(m, http.MethodGet, p, nil)
+		if !isEntry(res) {
+			t.Errorf("GET %s: status %d, want the entry page: %s", p, res.status, res.body)
+		}
+	}
+	for _, p := range paths.Other {
+		res := do(m, http.MethodGet, p, nil)
+		if isEntry(res) {
+			t.Errorf("GET %s: the entry page, which schema/app-shell/paths.json says the server does not answer it with", p)
 		}
 	}
 }

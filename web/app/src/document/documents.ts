@@ -17,6 +17,7 @@ import { sessionQuery } from "../api";
 import type { ErrorLog } from "../errors/log";
 import { type ClipboardStore, createClipboard } from "./clipboard";
 import type { Realtime } from "./realtime";
+import { whenSent } from "./sent";
 import { ProjectDocument } from "./store";
 import { clearHistories } from "./undo";
 
@@ -173,6 +174,19 @@ export class Documents {
       this.held.delete(projectId);
       held.doc.dispose();
     }
+  }
+
+  /**
+   * Resolves once no document sends any of the page's batches, or once wait
+   * milliseconds have passed, as before the page reloads for a new version
+   * of the app (PRD FR-OFF-01), so that a batch that the user made just
+   * before is not cut off on its way.
+   */
+  async whenSent(wait: number): Promise<void> {
+    const signal = new AbortController().signal;
+    await Promise.all(
+      [...this.held.values()].map((held) => whenSent(held.doc, signal, wait)),
+    );
   }
 
   /** Drops every document. */

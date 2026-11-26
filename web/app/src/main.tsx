@@ -23,6 +23,7 @@ import { captureGlobalErrors, rootErrorOptions } from "./errors/capture";
 import { errorLog } from "./errors/log";
 import { createAppI18n } from "./i18n";
 import { cspNonce } from "./nonce";
+import { startShell } from "./pwa/worker";
 import { createAppRouter } from "./router";
 import "./styles.css";
 
@@ -62,12 +63,26 @@ const documents = new Documents({
   checkSession: () => void session.check(),
   storage: tabStorage(),
 });
+/**
+ * How long, in milliseconds, a reload for a new version of the app waits
+ * at most for the page's batches, which the server answers in far less.
+ */
+const reloadWait = 10_000;
+
+// The app's service worker, which the build has, and the browser's offer
+// to install the app (PRD FR-OFF-01). Its reload for a new version waits a
+// while for the batches that the page is sending.
+const pwa = startShell(window, {
+  register: import.meta.env.PROD,
+  beforeReload: () => documents.whenSent(reloadWait),
+});
 const router = createAppRouter({
   queryClient,
   i18n,
   checkSession: () => session.check(),
   documents,
   realtime,
+  pwa,
 });
 // A page whose session has ended elsewhere, or that another tab signed in
 // to another account, or to one, shows itself again, through the guards of

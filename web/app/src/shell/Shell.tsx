@@ -1,8 +1,11 @@
 // The frame of every page of the app: a link that skips to the page's
 // content, the header, which warns of a page that travels unencrypted (PRD
-// NFR-SEC-15), opens the command palette (FR-EDIT-10), leads to the
-// account's notifications with how many are unread (FR-COMMENT-02), names
-// the signed-in account, and signs it out, and the content, as the page's
+// NFR-SEC-15), and says then that the app runs online alone, with a link to
+// how to serve it over HTTPS (FR-OFF-01), offers to install the app while
+// the browser does, and says that a new version is ready, opens the command
+// palette (FR-EDIT-10), leads to the account's notifications with how many
+// are unread (FR-COMMENT-02), names the signed-in account, and signs it
+// out, and the content, as the page's
 // main landmark, which gets the focus once the control that had it goes
 // (keepFocusOnPage). The page's commands are registered within it
 // (CommandsProvider), whose keys act wherever the focus is on the page, and
@@ -10,7 +13,7 @@
 // while the page is signed in (useNotificationListener).
 
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import {
   createContext,
   type ReactNode,
@@ -26,7 +29,8 @@ import { CommandsProvider } from "../commands/registry";
 import { ErrorConsoleButton } from "../errors/ErrorConsole";
 import { NotificationsLink } from "../notifications/NotificationsLink";
 import { useNotificationListener } from "../notifications/queries";
-import { PRODUCT_NAME } from "../product";
+import { PRODUCT_NAME, TLS_DOCS_URL } from "../product";
+import { InstallButton, UpdateNotice } from "../pwa/ShellControls";
 import { Button } from "../ui/Button";
 import { Alert } from "../ui/Page";
 import { CONTENT_ID, keepFocusOnPage, skipToContent } from "./focus";
@@ -41,6 +45,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const signOut = useSignOut();
   const failure = signOutFailure(signOut, session, t);
   const frame = useRef<HTMLDivElement>(null);
+  const pwa = useRouter().options.context.pwa;
   useEffect(() => {
     const element = frame.current;
     return element === null ? undefined : keepFocusOnPage(element);
@@ -72,10 +77,12 @@ export function Shell({ children }: { children: ReactNode }) {
                 {PRODUCT_NAME}
               </Link>
               <div className="ms-auto flex flex-wrap items-center gap-2">
+                {pwa && <InstallButton shell={pwa} />}
                 <SignedInControls signOut={signOut} />
                 <ErrorConsoleButton />
               </div>
             </div>
+            {pwa && <UpdateNotice shell={pwa} />}
             <Alert
               message={failure}
               className="border-t border-border px-4 py-3 text-danger"
@@ -93,7 +100,12 @@ export function Shell({ children }: { children: ReactNode }) {
 
 /**
  * The warning of a page served over plain HTTP from another machine, which
- * every page shows at its top, before anything else of it.
+ * every page shows at its top, before anything else of it: such a page is
+ * not a secure context, where browsers give it no service worker, so it
+ * says too that installing the app, keeping projects offline, and editing
+ * offline are unavailable, and links to how to serve the instance over
+ * HTTPS (PRD FR-OFF-01), in a new tab, which is not told the instance's
+ * address.
  */
 function UnencryptedWarning() {
   const { t } = useTranslation();
@@ -101,7 +113,15 @@ function UnencryptedWarning() {
     <div className="bg-danger px-4 py-3 text-danger-fg">
       <p>
         <strong>{t("shell.unencrypted.title")}</strong>{" "}
-        {t("shell.unencrypted.body")}
+        {t("shell.unencrypted.body")}{" "}
+        <a
+          href={TLS_DOCS_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline underline-offset-2"
+        >
+          {t("shell.unencrypted.tls")}
+        </a>
       </p>
     </div>
   );

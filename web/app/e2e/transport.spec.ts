@@ -1,5 +1,7 @@
 import { networkInterfaces } from "node:os";
 import type { Browser, BrowserContext, Page } from "@playwright/test";
+import { newId } from "@storycreep/shared/ids";
+import { apply, createProject, firstWorkspace, sessionOf } from "./content.ts";
 import { port } from "./environment.ts";
 import {
   atStart,
@@ -19,7 +21,10 @@ import { type Instance, startInstance } from "./instance.ts";
 // certificate, whose session cookie is sc_session, without Secure, and whose
 // pages warn that they travel unencrypted; and HTTPS through a proxy that
 // terminates TLS and passes plain HTTP on to the instance, whose public URL
-// is https, and whose cookie is __Host-sc_session, Secure. Each test starts
+// is https, and whose cookie is __Host-sc_session, Secure. Over plain HTTP,
+// the tool runs online alone (FR-OFF-01): it edits and syncs, registers no
+// service worker, which browsers give such a page none of, and says why.
+// Each test starts
 // an instance of its own, on a new database, whose first-run setup it
 // completes through the setup screen.
 
@@ -96,13 +101,21 @@ async function sessionCookie(context: BrowserContext) {
 
 /**
  * Opens a page of a new context of browser at the instance's URL, whose
- * violations of the Content-Security-Policy refused records.
+ * violations of the Content-Security-Policy refused records, with the
+ * page's service worker allowed, rather than blocked as the other tests
+ * block it, if serviceWorkers says so.
  */
-async function open(browser: Browser, instance: Instance, refused: string[]) {
+async function open(
+  browser: Browser,
+  instance: Instance,
+  refused: string[],
+  serviceWorkers: "allow" | "block" = "block",
+) {
   const context = await browser.newContext({
     baseURL: instance.url,
     // The proxy's certificate is its own, which no browser trusts.
     ignoreHTTPSErrors: true,
+    serviceWorkers,
   });
   const page = await context.newPage();
   await watchPolicy(page, refused);
@@ -135,8 +148,8 @@ test.describe("the session over each transport", () => {
     test.setTimeout(180_000);
   });
 
-  // Verifies: FR-AUTH-02/AC6, NFR-SEC-15
-  test("first-run setup and signing in over plain HTTP at a LAN address keep the session, and every page warns", async ({
+  // Verifies: FR-AUTH-02/AC6, NFR-SEC-15, FR-OFF-01/AC4
+  test("first-run setup and signing in over plain HTTP at a LAN address keep the session, every page warns, and the tool edits and syncs online alone", async ({
     browser,
     refused,
   }) => {
@@ -148,7 +161,13 @@ test.describe("the session over each transport", () => {
     });
     try {
       expect(instance.url).toMatch(/^http:\/\/\d+\.\d+\.\d+\.\d+:\d+$/);
-      const { context, page } = await open(browser, instance, refused);
+      // The worker is allowed, so that nothing but the browser keeps the
+      // page from registering it.
+      const { context, page } = await open(browser, instance, refused, "allow");
+      const thrown: string[] = [];
+      page.on("pageerror", (error) => {
+        thrown.push(error.stack ?? String(error));
+      });
       try {
         await setUpAndSignIn(page, instance);
         await keepsSession(page);
@@ -169,6 +188,78 @@ test.describe("the session over each transport", () => {
         await expect(
           page.getByText(en["shell.unencrypted.title"]),
         ).toBeVisible();
+
+        // The tool runs online alone: the page is no secure context, which
+        // browsers give no service worker, and registers none, and the
+        // warning says that installing the app and its offline features
+        // need HTTPS, with a link to how to serve the instance over it.
+        await atStart(page, setupOwner.name);
+        expect(
+          await page.evaluate(() => [
+            window.isSecureContext,
+            "serviceWorker" in navigator,
+          ]),
+        ).toEqual([false, false]);
+        await expect(
+          page.getByText(en["shell.unencrypted.body"]),
+        ).toBeVisible();
+        const tls = page.getByRole("link", {
+          name: en["shell.unencrypted.tls"],
+        });
+        await expect(tls).toHaveAttribute(
+          "href",
+          "https://github.com/CyberCute-Studio/storycreep/blob/main/deploy/README.md#behind-a-reverse-proxy",
+        );
+        await expect(tls).toHaveAttribute("target", "_blank");
+        await expect(tls).toHaveAttribute("rel", "noopener noreferrer");
+        await expect(
+          page.getByRole("button", { name: en["shell.install"] }),
+        ).toHaveCount(0);
+
+        // It syncs: a board that another session makes shows in the page's
+        // tree, over the real-time channel; and it edits: the description
+        // that the page saves reaches the server.
+        const session = await sessionOf(page.request);
+        const workspace = await firstWorkspace(page.request);
+        const projectId = await createProject(
+          page.request,
+          session,
+          workspace.id,
+          "Harbour",
+        );
+        await page.goto(`/app/projects/${projectId}`);
+        await expect(
+          page.getByRole("button", {
+            name: en["boards.new_board"],
+            exact: true,
+          }),
+        ).toBeVisible();
+        const boardId = newId("board");
+        await apply(page.request, session, projectId, [
+          { type: "board.create", payload: { id: boardId, name: "Quay" } },
+        ]);
+        await press(page.getByRole("link", { name: "Quay", exact: true }));
+        await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+          "Quay",
+        );
+        await press(page.getByLabel(en["board.description"], { exact: true }));
+        await page.keyboard.type("Where the boats come in");
+        await press(page.getByRole("button", { name: en["board.save"] }));
+        await expect(page.getByText(en["board.saved"])).toBeVisible();
+        const res = await page.request.get(
+          `/api/v1/projects/${projectId}/boards/${boardId}`,
+        );
+        expect(res.status(), await res.text()).toBe(200);
+        expect(
+          ((await res.json()) as { description: string }).description,
+        ).toBe("Where the boats come in");
+
+        // Nothing was thrown, of registering a worker or of anything else,
+        // and the error console has nothing.
+        expect(thrown).toEqual([]);
+        await expect(
+          page.getByRole("button", { name: /^Errors: / }),
+        ).toHaveAccessibleName("Errors: none");
       } finally {
         await context.close();
       }

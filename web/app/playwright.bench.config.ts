@@ -34,7 +34,13 @@ export default defineConfig({
   timeout: 15 * 60_000,
   reporter: process.env.CI === undefined ? "list" : [["list"], ["html"]],
   outputDir: "test-results/bench",
-  use: { baseURL: benchBase, trace: "retain-on-failure" },
+  use: {
+    baseURL: benchBase,
+    trace: "retain-on-failure",
+    // The app's service worker would keep every file of the build as a run
+    // starts, which the run would measure too (playwright.config.ts).
+    serviceWorkers: "block",
+  },
   projects: [
     { name: "setup", testMatch: /fixtures\.setup\.ts/, timeout: 30 * 60_000 },
     {

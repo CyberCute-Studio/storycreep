@@ -7,6 +7,7 @@ import { createRouter, parseSearchWith } from "@tanstack/react-router";
 import type { i18n as I18n } from "i18next";
 import type { Documents } from "./document/documents";
 import type { Realtime } from "./document/realtime";
+import type { AppShell } from "./pwa/worker";
 import { routeTree } from "./routeTree.gen";
 import { focusContentIfLost } from "./shell/focus";
 
@@ -33,6 +34,12 @@ export interface RouterContext {
    * (FR-COMMENT-02), or none, as in a test that gives none.
    */
   realtime?: Realtime;
+  /**
+   * The page's side of the app's service worker, and of installing the app
+   * (PRD FR-OFF-01), whose offer and notice of a new version the header
+   * shows, or none, as in a test that gives none.
+   */
+  pwa?: AppShell;
 }
 
 /**

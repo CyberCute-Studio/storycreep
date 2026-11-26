@@ -7,7 +7,9 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type ProxyOptions } from "vite";
+import { VitePWA } from "vite-plugin-pwa";
 import { hoverCheck } from "./lint/hover.ts";
+import { webManifest } from "./src/pwa/manifest.ts";
 
 /**
  * Where the build goes: the directory that the server's binary embeds when
@@ -104,6 +106,37 @@ export default defineConfig({
     react(),
     tailwindcss(),
     hoverCheck(),
+    // The service worker of src/sw/sw.ts, built into sw.js with the list of
+    // every file of the build, which it keeps for the app's shell (PRD
+    // FR-OFF-01, plan note N95), and the web app manifest, which index.html
+    // links to. The page registers the worker itself (src/pwa/worker.ts),
+    // and only in the build: the development server has none.
+    VitePWA({
+      strategies: "injectManifest",
+      srcDir: "src/sw",
+      filename: "sw.ts",
+      injectRegister: false,
+      manifest: webManifest,
+      // Every file of the build is in the list once: the plugin adds the
+      // manifest itself, and the icons, unless told not to.
+      includeManifestIcons: false,
+      injectManifest: {
+        globPatterns: ["**/*"],
+        globIgnores: ["manifest.webmanifest"],
+        // The list names the entry page by the path that the server answers
+        // with it, /app/, rather than by the file's name, which the server
+        // redirects to /app/.
+        manifestTransforms: [
+          (entries) => ({
+            manifest: entries.map((e) =>
+              e.url === "index.html" ? { ...e, url: "./" } : e,
+            ),
+            warnings: [],
+          }),
+        ],
+      },
+      devOptions: { enabled: false },
+    }),
   ],
   html: { cspNonce },
   // Vite would write a small image or font as a data: URL, which the entry

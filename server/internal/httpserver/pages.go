@@ -98,9 +98,13 @@ func typeOf(name string) fileType {
 // request as without a session. The tool's entry page is served for every
 // path under /app/ that is not a file of its bundle, but for one that names a
 // file, whose last segment has an extension, as a file of an older bundle
-// does, so that the app's router shows the page of a link to it. Until plan
-// item 108 builds the site, its home page is a placeholder, and that item adds
-// the routes that it needs.
+// does, so that the app's router shows the page of a link to it. The app's
+// service worker answers a navigation under /app/ with the entry page that it
+// keeps where this answers with the entry page, by the paths of
+// schema/app-shell/paths.json, which TestShellPaths runs, so a change of which
+// paths those are changes the file and the worker's answersWithShell
+// (web/app/src/sw/shell.ts) too. Until plan item 108 builds the site, its
+// home page is a placeholder, and that item adds the routes that it needs.
 func registerPages(m *api.Mux, app, site fs.FS, publicSite bool, land lander) {
 	entry, err := fs.ReadFile(app, "index.html")
 	if err != nil {
@@ -181,8 +185,11 @@ func entryPolicy(nonce string) string {
 // serveEntry answers with the tool's entry page, page, whose nonce
 // placeholders hold a new nonce, which the response's Content-Security-Policy
 // allows. The nonce is 130 random bits, as base32, whose letters and digits
-// are among those of a nonce's base64 (CSP Level 3). The page is never
-// stored, since each response has a nonce of its own.
+// are among those of a nonce's base64 (CSP Level 3). No HTTP cache stores the
+// page, since each response has a nonce of its own; the app's service worker
+// keeps it, and gives each of its own answers of it a new nonce, of the same
+// form, in place of this one, in the page and in the policy alike
+// (web/app/src/sw/shell.ts).
 func serveEntry(w http.ResponseWriter, page []byte) {
 	nonce := rand.Text()
 	body := bytes.ReplaceAll(page, []byte(noncePlaceholder), []byte(nonce))
