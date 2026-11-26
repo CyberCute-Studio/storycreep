@@ -120,6 +120,14 @@ export async function readBoard(
   );
   const doc = context.documents.get(project.id);
   await read(doc.load("tree"));
+  // A document that started from the device's copy of the project holds
+  // what the project had as of the copy, as a board deleted since, until the
+  // channel has brought it what changed: it is brought up to date first,
+  // while the browser is online, as offline the copy is what there is (PRD
+  // FR-OFF-02).
+  if (doc.copy !== undefined) {
+    await doc.refresh("tree").catch(() => undefined);
+  }
   const has = () => doc.store.getState().view.boards.has(boardId);
   if (!has()) {
     await doc.refresh();

@@ -5,6 +5,7 @@
 // too, so that no console could show it, while what they leave to run later
 // runs after this file has run.
 
+import { onlineManager } from "@tanstack/react-query";
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import { setNonce } from "get-nonce";
 import { StrictMode } from "react";
@@ -40,6 +41,12 @@ const nonce = cspNonce(document);
 if (nonce !== undefined) {
   setNonce(nonce);
 }
+
+// TanStack Query takes a page for online until the browser says otherwise,
+// which a page that loads offline, as the installed app opened on a flight,
+// it never does: told now, its reads wait for the connection, rather than
+// fail, but for those that the device keeps (offline/kept.ts).
+onlineManager.setOnline(online());
 
 const i18n = createAppI18n(navigator.languages, document.documentElement);
 requestsIn(i18n);

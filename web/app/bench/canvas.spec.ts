@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import type { CDPSession, Page, TestInfo } from "@playwright/test";
 import { test } from "../e2e/boards.ts";
-import { expect } from "../e2e/fixtures.ts";
+import { en, expect } from "../e2e/fixtures.ts";
 import type { BenchResult } from "../src/canvas/bench.tsx";
 import { type BenchBoard, benchBoards, resultsDir } from "./state.ts";
 
@@ -11,7 +11,8 @@ import { type BenchBoard, benchBoards, resultsDir } from "./state.ts";
 // and whose network is a LAN's. The runner is not the reference tablet nor
 // the reference desktop, and draws WebGL in software, so the runs report
 // the frame rates of NFR-PERF-01, NFR-PERF-02, and FR-EDIT-01 AC3, and the
-// tablet's load time of NFR-PERF-04, which the reference tablet's checklist
+// tablet's load times of NFR-PERF-04 and, of a project that the device keeps
+// offline (plan item 90), NFR-PERF-03, which the reference tablet's checklist
 // holds to their targets (docs/canvas-checklist.md); they hold the runner
 // to what it can tell: that drawing is bounded by what the canvas shows
 // (FR-EDIT-11 AC1), that panning does not grow the heap (FR-EDIT-11 AC2,
@@ -155,6 +156,42 @@ test.describe("the canvas's benchmark", () => {
     if (!tablet(info)) {
       expect(r.rendered ?? Number.POSITIVE_INFINITY).toBeLessThan(limit);
     }
+  });
+
+  // Verifies: NFR-PERF-03
+  test("the first frame of a board of a project kept offline, from the start of the page's load", async ({
+    page,
+  }, info) => {
+    const boards = benchBoards();
+    const board = boards.medium;
+    // The project is made available offline, and its copy written to the
+    // device, as before a flight, without the emulation, which the run
+    // alone is of.
+    await page.goto(`/app/projects/${board.projectId}`);
+    const offline = page.getByRole("checkbox", { name: en["offline.switch"] });
+    await offline.check();
+    await expect(page.getByText(/^On this device/)).toBeVisible({
+      timeout: 600_000,
+    });
+    await emulate(page, info);
+    // The page loaded anew reads the board's content from the copy, rather
+    // than from the server, which it is told of by the channel.
+    const reads: string[] = [];
+    page.on("request", (request) => {
+      if (/\/boards\/[^/]+\/(nodes|connections)\b/.test(request.url())) {
+        reads.push(request.url());
+      }
+    });
+    const r = await result(await start(page, board, { bench: "load" }), 0);
+    expect(r.rendered).toBeDefined();
+    expect(reads).toEqual([]);
+    await report(
+      info,
+      "NFR-PERF-03",
+      "medium",
+      r,
+      `first frame ${ms(r.rendered)} from the device's copy (target < 2000 ms)`,
+    );
   });
 
   // Verifies: NFR-PERF-01, NFR-PERF-02, FR-EDIT-01/AC3

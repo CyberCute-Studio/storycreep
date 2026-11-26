@@ -21,7 +21,7 @@
 
 import type { QueryClient } from "@tanstack/react-query";
 import { createStore, type StoreApi } from "zustand/vanilla";
-import { accountQuery, instanceQuery, sessionQuery } from "../api";
+import { accountQuery, instanceQuery, notFoundBy, sessionQuery } from "../api";
 import type { Documents } from "../document/documents";
 import { inTurns, type ProjectDocument } from "../document/store";
 import { unreadOf } from "../document/whole";
@@ -142,6 +142,8 @@ export class OfflineKeeper {
   readonly now: () => string;
   /** The projects whose copies this tab keeps, once it is the writer, by their IDs. */
   private readonly kept = new Map<string, Kept>();
+  /** Why the copy of each project that the tab could not write was not written, which the device may not have been able to keep (failed). */
+  private readonly failures = new Map<string, PinFailure>();
   private writer = false;
   /** The account whose records the device keeps, null once the page is signed out, undefined until the session is known. */
   private followed: string | null | undefined;
@@ -190,9 +192,14 @@ export class OfflineKeeper {
         if (key === sessionQuery.queryKey[0]) {
           this.follow();
         } else if (
-          key === accountQuery.queryKey[0] ||
-          key === instanceQuery.queryKey[0]
+          (key === accountQuery.queryKey[0] ||
+            key === instanceQuery.queryKey[0]) &&
+          event.type === "updated" &&
+          event.action.type === "success"
         ) {
+          // What the device keeps of them follows what the page reads, as a
+          // change of the account's name, but not each component that reads
+          // them as it mounts.
           this.enqueue(() => this.saveSession());
         }
       }),
@@ -302,18 +309,26 @@ export class OfflineKeeper {
     });
   }
 
-  /** Records that the copy of projectId could not be written, and why, which the page shows. */
+  /**
+   * Records that the copy of projectId could not be written, and why, which
+   * the page shows: in the tab, and on the device for the other tabs, where
+   * it can, as a device whose storage is full may refuse even that.
+   */
   async failed(projectId: string, failure: PinFailure): Promise<void> {
     const userId = this.store.getState().userId;
     if (userId === undefined) {
       return;
     }
-    await this.db.setStatus(userId, projectId, "failed", failure);
+    this.failures.set(projectId, failure);
+    await this.db
+      .setStatus(userId, projectId, "failed", failure)
+      .catch(() => undefined);
     await this.changed();
   }
 
   /** Records that the copy of projectId has been written, which the page shows. */
-  async wrote(): Promise<void> {
+  async wrote(projectId: string): Promise<void> {
+    this.failures.delete(projectId);
     await this.saveSession();
     await this.changed();
   }
@@ -350,6 +365,9 @@ export class OfflineKeeper {
         return;
       }
       const pin = await this.db.changePin(userId, projectId, change);
+      if (pin === undefined) {
+        this.failures.delete(projectId);
+      }
       // A copy that the browser's quota refused is tried again once another
       // project's copy has gone, which may have made room for it.
       if (pin === undefined) {
@@ -389,6 +407,7 @@ export class OfflineKeeper {
         kept.stop();
       }
       this.kept.clear();
+      this.failures.clear();
       this.store.setState({ userId: undefined, pins: new Map() });
       if (!(await this.ready())) {
         return;
@@ -435,13 +454,14 @@ export class OfflineKeeper {
     const views = new Map<string, PinView>();
     for (const pin of pins) {
       const copy = byProject.get(pin.project_id);
+      const failure = this.failures.get(pin.project_id) ?? pin.failure;
       views.set(pin.project_id, {
         projectId: pin.project_id,
         name: pin.name,
         chosen: pin.chosen,
         auto: pin.auto,
-        status: pin.status,
-        ...(pin.failure === undefined ? {} : { failure: pin.failure }),
+        status: this.failures.has(pin.project_id) ? "failed" : pin.status,
+        ...(failure === undefined ? {} : { failure }),
         ...(copy === undefined
           ? {}
           : {
@@ -627,10 +647,16 @@ class Kept {
       return;
     }
     try {
-      await doc.ready;
-    } catch {
-      // The page shows the failure where it reads the project; it is tried
-      // again a while after.
+      // Reads the project again where its first read failed, as the
+      // document's ready would not.
+      await doc.load("tree");
+    } catch (error) {
+      // A project that the account can no longer read, as one in the trash,
+      // is kept no more; another failure is tried again a while after.
+      if (notFoundBy(error)) {
+        await this.keeper.forget(this.projectId);
+        return;
+      }
       this.failedNow();
       return;
     }
@@ -731,6 +757,6 @@ class Kept {
     }
     this.written = written;
     this.notBefore = 0;
-    await this.keeper.wrote();
+    await this.keeper.wrote(this.projectId);
   }
 }

@@ -1247,7 +1247,10 @@ export class ProjectDocument {
     }
     this.refreshes++;
     try {
-      if (this.startedFrom !== undefined) {
+      if (
+        this.startedFrom !== undefined &&
+        this.options.realtime !== undefined
+      ) {
         await this.whenLive(confirmWait);
       }
       if (this.store.getState().live && this.buffer === undefined) {

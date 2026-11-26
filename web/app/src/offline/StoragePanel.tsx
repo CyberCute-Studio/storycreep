@@ -117,12 +117,7 @@ export function StoragePanel() {
                         })}
                   </p>
                   <p className="text-sm text-fg-muted">
-                    {pinStatus(
-                      { ...pin, auto: false },
-                      online,
-                      t,
-                      i18n.language,
-                    )}
+                    {pinStatus(pin, online, t, i18n.language)}
                   </p>
                 </div>
                 <Button

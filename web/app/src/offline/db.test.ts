@@ -5,7 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boardPart, type Doc, emptyDoc } from "../document/doc";
 import { testProject, testWorkspace } from "../test/fake";
 import type { Workspace } from "../workspace/queries";
-import { type CopyRecord, OfflineDatabase, overQuota, type PinRecord } from "./db";
+import {
+  type CopyRecord,
+  OfflineDatabase,
+  overQuota,
+  type PinRecord,
+} from "./db";
 
 // The device's database of what it keeps offline (PRD FR-OFF-02), over the
 // IndexedDB of fake-indexeddb: a copy written whole and read back as the
@@ -71,7 +76,9 @@ function docOf(seq: number, boards: Board[], nodes: Node[]): Doc {
   };
 }
 
-function recordOf(seq: number): Omit<CopyRecord, "version" | "bytes" | "parts"> {
+function recordOf(
+  seq: number,
+): Omit<CopyRecord, "version" | "bytes" | "parts"> {
   return {
     user_id: user,
     project_id: testProject.id,
@@ -102,14 +109,21 @@ describe("the device's copies", () => {
   // Verifies: FR-OFF-02/AC1
   it("reads a copy back as the document that was written, every part of it", async () => {
     await pin();
-    const doc = docOf(7, [board("bd_a"), board("bd_b")], [node("nd_1", "bd_a")]);
+    const doc = docOf(
+      7,
+      [board("bd_a"), board("bd_b")],
+      [node("nd_1", "bd_a")],
+    );
     const written = await db.writeCopy(recordOf(7), doc, undefined);
     expect(written?.doc).toBe(doc);
     const copy = await db.readCopy(user, testProject.id);
     expect(copy?.doc.seq).toBe(7);
     expect(copy?.doc.project?.id).toBe(testProject.id);
     expect(copy?.doc.project).not.toHaveProperty("role");
-    expect([...(copy?.doc.boards.keys() ?? [])].sort()).toEqual(["bd_a", "bd_b"]);
+    expect([...(copy?.doc.boards.keys() ?? [])].sort()).toEqual([
+      "bd_a",
+      "bd_b",
+    ]);
     expect(copy?.doc.nodes.get("nd_1")).toEqual(node("nd_1", "bd_a"));
     expect([...(copy?.doc.parts ?? [])].sort()).toEqual(
       ["board:bd_a", "board:bd_b", "tree"].sort(),
@@ -122,26 +136,40 @@ describe("the device's copies", () => {
 
   it("writes what changed alone on the write that it was made on, and the whole document otherwise", async () => {
     await pin();
-    const first = docOf(1, [board("bd_a"), board("bd_b")], [node("nd_1", "bd_a"), node("nd_2", "bd_a")]);
+    const first = docOf(
+      1,
+      [board("bd_a"), board("bd_b")],
+      [node("nd_1", "bd_a"), node("nd_2", "bd_a")],
+    );
     const one = await db.writeCopy(recordOf(1), first, undefined);
     const second: Doc = {
       ...first,
       seq: 2,
       boards: new Map([["bd_a", board("bd_a", 2)]]),
-      nodes: new Map([["nd_1", first.nodes.get("nd_1") as Node], ["nd_3", node("nd_3", "bd_a")]]),
+      nodes: new Map([
+        ["nd_1", first.nodes.get("nd_1") as Node],
+        ["nd_3", node("nd_3", "bd_a")],
+      ]),
       parts: new Set(["tree", "board:bd_a"]),
     };
     const two = await db.writeCopy(recordOf(2), second, one);
     let copy = await db.readCopy(user, testProject.id);
     expect(copy?.doc.seq).toBe(2);
     expect([...(copy?.doc.boards.values() ?? [])]).toEqual([board("bd_a", 2)]);
-    expect([...(copy?.doc.nodes.keys() ?? [])].sort()).toEqual(["nd_1", "nd_3"]);
+    expect([...(copy?.doc.nodes.keys() ?? [])].sort()).toEqual([
+      "nd_1",
+      "nd_3",
+    ]);
     expect(copy?.record.bytes).toBe(two?.bytes);
 
     // A write made on a write that the device no longer has, as of another
     // tab that wrote since, writes the whole document, without what the
     // copy held besides.
-    const stale: Doc = { ...second, seq: 3, nodes: new Map([["nd_9", node("nd_9", "bd_a")]]) };
+    const stale: Doc = {
+      ...second,
+      seq: 3,
+      nodes: new Map([["nd_9", node("nd_9", "bd_a")]]),
+    };
     await db.writeCopy(recordOf(3), stale, one);
     copy = await db.readCopy(user, testProject.id);
     expect([...(copy?.doc.nodes.keys() ?? [])]).toEqual(["nd_9"]);
@@ -167,22 +195,34 @@ describe("the device's copies", () => {
       ...args: Parameters<IDBObjectStore["put"]>
     ) {
       if (++puts === 3) {
-        throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+        throw new DOMException(
+          "The quota has been exceeded.",
+          "QuotaExceededError",
+        );
       }
       return put.apply(this, args);
     });
     const bigger = docOf(
       2,
       [board("bd_a", 2)],
-      [node("nd_1", "bd_a", 2), node("nd_2", "bd_a"), node("nd_3", "bd_a"), node("nd_4", "bd_a")],
+      [
+        node("nd_1", "bd_a", 2),
+        node("nd_2", "bd_a"),
+        node("nd_3", "bd_a"),
+        node("nd_4", "bd_a"),
+      ],
     );
-    const failure = await db.writeCopy(recordOf(2), bigger, undefined).catch((e: unknown) => e);
+    const failure = await db
+      .writeCopy(recordOf(2), bigger, undefined)
+      .catch((e: unknown) => e);
     expect(overQuota(failure)).toBe(true);
     vi.restoreAllMocks();
     const copy = await db.readCopy(user, testProject.id);
     expect(copy?.doc.seq).toBe(1);
     expect(copy?.record.version).toBe(one?.version);
-    expect([...(copy?.doc.nodes.values() ?? [])]).toEqual([node("nd_1", "bd_a")]);
+    expect([...(copy?.doc.nodes.values() ?? [])]).toEqual([
+      node("nd_1", "bd_a"),
+    ]);
 
     // A first write refused leaves no copy at all.
     await db.changePin(user, "prj_other", () => pinOf(user, "prj_other"));
@@ -192,12 +232,17 @@ describe("the device's copies", () => {
       ...args: Parameters<IDBObjectStore["put"]>
     ) {
       if (++puts === 2) {
-        throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+        throw new DOMException(
+          "The quota has been exceeded.",
+          "QuotaExceededError",
+        );
       }
       return put.apply(this, args);
     });
     const other = { ...recordOf(1), project_id: "prj_other" };
-    await expect(db.writeCopy(other, bigger, undefined)).rejects.toThrow("quota");
+    await expect(db.writeCopy(other, bigger, undefined)).rejects.toThrow(
+      "quota",
+    );
     vi.restoreAllMocks();
     expect(await db.readCopy(user, "prj_other")).toBeUndefined();
     expect(await db.copies(user)).toHaveLength(1);
@@ -208,10 +253,24 @@ describe("the device's pins", () => {
   // Verifies: FR-OFF-02/AC3
   it("takes a pin out with its copy once it is neither chosen nor the last opened", async () => {
     await pin({ ...pinOf(), auto: true });
-    await db.writeCopy(recordOf(1), docOf(1, [board("bd_a")], [node("nd_1", "bd_a")]), undefined);
-    await db.changePin(user, testProject.id, (p) => p && { ...p, chosen: false });
+    await db.writeCopy(
+      recordOf(1),
+      docOf(1, [board("bd_a")], [node("nd_1", "bd_a")]),
+      undefined,
+    );
+    await db.changePin(
+      user,
+      testProject.id,
+      (p) => p && { ...p, chosen: false },
+    );
     expect(await db.readCopy(user, testProject.id)).toBeDefined();
-    expect(await db.changePin(user, testProject.id, (p) => p && { ...p, auto: false })).toBeUndefined();
+    expect(
+      await db.changePin(
+        user,
+        testProject.id,
+        (p) => p && { ...p, auto: false },
+      ),
+    ).toBeUndefined();
     expect(await db.pins(user)).toEqual([]);
     expect(await db.copies(user)).toEqual([]);
     const tx = (await db.open()).transaction("entities");
@@ -221,7 +280,10 @@ describe("the device's pins", () => {
   it("keeps the status of a pin, and why it failed, until a write succeeds", async () => {
     await pin();
     await db.setStatus(user, testProject.id, "failed", "quota");
-    expect((await db.pins(user))[0]).toMatchObject({ status: "failed", failure: "quota" });
+    expect((await db.pins(user))[0]).toMatchObject({
+      status: "failed",
+      failure: "quota",
+    });
     await db.writeCopy(recordOf(1), docOf(1, [], []), undefined);
     const after = (await db.pins(user))[0];
     expect(after.status).toBe("ready");
@@ -233,13 +295,28 @@ describe("the device's records of each account", () => {
   it("takes out every account's records but the one kept, or every one's", async () => {
     for (const u of ["usr_jo", "usr_kim"]) {
       await pin(pinOf(u));
-      await db.writeCopy({ ...recordOf(1), user_id: u }, docOf(1, [board("bd_a")], []), undefined);
+      await db.writeCopy(
+        { ...recordOf(1), user_id: u },
+        docOf(1, [board("bd_a")], []),
+        undefined,
+      );
       await db.putSession({
         user_id: u,
         session: { user_id: u, csrf_token: "", session: {} as never },
-        account: { id: u, email: `${u}@example.com`, display_name: u, email_verified: true },
-        instance: { email_configured: false, setup_pending: false, signup_policy: "open", default_locale: "en" },
-        saved_at: u === "usr_jo" ? "2026-11-26T10:00:00Z" : "2026-11-26T11:00:00Z",
+        account: {
+          id: u,
+          email: `${u}@example.com`,
+          display_name: u,
+          email_verified: true,
+        },
+        instance: {
+          email_configured: false,
+          setup_pending: false,
+          signup_policy: "open",
+          default_locale: "en",
+        },
+        saved_at:
+          u === "usr_jo" ? "2026-11-26T10:00:00Z" : "2026-11-26T11:00:00Z",
       });
     }
     expect((await db.session())?.user_id).toBe("usr_kim");

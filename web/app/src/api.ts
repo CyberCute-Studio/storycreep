@@ -9,6 +9,7 @@ import {
   ApiError,
   createApiClient,
   type InstanceBody,
+  NetworkError,
   type SignedInBody,
   type VersionBody,
 } from "@storycreep/shared/api";
@@ -25,6 +26,7 @@ import {
 import type { i18n as I18n } from "i18next";
 import type { ErrorLog } from "./errors/log";
 import { orKept } from "./offline/kept";
+import { online as browserOnline } from "./offline/online";
 
 /** The locale that the page is shown in, once requestsIn has been told it. */
 let pageLocale: string | undefined;
@@ -481,6 +483,11 @@ export function createQueryClient(
       options.checkSession?.();
     }
     if (signedOutBy(error)) {
+      return;
+    }
+    // A request that got no answer while the browser has no connection is
+    // no error of the app's (PRD FR-OFF-02).
+    if (error instanceof NetworkError && !browserOnline()) {
       return;
     }
     if (

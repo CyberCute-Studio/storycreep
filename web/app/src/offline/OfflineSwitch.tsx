@@ -14,7 +14,12 @@ import type { PinView } from "./keeper";
 import { useOnline } from "./online";
 import { useKeeper, useOffline } from "./react";
 
-/** Returns what the device keeps of pin, as the switch and the storage panel say it, in the locale of t's. */
+/**
+ * Returns what the device keeps of pin, as the switch and the storage panel
+ * say it, in the locale of t's: a short line, which the switch's hint holds
+ * whatever the status, so that the page under it does not move as the
+ * status changes, as while the user drags in it.
+ */
 export function pinStatus(
   pin: PinView | undefined,
   online: boolean,
@@ -43,15 +48,18 @@ export function pinStatus(
             },
           );
   } else if (pin.status === "ready" && time !== undefined) {
-    status = t("offline.status.ready", { time });
+    status = t(
+      pin.auto && !pin.chosen
+        ? "offline.status.ready_last"
+        : "offline.status.ready",
+      { time },
+    );
   } else {
     status = t(
       online ? "offline.status.downloading" : "offline.status.waiting",
     );
   }
-  return pin.auto && !pin.chosen
-    ? `${status} ${t("offline.status.last_opened")}`
-    : status;
+  return status;
 }
 
 /** The project of projectId's switch of keeping it offline, named name. */

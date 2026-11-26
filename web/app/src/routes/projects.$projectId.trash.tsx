@@ -9,6 +9,7 @@ import type { TFunction } from "i18next";
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
+import { online } from "../offline/online";
 import {
   type Command,
   editsProject,
@@ -23,6 +24,11 @@ import { Alert, Page, Status } from "../ui/Page";
 export const Route = createFileRoute("/projects/$projectId/trash")({
   // The project comes first, as for the tree of its boards.
   loader: async ({ context: { queryClient }, params }) => {
+    // Offline, the project's pages say that this page needs a connection, in
+    // its place, rather than wait for its reads (offline/OfflinePages.tsx).
+    if (!online()) {
+      return;
+    }
     const project = await found(
       queryClient.ensureQueryData(projectQuery(params.projectId)),
     );

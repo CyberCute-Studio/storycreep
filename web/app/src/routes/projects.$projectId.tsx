@@ -4,10 +4,11 @@ import {
   Link,
   Outlet,
   useChildMatches,
+  useLocation,
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { requireSession } from "../auth/session";
 import { useCommandHandlers } from "../commands/registry";
@@ -17,7 +18,6 @@ import {
   OfflineNotice,
   offlinePages,
 } from "../offline/OfflinePages";
-import { OfflineSwitch } from "../offline/OfflineSwitch";
 import { useOnline } from "../offline/online";
 import { HistoryOwned, LayoutHistory } from "../project/History";
 import { editsProject, managesProject, projectQuery } from "../project/queries";
@@ -110,17 +110,33 @@ function ProjectPages({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
   const router = useRouter();
   // The project is the last that the account opened on the device, which
-  // the device keeps offline (PRD FR-OFF-02).
+  // the device keeps offline (PRD FR-OFF-02), but for a run of the canvas's
+  // benchmark, which the download would compete with, as it records nothing
+  // of what the device showed last either (lastOpened.ts).
   const keeper = router.options.context.offline;
+  const benchRun = useLocation({
+    select: (l) => (l.search as { bench?: unknown }).bench !== undefined,
+  });
   useEffect(() => {
-    keeper?.opened(projectId, project.name);
-  }, [keeper, projectId, project.name]);
+    if (!benchRun) {
+      keeper?.opened(projectId, project.name);
+    }
+  }, [keeper, projectId, project.name, benchRun]);
   // Offline, a page that reads the server alone says that it needs a
   // connection, in place of a page that would wait for it.
   const connected = useOnline();
   const offlinePage = useChildMatches({
     select: (matches) => matches.some((m) => offlinePages.has(m.routeId)),
   });
+  // A page of the server's that loaded offline, which read nothing, reads
+  // once the browser is online again.
+  const wasConnected = useRef(connected);
+  useEffect(() => {
+    if (connected && !wasConnected.current && !offlinePage) {
+      void router.invalidate();
+    }
+    wasConnected.current = connected;
+  }, [connected, offlinePage, router]);
   // The focus that the search's command asked for its page is forgotten
   // once a page that is not the search's has been shown in its place, as
   // one whose navigation overtook the search's, or once the project's
@@ -322,7 +338,6 @@ function ProjectPages({ projectId }: { projectId: string }) {
               : t("project.archived")}
           </p>
         )}
-        <OfflineSwitch projectId={projectId} name={project.name} />
         {!connected && <OfflineNotice projectId={projectId} />}
       </div>
       {connected || offlinePage ? <Outlet /> : <NeedsConnection />}

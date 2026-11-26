@@ -4,12 +4,13 @@
 // the revision that the page showed as the user asked for it.
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { type ChangeEvent, useId } from "react";
+import { type ChangeEvent, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
 import { useProjectDocument } from "../document/react";
+import { useOnline } from "../offline/online";
 import type { Command } from "../project/queries";
 import { Button } from "../ui/Button";
 import { Alert } from "../ui/Page";
@@ -91,16 +92,24 @@ export function AssetImage({
     );
   };
   const pending = image.isPending;
+  // The image that could not be loaded, as offline.
+  const [unloaded, setUnloaded] = useState<string>();
+  const online = useOnline();
   const refusal = refusalOf(image.error, t);
   return (
     <section className="space-y-2">
       <h3 className="text-lg font-semibold">{labels.heading}</h3>
       {assetId === undefined ? (
         <p className="text-fg-muted">{labels.none}</p>
+      ) : unloaded === assetId && !online ? (
+        // The device keeps no image offline, but what the browser's own
+        // cache has (PRD FR-OFF-02, plan note N97).
+        <p className="text-fg-muted">{t("offline.image")}</p>
       ) : (
         <img
           src={thumbnailOf(projectId, assetId)}
           alt={labels.alt}
+          onError={() => setUnloaded(assetId)}
           className="max-h-32 max-w-full rounded-md border border-border"
         />
       )}

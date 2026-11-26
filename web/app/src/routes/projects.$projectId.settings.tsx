@@ -13,6 +13,7 @@ import { bodyField } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
 import { DuplicateProject } from "../authoring/DuplicateProject";
+import { online } from "../offline/online";
 import {
   conflictOf,
   managesProject,
@@ -41,6 +42,11 @@ import {
 
 export const Route = createFileRoute("/projects/$projectId/settings")({
   loader: async ({ context: { queryClient }, params }) => {
+    // Offline, the project's pages say that this page needs a connection, in
+    // its place, rather than wait for its reads (offline/OfflinePages.tsx).
+    if (!online()) {
+      return;
+    }
     const project = await found(
       queryClient.ensureQueryData(projectQuery(params.projectId)),
     );

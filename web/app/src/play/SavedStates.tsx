@@ -25,6 +25,7 @@ import { sessionQuery } from "../api";
 import { type Refusal, refusalOf } from "../auth/refusal";
 import { collator } from "../content/textNames";
 import type { ProjectDocument } from "../document/store";
+import { useOnline } from "../offline/online";
 import { payloadField, useExpected } from "../project/dialogs";
 import { focusIsNowhere, showInPage } from "../shell/focus";
 import { Button } from "../ui/Button";
@@ -109,6 +110,7 @@ export const SavedStates = memo(function SavedStates({
 }) {
   const { t, i18n } = useTranslation();
   const list = useQuery(playStatesQuery(doc));
+  const online = useOnline();
   const userId = useQuery(sessionQuery).data?.user_id;
   const headingRef = useRef<HTMLHeadingElement>(null);
   // The prefix of the IDs of the states' lines of when each last changed,
@@ -371,7 +373,11 @@ export const SavedStates = memo(function SavedStates({
           as of a state too large refused with the name. */}
       <Alert message={refusal?.alert ?? refusal?.refusal?.message} />
       {list.isPending ? (
-        <p className="text-fg-muted">{t("play.saved.reading")}</p>
+        // Offline, the list waits for the browser to be online again, which
+        // the device's copy of the project does not hold (PRD FR-OFF-02).
+        <p className="text-fg-muted">
+          {t(online ? "play.saved.reading" : "play.saved.offline")}
+        </p>
       ) : (
         <>
           {/* A list that could not be read says why, and one that could

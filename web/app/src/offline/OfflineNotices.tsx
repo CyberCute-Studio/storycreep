@@ -24,10 +24,7 @@ export function OfflineNotices() {
     return null;
   }
   return (
-    <div
-      role="alert"
-      className="border-t border-border px-4 py-3 text-danger"
-    >
+    <div role="alert" className="border-t border-border px-4 py-3 text-danger">
       <ul>
         {full.map(({ id, name }) => (
           <li key={id}>

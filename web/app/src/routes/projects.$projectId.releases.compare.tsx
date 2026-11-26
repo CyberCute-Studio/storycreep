@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { useProjectDocument } from "../document/react";
+import { online } from "../offline/online";
 import { projectQuery } from "../project/queries";
 import { DiffView } from "../releases/DiffView";
 import {
@@ -34,6 +35,11 @@ export const Route = createFileRoute("/projects/$projectId/releases/compare")({
     };
   },
   loader: async ({ context: { queryClient }, params }) => {
+    // Offline, the project's pages say that this page needs a connection, in
+    // its place, rather than wait for its reads (offline/OfflinePages.tsx).
+    if (!online()) {
+      return;
+    }
     await found(queryClient.ensureQueryData(projectQuery(params.projectId)));
     await found(
       queryClient.ensureQueryData(readyReleasesQuery(params.projectId)),

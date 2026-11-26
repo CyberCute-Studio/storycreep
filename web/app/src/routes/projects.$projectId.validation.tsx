@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { useProjectDocument } from "../document/react";
+import { online } from "../offline/online";
 import { editsProject, projectQuery, useCommands } from "../project/queries";
 import { found } from "../shell/found";
 import { Button } from "../ui/Button";
@@ -28,6 +29,11 @@ export const Route = createFileRoute("/projects/$projectId/validation")({
   // The project first, so that one that the account may not see shows the
   // page of no page, and then its report.
   loader: async ({ context, params }) => {
+    // Offline, the project's pages say that this page needs a connection, in
+    // its place, rather than wait for its reads (offline/OfflinePages.tsx).
+    if (!online()) {
+      return;
+    }
     await found(
       context.queryClient.ensureQueryData(projectQuery(params.projectId)),
     );
