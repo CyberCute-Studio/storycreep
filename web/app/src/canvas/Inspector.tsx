@@ -39,7 +39,7 @@ import {
   useEntityForm,
 } from "../content/form";
 import { parseValue } from "../content/values";
-import { hundredths } from "../document/appliers/node";
+import { hundredths } from "../document/hundredths";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { ExpressionEditor } from "../expr/ExpressionEditor";
 import { sourceOf, typedExpression, useTypedSource } from "../expr/fields";

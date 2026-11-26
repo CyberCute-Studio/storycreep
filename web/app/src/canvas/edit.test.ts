@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hundredths } from "../document/appliers/node";
+import { hundredths } from "../document/hundredths";
 import { testNode } from "../test/canvas";
 import {
   aligned,

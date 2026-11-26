@@ -73,8 +73,8 @@ import {
   tryParseRichTextOfAnySize,
 } from "@storycreep/shared/richtext";
 import { byCodePoints } from "../canvas/edit";
-import { hundredths } from "../document/appliers/node";
 import type { Doc } from "../document/doc";
+import { hundredths } from "../document/hundredths";
 import { compareChildren } from "../project/orderkey";
 
 /** What the projection reads of the document. */

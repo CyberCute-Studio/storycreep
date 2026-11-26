@@ -11,7 +11,7 @@
 import type { Node } from "@storycreep/shared/api";
 import { foldCase } from "@storycreep/shared/fold";
 import { isControlCode } from "@storycreep/shared/richtext";
-import { hundredths } from "../document/appliers/node";
+import { hundredths } from "../document/hundredths";
 import { nodeRect } from "./layout";
 import type { Point, Rect, Size } from "./viewport";
 
