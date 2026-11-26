@@ -8,6 +8,7 @@
 
 import { formatDateTime } from "@storycreep/shared/i18n";
 import type { TFunction } from "i18next";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CheckboxField } from "../ui/Field";
 import type { PinView } from "./keeper";
@@ -75,6 +76,9 @@ export function OfflineSwitch({
   const available = useOffline((s) => s.available);
   const pin = useOffline((s) => s.pins.get(projectId));
   const online = useOnline();
+  // What the user asked for, which the switch shows at once, until the
+  // device's record of it, which follows a moment after, says it.
+  const [asked, setAsked] = useState<boolean>();
   if (keeper === undefined) {
     return null;
   }
@@ -90,13 +94,15 @@ export function OfflineSwitch({
     <CheckboxField
       label={t("offline.switch")}
       hint={hint}
-      checked={pin?.chosen ?? false}
+      checked={asked ?? pin?.chosen ?? false}
       disabled={available !== true}
-      onChange={(event) =>
-        void (event.currentTarget.checked
-          ? keeper.pin(projectId, name)
-          : keeper.unchoose(projectId))
-      }
+      onChange={(event) => {
+        const chosen = event.currentTarget.checked;
+        setAsked(chosen);
+        void (chosen ? keeper.pin(projectId, name) : keeper.unchoose(projectId))
+          .catch(() => undefined)
+          .finally(() => setAsked(undefined));
+      }}
     />
   );
 }

@@ -107,25 +107,28 @@ export async function loadParts(
  * does not keep current, while it is not live, may not have the board yet,
  * as one that another session made since, so it reads the project anew
  * before it says that there is none, and rejects with what that read failed
- * with, rather than say so after a read that failed.
+ * with, rather than say so after a read that failed. Where current says so,
+ * as the start page's, which opens the board that the device showed last,
+ * a document that started from the device's copy of the project is brought
+ * up to date first, while the browser is online, as the copy may hold a
+ * board deleted since, which the page would otherwise open, until the
+ * channel had brought its deletion (PRD FR-OFF-02); the board's own page
+ * shows the copy at once, and says that the board is gone once the channel
+ * has brought that.
  */
 export async function readBoard(
   context: ProjectReads,
   projectId: string,
   boardId: string,
   read: <T>(read: Promise<T>) => Promise<T> = (r) => r,
+  current = false,
 ): Promise<ProjectDocument | undefined> {
   const project = await read(
     context.queryClient.ensureQueryData(projectQuery(projectId)),
   );
   const doc = context.documents.get(project.id);
   await read(doc.load("tree"));
-  // A document that started from the device's copy of the project holds
-  // what the project had as of the copy, as a board deleted since, until the
-  // channel has brought it what changed: it is brought up to date first,
-  // while the browser is online, as offline the copy is what there is (PRD
-  // FR-OFF-02).
-  if (doc.copy !== undefined) {
+  if (current && doc.copy !== undefined) {
     await doc.refresh("tree").catch(() => undefined);
   }
   const has = () => doc.store.getState().view.boards.has(boardId);
