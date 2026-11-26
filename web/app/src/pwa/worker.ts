@@ -5,19 +5,27 @@
 // no service worker, and there the app runs online alone, with nothing to
 // register and no error, as the header's warning says (shell/transport.ts).
 //
-// A new build of the app is a new worker, which installs as the page goes
-// on, and then waits: the page that its worker answered goes on with its own
-// build, whose files its worker keeps, and says that a new version is
-// ready, and the user reloads when they choose, once they have saved what
-// they are editing. A page that no worker answered, as one reloaded past
-// the cache, says so too once a worker installs after one that the
-// browser had; and a page that a new worker took over without its asking,
-// as for another page's reload, says so then. The reload waits a while for
-// the page's batches that are on their way to the server, and then has the
-// new worker take over, which every page of the app then has, and loads
-// the page anew. The page asks the server for a new worker once an hour,
-// and once it is shown again after that, since a page of the app may stay
-// open for days, and browsers ask only as a page loads.
+// The page registers it once it has loaded, so that the worker, which asks
+// the server for every file of the build as it installs, does not slow the
+// page's own first requests. A new build of the app is a new worker, which
+// installs as the page goes on, and then waits: the page that its worker
+// answered goes on with its own build, whose files its worker keeps, and
+// says that a new version is ready, and the user reloads when they choose,
+// once they have saved what they are editing. A page says so whenever a
+// worker waits while another is active, whether a worker answered the page
+// or not, as one reloaded past the cache, whose build is the server's, and
+// may be the waiting worker's already, where the reload loads the same
+// build; and a page that a new worker took over from another without its
+// asking, as for another page's reload, says so then. A worker that takes
+// over a page that had none, as the first one does, says nothing. The
+// reload waits a while for the page's batches and saves that are on their
+// way to the server, has the new worker take over, which every page of the
+// app then has, waits until it has activated, whether it took this page
+// over or not, as it does not take over a page that loaded outside its
+// scope, as the entry page at /, then for what the page sent meanwhile,
+// and loads the page anew. The page asks the server for a new worker once
+// an hour, and once it is shown again after that, since a page of the app
+// may stay open for days, and browsers ask only as a page loads.
 //
 // The browser's offer to install the app is the page's to make: the page
 // keeps it, rather than let the browser show its own bar, and its header
@@ -32,12 +40,13 @@ export interface ShellState {
    * Whether the page can have the worker: "insecure" in a page that is not
    * a secure context, as one served over plain HTTP from another machine,
    * and "unsupported" in a browser without service workers, or that
-   * refuses them as the page asks, where the app runs online alone.
+   * refuses them as the page asks for them or registers the worker, where
+   * the app runs online alone.
    */
   offline: "available" | "insecure" | "unsupported";
   /**
-   * Whether a new build of the app is ready: its worker waits to take over
-   * from the page's, or has taken over the page, whose build is older.
+   * Whether a new build of the app is ready: its worker waits while another
+   * is active, or has taken over the page from another worker.
    */
   update: boolean;
   /** Whether the page is reloading for the new build. */
@@ -54,8 +63,8 @@ export interface AppShell {
   /** Shows the browser's prompt to install the app, while it offers to. */
   install(): Promise<void>;
   /**
-   * Waits a while for the page's batches, has the new build's worker take
-   * over, if one waits, and loads the page anew.
+   * Waits a while for the page's batches and saves, has the new build's
+   * worker take over, if one waits, and loads the page anew.
    */
   reload(): Promise<void>;
 }
@@ -63,14 +72,19 @@ export interface AppShell {
 export interface ShellOptions {
   /** Whether to register the worker, which the build has, and the development server not. */
   register: boolean;
-  /** What a reload waits for first: the page's batches that are on their way to the server. */
+  /**
+   * What a reload waits for, first and again before the page loads anew:
+   * the page's batches and saves that are on their way to the server.
+   */
   beforeReload?: () => Promise<void>;
   /** How long, in milliseconds, the page waits between its questions for a new worker. */
   checkEvery?: number;
   /**
-   * How long, in milliseconds, a reload waits for the new worker to take
-   * over before it loads the page anew all the same, which the new worker
-   * then answers once it has.
+   * How long, in milliseconds, a reload waits for the new worker to
+   * activate before it loads the page anew all the same, as while a
+   * request of the old worker's holds it: the old one answers the page
+   * then, which says that a new version is ready once the new one takes it
+   * over.
    */
   takeoverWait?: number;
 }
@@ -106,8 +120,8 @@ export function startShell(win: Window, options: ShellOptions): AppShell {
   let prompt: InstallPromptEvent | undefined;
   let registration: ServiceWorkerRegistration | undefined;
   // Whether this page asked the new worker to take over, and so reloads
-  // once it has: another page, which did not, goes on as it is, and says
-  // that a new version is ready.
+  // once it has activated: another page, which did not, goes on as it is,
+  // and says that a new version is ready.
   let takeover = false;
 
   win.addEventListener("beforeinstallprompt", (event) => {
@@ -129,51 +143,59 @@ export function startShell(win: Window, options: ShellOptions): AppShell {
     container.addEventListener("controllerchange", () => {
       const before = controller;
       controller = container.controller;
-      if (takeover) {
-        win.location.reload();
-      } else if (before !== null) {
+      if (!takeover && before !== null) {
         // A new build's worker took over from the page's without the page
         // asking, as for another page's reload, or once a reload that did
         // not wait for it loaded the page from the old one: the page goes
         // on with an older build than the worker's. A worker that takes
-        // over a page that had none, as the first one does, is of the
-        // page's build.
+        // over a page that had none, as the first one does, says nothing.
         set({ update: true });
       }
     });
-    container
-      .register(workerURL, { scope: appPath, updateViaCache: "none" })
-      .then(
-        // A browser driven by a test may answer with nothing, as
-        // Playwright's that blocks service workers does.
-        (r: ServiceWorkerRegistration | undefined) => {
-          if (r !== undefined) {
-            registration = r;
-            watch(r, container);
-          }
-        },
-        (error: unknown) => {
-          // A browser may refuse it, as for a certificate that it does not
-          // trust, or in a private window: the app runs online alone then,
-          // as without a worker, which is no error of the app's.
-          console.warn("The app's service worker was not registered.", error);
-        },
-      );
+    const registerWorker = () =>
+      container
+        .register(workerURL, { scope: appPath, updateViaCache: "none" })
+        .then(
+          // A browser driven by a test may answer with nothing, as
+          // Playwright's that blocks service workers does.
+          (r: ServiceWorkerRegistration | undefined) => {
+            if (r !== undefined) {
+              registration = r;
+              watch(r);
+            }
+          },
+          (error: unknown) => {
+            // A browser may refuse it, as for a certificate that it does
+            // not trust, or in a private window: the app runs online alone
+            // then, as without a worker, which is no error of the app's.
+            console.warn("The app's service worker was not registered.", error);
+            set({ offline: "unsupported" });
+          },
+        );
+    // Once the page has loaded, so that the worker's install, which asks
+    // the server for every file of the build, comes after the page's own.
+    if (win.document.readyState === "complete") {
+      void registerWorker();
+    } else {
+      win.addEventListener("load", () => void registerWorker(), {
+        once: true,
+      });
+    }
   }
 
   /**
-   * Follows the workers of r. A worker that waits as the page registers is
-   * of a new build if a worker answered the page, which its build is then
-   * of; a page that none answered, as one reloaded past the cache, loaded
-   * the server's build, which a worker that waits is of too. A worker that
-   * installs as the page goes on, after one that the browser had, is of a
-   * newer build than the page's, whether a worker answered the page or
-   * not, unless the page was reloaded past the cache once the server had
-   * that build and before the browser found it, where the notice's reload
-   * loads the same build; the first worker is of the page's build.
+   * Follows the workers of r: the page says that a new version is ready
+   * whenever a worker waits while another is active, as the page registers,
+   * or once the new one has installed as the page goes on. The waiting
+   * worker's build is newer than the page's where the active one answered
+   * the page, or where the server had the active one's build as the page
+   * loaded past the cache; where the server had the waiting one's build by
+   * then, the page has that build already, and the notice's reload loads it
+   * again. The first worker, which installs while none is active, says
+   * nothing, as one of the page's build.
    */
-  function watch(r: ServiceWorkerRegistration, sw: ServiceWorkerContainer) {
-    if (r.waiting !== null && sw.controller !== null) {
+  function watch(r: ServiceWorkerRegistration) {
+    if (r.waiting !== null && r.active !== null) {
       set({ update: true });
     }
     r.addEventListener("updatefound", () => {
@@ -229,25 +251,51 @@ export function startShell(win: Window, options: ShellOptions): AppShell {
         return;
       }
       set({ reloading: true });
-      try {
-        await beforeReload?.();
-      } catch {
-        // The reload goes on: the user asked for it.
-      }
+      await sent();
       const waiting = registration?.waiting;
       if (waiting) {
-        // The new worker takes over this page as it activates, whether a
-        // worker answered it or not (clients.claim, in sw.ts).
+        // The new worker takes over every page of the app as it activates,
+        // this one too, whether a worker answered it or not (clients.claim,
+        // in sw.ts), but for a page that loaded outside its scope, as the
+        // entry page at /, which reloads once the worker has activated all
+        // the same.
         takeover = true;
-        waiting.postMessage({ type: "SKIP_WAITING" });
-        win.setTimeout(() => win.location.reload(), takeoverWait);
-      } else {
-        // The new build's worker took over already, as once another page
-        // asked it to, or the page has none.
-        win.location.reload();
+        await activated(waiting);
       }
+      // What the page sent meanwhile goes first too. Where the new worker
+      // has not activated by then, the old one answers the page, which says
+      // that a new version is ready once the new one takes it over.
+      await sent();
+      win.location.reload();
     },
   };
+
+  /** Waits for the page's batches and saves, for a while at most (beforeReload). */
+  async function sent(): Promise<void> {
+    try {
+      await beforeReload?.();
+    } catch {
+      // The reload goes on: the user asked for it.
+    }
+  }
+
+  /**
+   * Asks worker, which waits, to take over, and resolves once it has
+   * activated, or once takeoverWait has passed, as while a request of the
+   * old worker's still holds it.
+   */
+  function activated(worker: ServiceWorker): Promise<void> {
+    return new Promise((resolve) => {
+      const timer = win.setTimeout(resolve, takeoverWait);
+      worker.addEventListener("statechange", () => {
+        if (worker.state === "activated") {
+          win.clearTimeout(timer);
+          resolve();
+        }
+      });
+      worker.postMessage({ type: "SKIP_WAITING" });
+    });
+  }
 }
 
 /** Returns whether a page of win can have the worker. */

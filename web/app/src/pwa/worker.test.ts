@@ -46,14 +46,24 @@ class FakeContainer extends EventTarget {
   );
   /**
    * The waiting worker takes over, as once a page asked it to, the page
-   * too, whether a worker answered it or not (clients.claim).
+   * too, whether a worker answered it or not (clients.claim), and has
+   * activated.
    */
   takeOver() {
+    const worker = this.activate();
+    this.controller = worker ?? {};
+    this.dispatchEvent(new Event("controllerchange"));
+    worker?.moveTo("activated");
+  }
+  /**
+   * The waiting worker activates, and takes over no page of this one, as a
+   * page that loaded outside its scope; returns it.
+   */
+  activate(): FakeWorker | null {
     const worker = this.registration.waiting;
     this.registration.waiting = null;
     this.registration.active = worker;
-    this.controller = worker ?? {};
-    this.dispatchEvent(new Event("controllerchange"));
+    return worker;
   }
 }
 
@@ -69,27 +79,33 @@ interface FakeWindow {
   win: Window;
   container: FakeContainer;
   reload: ReturnType<typeof vi.fn>;
-  document: EventTarget & { visibilityState: DocumentVisibilityState };
+  document: EventTarget & {
+    visibilityState: DocumentVisibilityState;
+    readyState: DocumentReadyState;
+  };
 }
 
 /**
  * Returns a window of fakes: a secure context with service workers, unless
  * told otherwise, or whose service workers throw as the page asks for them,
- * if refuses says so.
+ * if refuses says so, whose page has loaded, unless loading says otherwise.
  */
 function fakeWindow({
   secure = true,
   serviceWorker = true,
   refuses = false,
+  loading = false,
 }: {
   secure?: boolean;
   serviceWorker?: boolean;
   refuses?: boolean;
+  loading?: boolean;
 } = {}): FakeWindow {
   const container = new FakeContainer();
   const reload = vi.fn();
   const document = Object.assign(new EventTarget(), {
     visibilityState: "visible" as DocumentVisibilityState,
+    readyState: (loading ? "interactive" : "complete") as DocumentReadyState,
   });
   const navigator = serviceWorker ? { serviceWorker: container } : {};
   if (refuses) {
@@ -106,6 +122,7 @@ function fakeWindow({
     document,
     setInterval: (f: () => void, ms: number) => setInterval(f, ms),
     setTimeout: (f: () => void, ms: number) => setTimeout(f, ms),
+    clearTimeout: (id: number) => clearTimeout(id),
   });
   return { win: win as unknown as Window, container, reload, document };
 }
@@ -145,6 +162,14 @@ describe("registering the worker", () => {
     });
   });
 
+  it("registers it once the page has loaded, so that its install comes after the page's own requests", async () => {
+    const w = fakeWindow({ loading: true });
+    await start(w);
+    expect(w.container.register).not.toHaveBeenCalled();
+    w.win.dispatchEvent(new Event("load"));
+    expect(w.container.register).toHaveBeenCalledOnce();
+  });
+
   // Verifies: FR-OFF-01/AC4
   it("registers nothing in a page that is not a secure context, as over plain HTTP from another machine, and says why", async () => {
     // A browser gives such a page no service worker; the fake has one, which
@@ -173,6 +198,7 @@ describe("registering the worker", () => {
     const shell = await start(refused);
     expect(warn).toHaveBeenCalledOnce();
     expect(shell.getState().update).toBe(false);
+    expect(shell.getState().offline).toBe("unsupported");
     // Playwright's browser that blocks service workers answers with nothing.
     const none = fakeWindow();
     none.container.register.mockResolvedValue(undefined);
@@ -207,7 +233,7 @@ describe("a new version", () => {
     expect(shell.getState().update).toBe(true);
   });
 
-  it("is not said of the first worker, which a page that had none takes over, nor where it waits as a page that no worker answered registers, which has the server's build", async () => {
+  it("is not said of the first worker, which a page that had none takes over", async () => {
     const w = fakeWindow();
     const shell = await start(w);
     w.container.registration.newWorker();
@@ -215,13 +241,14 @@ describe("a new version", () => {
     w.container.takeOver();
     expect(shell.getState().update).toBe(false);
     expect(w.reload).not.toHaveBeenCalled();
+  });
 
-    // A reload past the cache, as the worker waits.
+  it("is said where it waits while another is active as a page that no worker answered registers, as one reloaded past the cache, whose build may be the waiting one's already", async () => {
     const past = fakeWindow();
     past.container.registration.active = new FakeWorker();
     past.container.registration.waiting = new FakeWorker();
     const loaded = await start(past);
-    expect(loaded.getState().update).toBe(false);
+    expect(loaded.getState().update).toBe(true);
   });
 
   it("is said in a page that no worker answered once a worker installs after one that the browser had, and takes the page over once the user reloads", async () => {
@@ -230,10 +257,12 @@ describe("a new version", () => {
     const shell = await start(w);
     const worker = w.container.registration.newWorker();
     expect(shell.getState().update).toBe(true);
-    await shell.reload();
+    const reloading = shell.reload();
+    await vi.advanceTimersByTimeAsync(0);
     expect(worker.posted).toEqual([{ type: "SKIP_WAITING" }]);
     expect(w.reload).not.toHaveBeenCalled();
     w.container.takeOver();
+    await reloading;
     expect(w.reload).toHaveBeenCalledOnce();
   });
 
@@ -251,7 +280,7 @@ describe("a new version", () => {
   });
 
   // Verifies: FR-OFF-01/AC2
-  it("takes over once the user reloads, after the page's batches are sent, and the page loads anew", async () => {
+  it("takes over once the user reloads, after the page's batches are sent, and the page loads anew, after what it sent meanwhile", async () => {
     const w = fakeWindow();
     answered(w);
     let sent = () => {};
@@ -267,10 +296,19 @@ describe("a new version", () => {
     expect(beforeReload).toHaveBeenCalledOnce();
     expect(worker.posted).toEqual([]);
     sent();
-    await reloading;
+    await vi.advanceTimersByTimeAsync(0);
     expect(worker.posted).toEqual([{ type: "SKIP_WAITING" }]);
     expect(w.reload).not.toHaveBeenCalled();
     w.container.takeOver();
+    await vi.advanceTimersByTimeAsync(0);
+    // A batch that the page sent while the worker took over goes first.
+    expect(beforeReload).toHaveBeenCalledTimes(2);
+    expect(w.reload).not.toHaveBeenCalled();
+    sent();
+    await reloading;
+    expect(w.reload).toHaveBeenCalledOnce();
+    // Once alone.
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(w.reload).toHaveBeenCalledOnce();
   });
 
@@ -279,10 +317,34 @@ describe("a new version", () => {
     answered(w);
     const shell = await start(w, { takeoverWait: 3_000 });
     w.container.registration.newWorker();
-    await shell.reload();
+    void shell.reload();
     await vi.advanceTimersByTimeAsync(2_999);
     expect(w.reload).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
+    expect(w.reload).toHaveBeenCalledOnce();
+    // The worker that takes over then loads it anew no more.
+    w.container.takeOver();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(w.reload).toHaveBeenCalledOnce();
+  });
+
+  it("loads the page anew once the new worker has activated, where it takes over no page of this one, as a page that loaded outside its scope", async () => {
+    const w = fakeWindow();
+    w.container.registration.active = new FakeWorker();
+    const shell = await start(w, { takeoverWait: 3_000 });
+    const worker = w.container.registration.newWorker();
+    expect(shell.getState().update).toBe(true);
+    const reloading = shell.reload();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(worker.posted).toEqual([{ type: "SKIP_WAITING" }]);
+    w.container.activate();
+    worker.moveTo("activating");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(w.reload).not.toHaveBeenCalled();
+    worker.moveTo("activated");
+    await reloading;
+    expect(w.reload).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(3_000);
     expect(w.reload).toHaveBeenCalledOnce();
   });
 
@@ -294,6 +356,7 @@ describe("a new version", () => {
     w.container.registration.newWorker();
     // Another page's user reloaded: the worker takes over every page.
     w.container.takeOver();
+    await vi.advanceTimersByTimeAsync(0);
     expect(w.reload).not.toHaveBeenCalled();
     expect(shell.getState().update).toBe(true);
     await shell.reload();

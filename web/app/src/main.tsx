@@ -15,6 +15,7 @@ import {
   requestsIn,
   requestVersion,
   sessionQuery,
+  whenSaved,
 } from "./api";
 import { followSession, sessionChanges } from "./auth/session";
 import { Documents } from "./document/documents";
@@ -65,16 +66,23 @@ const documents = new Documents({
 });
 /**
  * How long, in milliseconds, a reload for a new version of the app waits
- * at most for the page's batches, which the server answers in far less.
+ * at most for the page's batches and saves, which the server answers in far
+ * less.
  */
 const reloadWait = 10_000;
 
 // The app's service worker, which the build has, and the browser's offer
 // to install the app (PRD FR-OFF-01). Its reload for a new version waits a
-// while for the batches that the page is sending.
+// while for the batches that the page is sending, and for the saves of its
+// forms, as of a project's settings.
 const pwa = startShell(window, {
   register: import.meta.env.PROD,
-  beforeReload: () => documents.whenSent(reloadWait),
+  beforeReload: async () => {
+    await Promise.all([
+      documents.whenSent(reloadWait),
+      whenSaved(queryClient, reloadWait),
+    ]);
+  },
 });
 const router = createAppRouter({
   queryClient,

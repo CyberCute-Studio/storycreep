@@ -5,10 +5,13 @@
 // build is answered from the cache: the files of a build go together, so a
 // page that the worker answered with its shell loads the scripts of that
 // shell's build, and keeps loading them, as a route's that it opens later,
-// once the server has another build and has them no longer. An entry page
-// that names files of assets/ that the list does not have, as one of the
-// other build while two serve at once, fails the install, which the browser
-// tries again as it next asks for the worker. As it activates, the worker
+// once the server has another build and has them no longer. Where the
+// browser cannot read its cache, the server answers, as without a worker.
+// An entry page that names files of assets/ that the list does not have, as
+// one of the other build while two serve at once, fails the install, which
+// is tried again as the browser next asks the server for the worker: as a
+// page of the app next registers it, or, where a worker is active, as the
+// browser or the page next asks for a new one. As it activates, the worker
 // takes over each page of the app that has none, as the page that
 // registered the first worker, so that it keeps that page's files too. A
 // new build is a new worker, which waits, until the page asks it to take
@@ -57,19 +60,23 @@ registerRoute(
   ({ request, url }) =>
     request.mode === "navigate" && answersWithShell(url, self.location.origin),
   async ({ request }) => {
-    const cached = await matchPrecache(shellURL);
-    if (cached === undefined) {
-      // biome-ignore lint/plugin: the service worker passes on what it cannot answer
-      return fetch(request);
+    try {
+      const cached = await matchPrecache(shellURL);
+      if (cached !== undefined) {
+        const body = await cached.text();
+        // Not held with waitUntil: the browser activates a new worker,
+        // which the user's reload waits for, only once this one has no
+        // event under way. A browser keeps a worker that has just answered
+        // running for a while, which the refresh needs; one that it stops
+        // first leaves the cached shell, as offline does.
+        void refreshShell(cached, body);
+        return withNonce(cached, body, newNonce());
+      }
+    } catch {
+      // The cache could not be read, as where the browser's storage fails.
     }
-    const body = await cached.text();
-    // Not held with waitUntil: the browser activates a new worker, which
-    // the user's reload waits for, only once this one has no event under
-    // way. A browser keeps a worker that has just answered running for a
-    // while, which the refresh needs; one that it stops first leaves the
-    // cached shell, as offline does.
-    void refreshShell(cached, body);
-    return withNonce(cached, body, newNonce());
+    // biome-ignore lint/plugin: the service worker passes on what it cannot answer
+    return fetch(request);
   },
 );
 precacheAndRoute(self.__WB_MANIFEST);
@@ -77,9 +84,14 @@ precacheAndRoute(self.__WB_MANIFEST);
 // the list has every file of assets/ that it names. As two builds serve at
 // once, as while the replicas of an instance are upgraded one by one, the
 // server may answer the page of the other build, whose scripts nothing
-// would have once that build is gone. A plugin that decides what the
-// precache keeps replaces Workbox's own, which keeps no error's answer, so
-// it keeps none either.
+// would have once that build is gone. A file outside assets/, as the
+// favicon, an icon, or the manifest, whose name holds no hash, is kept as
+// the server answers it then, which may be the other build's, until a
+// build changes it: Workbox checks no file against its revision. A plugin
+// that decides what the precache keeps replaces Workbox's own, which keeps
+// no error's answer, so it keeps none either. Where the cache cannot be
+// read as the worker answers a request, the server answers it; an install
+// that fails fails as it is.
 addPlugins([
   {
     async cacheWillUpdate({ request, response }) {
@@ -93,6 +105,10 @@ addPlugins([
       return files.every((url) => getCacheKeyForURL(url) !== undefined)
         ? response
         : null;
+    },
+    async handlerDidError({ event, request }) {
+      // biome-ignore lint/plugin: the service worker passes on what it cannot answer
+      return event.type === "fetch" ? fetch(request) : undefined;
     },
   },
 ]);
@@ -108,9 +124,11 @@ self.addEventListener("message", (event) => {
 /**
  * Asks the server for the entry page, and keeps its answer in place of
  * cached, whose body is body, if it is of the same build: the same page
- * but for its nonce. Of another build, it is the next worker's to keep. An
- * answer that is not the page, as an error's or a redirect's, or none, as
- * offline, leaves the cached one.
+ * but for its nonce, and while the cache still has this build's. Of another
+ * build, it is the next worker's to keep, and once a new worker has
+ * activated, which deleted this build's, it is none's. An answer that is
+ * not the page, as an error's or a redirect's, or none, as offline, leaves
+ * the cached one.
  */
 async function refreshShell(cached: Response, body: string): Promise<void> {
   try {
@@ -130,7 +148,9 @@ async function refreshShell(cached: Response, body: string): Promise<void> {
     const key = getCacheKeyForURL(shellURL);
     if (key !== undefined) {
       const cache = await caches.open(cacheNames.precache);
-      await cache.put(key, response);
+      if ((await cache.match(key)) !== undefined) {
+        await cache.put(key, response);
+      }
     }
   } catch {
     // Offline, or the server could not be reached: the cached shell stands.

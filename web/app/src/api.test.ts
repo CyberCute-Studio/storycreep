@@ -1,9 +1,17 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { api, fetchSession, requestsIn } from "./api";
+import {
+  api,
+  createQueryClient,
+  fetchSession,
+  requestsIn,
+  whenSaved,
+} from "./api";
+import { createErrorLog } from "./errors/log";
 import { createAppI18n } from "./i18n";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("requestsIn", () => {
@@ -63,5 +71,45 @@ describe("fetchSession", () => {
       status: 401,
       error: undefined,
     });
+  });
+});
+
+/** Returns whether the promise has resolved, once the timers due have run. */
+async function settled(promise: Promise<void>): Promise<boolean> {
+  let done = false;
+  void promise.then(() => {
+    done = true;
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  return done;
+}
+
+describe("whenSaved", () => {
+  it("waits for the mutations under way, for at most the wait, as a reload for a new version does", async () => {
+    vi.useFakeTimers();
+    const client = createQueryClient(createErrorLog());
+    expect(await settled(whenSaved(client, 10_000))).toBe(true);
+
+    // A form's save, which the server has not answered yet.
+    let answer = () => {};
+    const save = client.getMutationCache().build(client, {
+      mutationFn: () => new Promise<void>((resolve) => (answer = resolve)),
+    });
+    const saving = save.execute(undefined);
+    const saved = whenSaved(client, 10_000);
+    expect(await settled(saved)).toBe(false);
+    answer();
+    await saving;
+    expect(await settled(saved)).toBe(true);
+
+    const stuck = client.getMutationCache().build(client, {
+      mutationFn: () => new Promise<void>(() => {}),
+    });
+    void stuck.execute(undefined);
+    const waited = whenSaved(client, 10_000);
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(await settled(waited)).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await settled(waited)).toBe(true);
   });
 });
