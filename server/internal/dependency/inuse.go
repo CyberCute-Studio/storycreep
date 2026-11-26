@@ -62,7 +62,7 @@ func ExpressionUsage(site string, board, node, connection, output, expression, a
 		ConnectionID:   encode(ids.Connection, nullUUID(connection)),
 		BranchOutputID: encode(ids.BranchOutput, nullUUID(output)),
 		AttributeID:    encode(ids.AttributeDef, nullUUID(attribute)),
-		key:            Key{Board: board, Node: node, Site: expression, Attribute: attribute}}
+		key:            Key{Board: board, Node: node, Site: expression, SiteType: site, Attribute: attribute}}
 }
 
 // textsKey is the key under which TextsUsing keeps what the texts that the
@@ -96,6 +96,11 @@ func (t textOwners) add(o commands.Ref) {
 // as a usage list names them (Usage.Site).
 var textSites = map[ids.Kind]string{ids.Node: SiteNodeText, ids.Connection: SiteConnectionLabel,
 	ids.Component: SiteComponentDescription}
+
+// textOwnerKinds are the kinds of the owners of texts by the names that
+// LiveTextOwners gives them.
+var textOwnerKinds = map[string]ids.Kind{ids.Node.String(): ids.Node, ids.Connection.String(): ids.Connection,
+	ids.Component.String(): ids.Component}
 
 // TextsUsing returns the texts of the batch's project, of its nodes, its
 // connections, and its components outside its trash, that use the variable,
@@ -199,16 +204,19 @@ func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.
 	if err != nil {
 		return nil, fmt.Errorf("dependency: read the owners of the texts: %w", err)
 	}
-	sites := map[ids.UUID]queries.LiveTextOwnersRow{}
+	// The owners outside the trash, by their kinds and their UUIDs, since
+	// owners of two kinds may share a UUID, as a node and a connection whose
+	// UUID a client chose to be the node's do.
+	sites := map[commands.Ref]queries.LiveTextOwnersRow{}
 	for _, l := range live {
-		sites[l.ID.Bytes] = l
+		sites[commands.Ref{Kind: textOwnerKinds[l.Kind], ID: l.ID.Bytes}] = l
 	}
 	var out []Found
 	found := map[Key]map[string]bool{}
 	for _, h := range hits {
 		r, u := h.row, h.use
 		owner := textOwner(r.NodeID, r.ConnectionID, r.ComponentID)
-		l, ok := sites[owner.ID]
+		l, ok := sites[owner]
 		if !ok {
 			continue
 		}
@@ -216,9 +224,11 @@ func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.
 		if u.Kind == Component {
 			use = string(UseMention)
 		}
-		f := Found{Use: use, Usage: Usage{Site: textSites[owner.Kind], BoardID: encode(ids.Board, l.BoardID),
+		site := textSites[owner.Kind]
+		f := Found{Use: use, Usage: Usage{Site: site, BoardID: encode(ids.Board, l.BoardID),
 			NodeID: encode(ids.Node, l.SiteNodeID), AttributeID: encode(ids.AttributeDef, nullUUID(u.Attribute)),
-			key: Key{Board: l.BoardID.Bytes, Node: l.SiteNodeID.Bytes, Site: owner.ID, Attribute: u.Attribute}}}
+			key: Key{Board: l.BoardID.Bytes, Node: l.SiteNodeID.Bytes, Site: owner.ID, SiteType: site,
+				Attribute: u.Attribute}}}
 		switch owner.Kind {
 		case ids.Connection:
 			f.ConnectionID = ids.Encode(ids.Connection, owner.ID)
@@ -286,7 +296,8 @@ func Refusal(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, k
 	slices.SortFunc(sorted, func(a, b Found) int {
 		return cmp.Or(cmp.Compare(slices.Index(uses, a.Use), slices.Index(uses, b.Use)),
 			bytes.Compare(a.key.Board[:], b.key.Board[:]), bytes.Compare(a.key.Node[:], b.key.Node[:]),
-			bytes.Compare(a.key.Site[:], b.key.Site[:]), bytes.Compare(a.key.Attribute[:], b.key.Attribute[:]))
+			bytes.Compare(a.key.Site[:], b.key.Site[:]), cmp.Compare(a.key.SiteType, b.key.SiteType),
+			bytes.Compare(a.key.Attribute[:], b.key.Attribute[:]))
 	})
 	e := &InUseError{Kind: kind, Count: len(sorted), Counts: map[string]int{}}
 	for _, u := range uses {
@@ -317,31 +328,42 @@ func Refusal(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, k
 	for i := range e.Usages {
 		f := &e.Usages[i]
 		if f.key.Board != (ids.UUID{}) && f.BoardName == nil {
-			name := labels[f.key.Board]
+			name := labels.Boards[f.key.Board]
 			f.BoardName = &name
 		}
 		if f.key.Node != (ids.UUID{}) && f.NodeTitle == nil {
-			title := labels[f.key.Node]
+			title := labels.Nodes[f.key.Node]
 			f.NodeTitle = &title
 		}
 	}
 	return e, nil
 }
 
+// Labels are the names of boards and the titles of nodes, each by its UUID,
+// apart, since a board and a node may share a UUID, as a client chooses the
+// IDs of both.
+type Labels struct {
+	Boards, Nodes map[ids.UUID]string
+}
+
 // SiteLabels returns the names of the project's boards among boards and the
-// titles of its nodes among nodes, in its trash or not, by their UUIDs, read
-// in q's transaction of the project of the workspace ws, as the sites of a
-// usage, and those of a rename's preview, show them.
+// titles of its nodes among nodes, in its trash or not, read in q's
+// transaction of the project of the workspace ws, as the sites of a usage,
+// and those of a rename's preview, show them.
 func SiteLabels(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, boards, nodes []pgtype.UUID) (
-	map[ids.UUID]string, error) {
+	Labels, error) {
 	rows, err := q.SiteNames(ctx, queries.SiteNamesParams{WorkspaceID: ws, ProjectID: project, BoardIds: list(boards),
 		NodeIds: list(nodes)})
 	if err != nil {
-		return nil, fmt.Errorf("dependency: read the names of the sites' boards and nodes: %w", err)
+		return Labels{}, fmt.Errorf("dependency: read the names of the sites' boards and nodes: %w", err)
 	}
-	labels := make(map[ids.UUID]string, len(rows))
+	labels := Labels{Boards: map[ids.UUID]string{}, Nodes: map[ids.UUID]string{}}
 	for _, r := range rows {
-		labels[r.ID.Bytes] = r.Label
+		if r.Kind == ids.Board.String() {
+			labels.Boards[r.ID.Bytes] = r.Label
+		} else {
+			labels.Nodes[r.ID.Bytes] = r.Label
+		}
 	}
 	return labels, nil
 }

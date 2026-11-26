@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -72,11 +73,23 @@ type Usage struct {
 // Key is where a usage is in its list (Usage.Key), by which a page of the
 // list says where the next one starts: its board, its node, the site itself,
 // an expression's UUID, or that of a text's or a speaker's node, connection,
-// or component, and the attribute definition that it reads or writes, each
-// zero where it has none.
+// or component, and its type (Usage.Site), since two sites of one node may
+// share a UUID, as a node's text and the label of a connection that leaves
+// it whose UUID a client chose to be the node's do, and the attribute
+// definition that it reads or writes, each zero where it has none.
 type Key struct {
-	Board, Node, Site, Attribute ids.UUID
+	Board, Node, Site ids.UUID
+	SiteType          string
+	Attribute         ids.UUID
 }
+
+// usageSites are the types of the sites of a usage (Usage.Site).
+var usageSites = []string{SiteNodeOnEnter, SiteNodeOnExit, SiteNodeText, SiteNodeSpeaker, SiteConnectionCondition,
+	SiteConnectionOnTraverse, SiteConnectionLabel, SiteBranchOutputCondition, SiteComponentDescription}
+
+// IsUsageSite reports whether s is the type of a usage's site (Usage.Site),
+// as a cursor of a list of usages holds its key's.
+func IsUsageSite(s string) bool { return slices.Contains(usageSites, s) }
 
 // Key returns where u is in its list.
 func (u Usage) Key() Key { return u.key }
@@ -183,7 +196,8 @@ func (s *Service) usages(ctx context.Context, actor commands.Actor, projectID id
 		}
 		params.WorkspaceID, params.ProjectID = ws, nullUUID(projectID)
 		params.AfterBoard, params.AfterNode = zeroUUID(after.Board), zeroUUID(after.Node)
-		params.AfterSite, params.AfterAttribute = zeroUUID(after.Site), zeroUUID(after.Attribute)
+		params.AfterSite, params.AfterSiteType = zeroUUID(after.Site), after.SiteType
+		params.AfterAttribute = zeroUUID(after.Attribute)
 		params.MaxRows = int32(min(limit, 1<<20))
 		rows, err := q.Usages(ctx, params)
 		if err != nil {
@@ -203,7 +217,8 @@ func usageOf(r queries.UsagesRow) Usage {
 	u := Usage{Site: r.Site, BoardID: encode(ids.Board, r.BoardID), NodeID: encode(ids.Node, r.NodeID),
 		ConnectionID: encode(ids.Connection, r.ConnectionID), BranchOutputID: encode(ids.BranchOutput, r.BranchOutputID),
 		ComponentID: encode(ids.Component, r.ComponentID), AttributeID: encode(ids.AttributeDef, r.AttributeDefID),
-		key: Key{Board: r.BoardID.Bytes, Node: r.NodeID.Bytes, Site: r.SiteID.Bytes, Attribute: r.AttributeDefID.Bytes}}
+		key: Key{Board: r.BoardID.Bytes, Node: r.NodeID.Bytes, Site: r.SiteID.Bytes, SiteType: r.Site,
+			Attribute: r.AttributeDefID.Bytes}}
 	if r.BoardID.Valid {
 		u.BoardName = &r.BoardName.String
 	}

@@ -420,3 +420,47 @@ func TestCreationUndoReadsChangedTexts(t *testing.T) {
 		t.Errorf("the undo forces the deletions %v, want %v", forced, want)
 	}
 }
+
+// TestDeletionSharedUUIDs checks that the refusal of the deletion of a used
+// variable tells the sites apart by their owners' kinds, as a client chooses
+// the IDs of boards, nodes, and connections, and may give two of them one
+// UUID: Keep's text and the label of gate, which leaves Keep and whose UUID
+// is Keep's, are two usages; Gone's text is none once Gone is in the trash,
+// though the label of loop, whose UUID is Gone's, shows coins too, and is
+// not; and each usage shows its board's name and its node's title, though
+// Keep's UUID is its board's.
+func TestDeletionSharedUUIDs(t *testing.T) {
+	t.Parallel()
+	s, d, owner, ws := inviteServer(t, "open", nil)
+	h := s.main
+	p := createProject(t, h, owner, ws, "Harbour").ID
+	board, pier, gone, coins := newBoardID(), newNodeID(), newNodeID(), newVariableID()
+	keep := ids.Encode(ids.Node, uuidOf(t, board))
+	gate, loop := ids.Encode(ids.Connection, uuidOf(t, keep)), ids.Encode(ids.Connection, uuidOf(t, gone))
+	pos := map[string]int{"x": 0, "y": 0}
+	shows := func(text string) json.RawMessage { return richText(textInline(text), valueInline(coins)) }
+	sendBatch(t, h, owner, p,
+		cmd("board.create", map[string]any{"id": board, "name": "Harbour"}),
+		cmd("variable.create", map[string]any{"id": coins, "key": "coins", "type": "int", "scope": "global"}),
+		cmd("node.create", map[string]any{"id": keep, "board_id": board, "type": "element", "title": "Keep",
+			"position": pos, "text": shows("Coins: "), "on_enter": "coins += 1"}),
+		cmd("node.create", map[string]any{"id": pier, "board_id": board, "type": "element", "title": "Pier",
+			"position": pos}),
+		cmd("node.create", map[string]any{"id": gone, "board_id": board, "type": "element", "title": "Gone",
+			"position": pos, "text": shows("Lost: ")}),
+		cmd("connection.create", map[string]any{"id": gate, "from_node_id": keep, "to_node_id": pier,
+			"label": shows("Pay ")}),
+		cmd("connection.create", map[string]any{"id": loop, "from_node_id": pier, "to_node_id": pier,
+			"label": shows("Again ")}),
+	)
+	sendBatch(t, h, owner, p, cmd("node.delete", map[string]any{"id": gone}))
+	wantDrift(t, d.Admin(t), p)
+	count, counts, lines := inUse(t, call(h, http.MethodPost, commandsPath(p), commandBatch(t,
+		cmd("variable.delete", map[string]any{"id": coins})), owner.header(true)), api.CodeVariableInUse)
+	want := []string{"read connection_label Harbour/Keep " + gate, "read connection_label Harbour/Pier " + loop,
+		"read node_on_enter Harbour/Keep", "read node_text Harbour/Keep", "write node_on_enter Harbour/Keep"}
+	if count != 5 || counts["read"] != 4 || counts["write"] != 1 || !slices.Equal(lines, want) {
+		t.Errorf("coins' deletion is refused with %d usages, %v, %q, want 5, 4 reads and a write, %q", count,
+			counts, lines, want)
+	}
+}

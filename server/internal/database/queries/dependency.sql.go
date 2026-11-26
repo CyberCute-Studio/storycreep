@@ -406,13 +406,13 @@ func (q *Queries) JumperContributions(ctx context.Context, arg JumperContributio
 }
 
 const liveTextOwners = `-- name: LiveTextOwners :many
-SELECT n.id, n.board_id::uuid AS board_id, n.id AS site_node_id FROM live_node n
+SELECT 'node'::text AS kind, n.id, n.board_id::uuid AS board_id, n.id AS site_node_id FROM live_node n
 WHERE n.workspace_id = $1 AND n.project_id = $2 AND n.id = ANY($3::uuid[])
 UNION ALL
-SELECT c.id, c.board_id, c.from_node_id FROM live_connection c
+SELECT 'connection', c.id, c.board_id, c.from_node_id FROM live_connection c
 WHERE c.workspace_id = $1 AND c.project_id = $2 AND c.id = ANY($4::uuid[])
 UNION ALL
-SELECT m.id, NULL, NULL FROM live_component m
+SELECT 'component', m.id, NULL, NULL FROM live_component m
 WHERE m.workspace_id = $1 AND m.project_id = $2 AND m.id = ANY($5::uuid[])
 `
 
@@ -425,6 +425,7 @@ type LiveTextOwnersParams struct {
 }
 
 type LiveTextOwnersRow struct {
+	Kind       string
 	ID         pgtype.UUID
 	BoardID    pgtype.UUID
 	SiteNodeID pgtype.UUID
@@ -433,8 +434,9 @@ type LiveTextOwnersRow struct {
 // LiveTextOwners returns those of the project's nodes among node_ids,
 // connections among connection_ids, and components among component_ids that
 // are not in its trash, as a usage list shows their texts, each with its
-// board, none for a component, and the node of its site: a node's own, and
-// the node that a connection leaves.
+// kind, node, connection, or component, since owners of two kinds may share
+// a UUID, its board, none for a component, and the node of its site: a
+// node's own, and the node that a connection leaves.
 func (q *Queries) LiveTextOwners(ctx context.Context, arg LiveTextOwnersParams) ([]LiveTextOwnersRow, error) {
 	rows, err := q.db.Query(ctx, liveTextOwners,
 		arg.WorkspaceID,
@@ -450,7 +452,12 @@ func (q *Queries) LiveTextOwners(ctx context.Context, arg LiveTextOwnersParams) 
 	var items []LiveTextOwnersRow
 	for rows.Next() {
 		var i LiveTextOwnersRow
-		if err := rows.Scan(&i.ID, &i.BoardID, &i.SiteNodeID); err != nil {
+		if err := rows.Scan(
+			&i.Kind,
+			&i.ID,
+			&i.BoardID,
+			&i.SiteNodeID,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -462,10 +469,10 @@ func (q *Queries) LiveTextOwners(ctx context.Context, arg LiveTextOwnersParams) 
 }
 
 const siteNames = `-- name: SiteNames :many
-SELECT b.id, b.name AS label FROM board b
+SELECT 'board'::text AS kind, b.id, b.name AS label FROM board b
 WHERE b.workspace_id = $1 AND b.project_id = $2 AND b.id = ANY($3::uuid[])
 UNION ALL
-SELECT n.id, n.title FROM node n
+SELECT 'node', n.id, n.title FROM node n
 WHERE n.workspace_id = $1 AND n.project_id = $2 AND n.id = ANY($4::uuid[])
 `
 
@@ -477,13 +484,15 @@ type SiteNamesParams struct {
 }
 
 type SiteNamesRow struct {
+	Kind  string
 	ID    pgtype.UUID
 	Label string
 }
 
 // SiteNames returns the names of the project's boards among board_ids and the
 // titles of its nodes among node_ids, in the trash or not, by their IDs, as
-// the sites of a usage show them.
+// the sites of a usage show them, each with its kind, board or node, since a
+// board and a node may share a UUID.
 func (q *Queries) SiteNames(ctx context.Context, arg SiteNamesParams) ([]SiteNamesRow, error) {
 	rows, err := q.db.Query(ctx, siteNames,
 		arg.WorkspaceID,
@@ -498,7 +507,7 @@ func (q *Queries) SiteNames(ctx context.Context, arg SiteNamesParams) ([]SiteNam
 	var items []SiteNamesRow
 	for rows.Next() {
 		var i SiteNamesRow
-		if err := rows.Scan(&i.ID, &i.Label); err != nil {
+		if err := rows.Scan(&i.Kind, &i.ID, &i.Label); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -672,18 +681,19 @@ WITH refs AS (
         coalesce(s.attribute_def_id, '00000000-0000-0000-0000-000000000000') AS attribute_key
     FROM sites s
     WHERE (coalesce(s.board_id, '00000000-0000-0000-0000-000000000000'),
-            coalesce(s.node_id, '00000000-0000-0000-0000-000000000000'), s.site_id,
+            coalesce(s.node_id, '00000000-0000-0000-0000-000000000000'), s.site_id, s.site,
             coalesce(s.attribute_def_id, '00000000-0000-0000-0000-000000000000'))
-        > ($7::uuid, $8::uuid, $9::uuid, $10::uuid)
-    ORDER BY board_key, node_key, s.site_id, attribute_key
-    LIMIT $11
+        > ($7::uuid, $8::uuid, $9::uuid, $10::text,
+            $11::uuid)
+    ORDER BY board_key, node_key, s.site_id, s.site, attribute_key
+    LIMIT $12
 )
 SELECT p.site, p.board_id, b.name AS board_name, p.node_id, nn.title AS node_title, p.connection_id,
     p.branch_output_id, p.component_id, p.attribute_def_id, p.site_id
 FROM page p
 LEFT JOIN board b ON b.workspace_id = $1 AND b.project_id = $2 AND b.id = p.board_id
 LEFT JOIN node nn ON nn.workspace_id = $1 AND nn.project_id = $2 AND nn.id = p.node_id
-ORDER BY p.board_key, p.node_key, p.site_id, p.attribute_key
+ORDER BY p.board_key, p.node_key, p.site_id, p.site, p.attribute_key
 `
 
 type UsagesParams struct {
@@ -696,6 +706,7 @@ type UsagesParams struct {
 	AfterBoard     pgtype.UUID
 	AfterNode      pgtype.UUID
 	AfterSite      pgtype.UUID
+	AfterSiteType  string
 	AfterAttribute pgtype.UUID
 	MaxRows        int32
 }
@@ -722,11 +733,14 @@ type UsagesRow struct {
 // leaves, and an output's its branch; a text's owner's, a connection's the
 // node that it leaves too; and none for a component's description. They are
 // in the order of their boards, their nodes, the sites themselves (an
-// expression, or a text's or a speaker's owner), and the attributes that
-// they name, of which a component's site may name several, each of which
-// none of them holds counted as the zero UUID, after the key after_board,
-// after_node, after_site, after_attribute, which is all zero UUIDs for the
-// first page, as no site is.
+// expression, or a text's or a speaker's owner), by their UUIDs and then
+// their types, since two sites of one node may share a UUID, as a node's
+// text and the label of a connection that leaves it whose UUID a client
+// chose to be the node's do, and the attributes that they name, of which a
+// component's site may name several, each of which none of them holds
+// counted as the zero UUID, after the key after_board, after_node,
+// after_site, after_site_type, after_attribute, which is all zero UUIDs and
+// the empty type for the first page, as no site is.
 func (q *Queries) Usages(ctx context.Context, arg UsagesParams) ([]UsagesRow, error) {
 	rows, err := q.db.Query(ctx, usages,
 		arg.WorkspaceID,
@@ -738,6 +752,7 @@ func (q *Queries) Usages(ctx context.Context, arg UsagesParams) ([]UsagesRow, er
 		arg.AfterBoard,
 		arg.AfterNode,
 		arg.AfterSite,
+		arg.AfterSiteType,
 		arg.AfterAttribute,
 		arg.MaxRows,
 	)

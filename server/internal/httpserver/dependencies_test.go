@@ -149,7 +149,8 @@ func newUsageWorld(t *testing.T) *usageWorld {
 // key returns where the usage u is in its list (dependency.Key), from what
 // the API shows of it and the UUIDs of the world's expressions: its board,
 // its node, its site, an expression's UUID or that of a text's or a
-// speaker's owner, and its attribute, each zero where it has none.
+// speaker's owner, the site's type, and its attribute, each zero where it
+// has none.
 func (w *usageWorld) key(t *testing.T, u dependency.Usage) dependency.Key {
 	t.Helper()
 	id := func(public string) ids.UUID {
@@ -158,7 +159,7 @@ func (w *usageWorld) key(t *testing.T, u dependency.Usage) dependency.Key {
 		}
 		return uuidOf(t, public)
 	}
-	k := dependency.Key{Board: id(u.BoardID), Node: id(u.NodeID), Attribute: id(u.AttributeID)}
+	k := dependency.Key{Board: id(u.BoardID), Node: id(u.NodeID), SiteType: u.Site, Attribute: id(u.AttributeID)}
 	switch u.Site {
 	case dependency.SiteNodeText, dependency.SiteNodeSpeaker:
 		k.Site = id(u.NodeID)
@@ -267,9 +268,9 @@ func (w *usageWorld) wantSorted(t *testing.T, what string, got []dependency.Usag
 
 // compareKeys orders the keys of usages as their lists do.
 func compareKeys(a, b dependency.Key) int {
-	for _, p := range [][2]ids.UUID{{a.Board, b.Board}, {a.Node, b.Node}, {a.Site, b.Site},
-		{a.Attribute, b.Attribute}} {
-		if c := strings.Compare(p[0].String(), p[1].String()); c != 0 {
+	for _, p := range [][2]string{{a.Board.String(), b.Board.String()}, {a.Node.String(), b.Node.String()},
+		{a.Site.String(), b.Site.String()}, {a.SiteType, b.SiteType}, {a.Attribute.String(), b.Attribute.String()}} {
+		if c := strings.Compare(p[0], p[1]); c != 0 {
 			return c
 		}
 	}
@@ -312,8 +313,21 @@ func TestVariableUsages(t *testing.T) {
 			mustCursor(t, idKey{ID: ids.New().String()}), http.StatusBadRequest, api.CodeInvalidCursor},
 		{"a cursor of a UUID in upper case", variableUsagesPath(p, w.gold, "read") + "&cursor=" +
 			mustCursor(t, usageKey{Board: strings.ToUpper(ids.New().String()), Node: ids.New().String(),
-				Site: ids.New().String(), Attribute: ids.UUID{}.String()}), http.StatusBadRequest,
-			api.CodeInvalidCursor},
+				Site: ids.New().String(), SiteType: dependency.SiteNodeText, Attribute: ids.UUID{}.String()}),
+			http.StatusBadRequest, api.CodeInvalidCursor},
+		{"a cursor of a site's type that no usage has", variableUsagesPath(p, w.gold, "read") + "&cursor=" +
+			mustCursor(t, usageKey{Board: ids.New().String(), Node: ids.New().String(), Site: ids.New().String(),
+				SiteType: "jumper", Attribute: ids.UUID{}.String()}), http.StatusBadRequest, api.CodeInvalidCursor},
+		// A cursor that the server wrote before the key held the site's
+		// type.
+		{"a cursor without the site's type", variableUsagesPath(p, w.gold, "read") + "&cursor=" +
+			mustCursor(t, struct {
+				Board     string `json:"board"`
+				Node      string `json:"node"`
+				Site      string `json:"site"`
+				Attribute string `json:"attribute"`
+			}{ids.New().String(), ids.New().String(), ids.New().String(), ids.UUID{}.String()}),
+			http.StatusBadRequest, api.CodeInvalidCursor},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			wantCode(t, tt.name, call(h, http.MethodGet, tt.path, nil, o.header(false)), tt.status, tt.code)
@@ -522,6 +536,40 @@ func TestUsagesPaged(t *testing.T) {
 		}
 	}
 	wantDrift(t, w.admin, p)
+}
+
+// TestUsagesSharedUUIDs checks that a list of usages tells apart two sites
+// of one node that share a UUID, as a client chooses the IDs of nodes and
+// connections: Keep's text and the label of gate, which leaves Keep and
+// whose UUID is Keep's, both show coins, and both are listed, the label
+// first, as a key orders the sites of one UUID by their types, whole or a
+// usage a page, whose cursor holds the type of its last site.
+func TestUsagesSharedUUIDs(t *testing.T) {
+	t.Parallel()
+	s, d, owner, ws := inviteServer(t, "open", nil)
+	h := s.main
+	p := createProject(t, h, owner, ws, "Harbour").ID
+	board, keep, pier, coins := newBoardID(), newNodeID(), newNodeID(), newVariableID()
+	gate := ids.Encode(ids.Connection, uuidOf(t, keep))
+	pos := map[string]int{"x": 0, "y": 0}
+	sendBatch(t, h, owner, p,
+		cmd("board.create", map[string]any{"id": board, "name": "Harbour"}),
+		cmd("variable.create", map[string]any{"id": coins, "key": "coins", "type": "int", "scope": "global"}),
+		cmd("node.create", map[string]any{"id": keep, "board_id": board, "type": "element", "title": "Keep",
+			"position": pos, "text": richText(textInline("Coins: "), valueInline(coins))}),
+		cmd("node.create", map[string]any{"id": pier, "board_id": board, "type": "element", "title": "Pier",
+			"position": pos}),
+		cmd("connection.create", map[string]any{"id": gate, "from_node_id": keep, "to_node_id": pier,
+			"label": richText(textInline("Pay "), valueInline(coins))}),
+	)
+	wantDrift(t, d.Admin(t), p)
+	want := []string{"connection_label Harbour/Keep " + gate, "node_text Harbour/Keep"}
+	for _, limit := range []int{50, 1} {
+		if got := sites(usages(t, h, owner, variableUsagesPath(p, coins, "read"), limit)); !slices.Equal(got,
+			want) {
+			t.Errorf("coins' reads, %d usages a page, are %q, want %q", limit, got, want)
+		}
+	}
 }
 
 // TestIndexKeepsUnchangedRows checks that a batch that changes a text, or the

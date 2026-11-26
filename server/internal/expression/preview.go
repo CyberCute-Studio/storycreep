@@ -108,7 +108,7 @@ func Preview(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, r
 		return nil, err
 	}
 	for i := range out {
-		out[i].BoardName, out[i].NodeTitle = labels[out[i].key.Board], labels[out[i].key.Node]
+		out[i].BoardName, out[i].NodeTitle = labels.Boards[out[i].key.Board], labels.Nodes[out[i].key.Node]
 	}
 	return out, nil
 }
