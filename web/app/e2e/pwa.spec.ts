@@ -220,6 +220,32 @@ test("a new build waits for the user's reload, while the page goes on with its o
   page,
   context,
 }) => {
+  // The page's build is an older one, as the worker that the page first
+  // registers says: the server's worker, whose list names another revision
+  // of the entry page. Playwright can change the script that a page
+  // registers, but not the one that the browser asks for itself as it
+  // checks for a new version, which is the server's own: the new build.
+  const shellEntry = /"revision":"([0-9a-f]+)","url":"\.\/"/;
+  const older = "0".repeat(32);
+  await context.route("**/app/sw.js", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.text()).replace(
+      shellEntry,
+      `"revision":"${older}","url":"./"`,
+    );
+    expect(body).toContain(older);
+    await route.fulfill({ response, body });
+  });
+  const newer = (await (await page.request.get("/app/sw.js")).text()).match(
+    shellEntry,
+  )?.[1];
+  expect(newer).toMatch(/^[0-9a-f]{32}$/);
+  /** Returns the revisions of the entry page that the cache holds. */
+  const shellRevisions = async () =>
+    (await cachedURLs(page))
+      .filter((u) => u.includes("/app/?__WB_REVISION__="))
+      .map((u) => new URL(u).searchParams.get("__WB_REVISION__"));
+
   const session = await signedIn(page, "Una Update");
   const projectId = await makeProject(page.request, session, "Harbour");
   const boardId = newId("board");
@@ -233,28 +259,8 @@ test("a new build waits for the user's reload, while the page goes on with its o
   expect((await page.reload())?.fromServiceWorker()).toBe(true);
   const heading = page.getByRole("heading", { level: 1 });
   await expect(heading).toHaveText("Quay");
-  const shellBefore = (await cachedURLs(page)).filter((u) =>
-    u.includes("/app/?__WB_REVISION__="),
-  );
-  expect(shellBefore).toHaveLength(1);
-
-  // The server has a new build, whose worker lists another revision of the
-  // entry page: the worker of another URL of the script, which the page
-  // registers below, as the browser would find a new worker at the same
-  // URL. Playwright cannot change the script of a worker that the browser
-  // checks for a new version itself, but it can change one that a page
-  // registers.
-  const revision = "0".repeat(32);
-  const next = "/app/sw.js?next";
-  await context.route(`**${next}`, async (route) => {
-    const response = await route.fetch();
-    const body = (await response.text()).replace(
-      /"revision":"[0-9a-f]+","url":"\.\/"/,
-      `"revision":"${revision}","url":"./"`,
-    );
-    expect(body).toContain(revision);
-    await route.fulfill({ response, body });
-  });
+  expect(await shellRevisions()).toEqual([older]);
+  await context.unroute("**/app/sw.js");
 
   // The user types a description, which they have not saved, as the page
   // finds the new build.
@@ -267,9 +273,11 @@ test("a new build waits for the user's reload, while the page goes on with its o
   await page.evaluate(() => {
     (window as { sameDocument?: boolean }).sameDocument = true;
   });
-  await page.evaluate(async (url) => {
-    await navigator.serviceWorker.register(url, { scope: "/app/" });
-  }, next);
+  // The browser asks for the worker, as it does once an hour for the page,
+  // and finds the server's, of the new build.
+  await page.evaluate(async () => {
+    await (await navigator.serviceWorker.getRegistration())?.update();
+  });
   const notice = page
     .getByRole("status")
     .filter({ hasText: en["shell.update.body"] });
@@ -306,23 +314,12 @@ test("a new build waits for the user's reload, while the page goes on with its o
   await context.unroute("**/app/assets/**");
 
   // The user reloads: the new build's worker takes over, and the page loads
-  // anew, from its shell, whose old revision is gone from the cache. The
-  // page that loads registers /app/sw.js, as always, which the browser would
-  // take for yet another worker than that of the test's URL, and install:
-  // the test's new build has its URL alone.
-  await context.route("**/app/sw.js", (route) => route.abort());
+  // anew, from its shell, whose old revision is gone from the cache.
   await press(notice.getByRole("button", { name: en["shell.update.reload"] }));
   await page.waitForFunction(
     () => (window as { sameDocument?: boolean }).sameDocument === undefined,
   );
   await expect(heading).toHaveText(en["variables.title"]);
-  expect(
-    await page.evaluate(() => navigator.serviceWorker.controller?.scriptURL),
-  ).toMatch(/\/app\/sw\.js\?next$/);
   await expect(notice).toHaveCount(0);
-  expect(
-    (await cachedURLs(page)).filter((u) =>
-      u.includes("/app/?__WB_REVISION__="),
-    ),
-  ).toEqual([expect.stringContaining(`__WB_REVISION__=${revision}`)]);
+  expect(await shellRevisions()).toEqual([newer]);
 });
