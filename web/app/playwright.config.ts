@@ -21,7 +21,15 @@ export default defineConfig({
   forbidOnly: process.env.CI !== undefined,
   retries: process.env.CI === undefined ? 0 : 1,
   reporter: process.env.CI === undefined ? "list" : [["list"], ["html"]],
-  use: { baseURL, trace: "retain-on-failure" },
+  use: {
+    baseURL,
+    trace: "retain-on-failure",
+    // The app's service worker would answer the app's pages from its cache,
+    // and keep every file of the build in each test's context: the tests
+    // check what the server answers, and e2e/pwa.spec.ts, which allows it,
+    // checks the worker (PRD FR-OFF-01, plan note N95).
+    serviceWorkers: "block",
+  },
   projects: [
     {
       name: "desktop",

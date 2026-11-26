@@ -1,2 +1,9 @@
 packages:
   - web/*
+
+overrides:
+  # workbox-build, which vite-plugin-pwa builds the web app's service worker
+  # with, asks for glob 11, whose glob and minimatch have advisories
+  # (GHSA-3g3m-2fjr-6pw4, GHSA-g3hv-75wg-m249). glob 14 keeps the globSync
+  # that it calls, with the same options, and needs a minimatch without them.
+  workbox-build>glob: 14.0.6

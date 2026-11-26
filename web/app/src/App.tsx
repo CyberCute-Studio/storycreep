@@ -8,6 +8,7 @@ import { Component, type ReactNode } from "react";
 import { I18nextProvider, useTranslation } from "react-i18next";
 import { ErrorConsoleBody, ErrorConsoleProvider } from "./errors/ErrorConsole";
 import type { ErrorLog } from "./errors/log";
+import { type AppShell, useShellState } from "./pwa/worker";
 import type { createAppRouter } from "./router";
 import { Button } from "./ui/Button";
 import { useDocumentTitle } from "./ui/title";
@@ -24,7 +25,7 @@ export function App({ i18n, queryClient, router, log }: AppProps) {
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={queryClient}>
         <ErrorConsoleProvider log={log}>
-          <CrashBoundary>
+          <CrashBoundary shell={router.options.context.pwa}>
             <RouterProvider router={router} />
           </CrashBoundary>
         </ErrorConsoleProvider>
@@ -38,10 +39,13 @@ export function App({ i18n, queryClient, router, log }: AppProps) {
  * router from rendering, as one that its error page could not show, since
  * that page failed too (createAppRouter turns the router's own boundary
  * off); its pages' errors show that page instead. The React root has
- * recorded it.
+ * recorded it. Its reload is the shell's, where the page has the app's
+ * service worker (PRD FR-OFF-01): a new build's worker that waits takes
+ * over first, as for the header's notice of a new version, since the old
+ * one would answer a reload with the build that crashed.
  */
-class CrashBoundary extends Component<
-  { children: ReactNode },
+export class CrashBoundary extends Component<
+  { children: ReactNode; shell?: AppShell },
   { crashed: boolean }
 > {
   state = { crashed: false };
@@ -51,11 +55,15 @@ class CrashBoundary extends Component<
   }
 
   render() {
-    return this.state.crashed ? <Crashed /> : this.props.children;
+    return this.state.crashed ? (
+      <Crashed shell={this.props.shell} />
+    ) : (
+      this.props.children
+    );
   }
 }
 
-function Crashed() {
+function Crashed({ shell }: { shell?: AppShell }) {
   const { t } = useTranslation();
   useDocumentTitle(t("crash.title"));
   return (
@@ -63,11 +71,30 @@ function Crashed() {
       <h1 className="text-2xl font-semibold">{t("crash.title")}</h1>
       <p>{t("crash.body")}</p>
       <div>
-        <Button variant="primary" onClick={() => window.location.reload()}>
-          {t("crash.reload")}
-        </Button>
+        {shell ? (
+          <ShellReload shell={shell} />
+        ) : (
+          <Button variant="primary" onClick={() => window.location.reload()}>
+            {t("crash.reload")}
+          </Button>
+        )}
       </div>
       <ErrorConsoleBody />
     </main>
+  );
+}
+
+/** The crash page's reload, through the shell, which waits a while for the page's batches first. */
+function ShellReload({ shell }: { shell: AppShell }) {
+  const { t } = useTranslation();
+  const { reloading } = useShellState(shell);
+  return (
+    <Button
+      variant="primary"
+      disabled={reloading}
+      onClick={() => void shell.reload()}
+    >
+      {t("crash.reload")}
+    </Button>
   );
 }

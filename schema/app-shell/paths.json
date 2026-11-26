@@ -1,0 +1,35 @@
+{
+  "entry": [
+    "/app/",
+    "/app/?x=1",
+    "/app/login",
+    "/app/projects",
+    "/app/projects/",
+    "/app/projects/prj_0123/boards/brd_4567?view=script",
+    "/app/favicon",
+    "/app/icons",
+    "/app/a%2Fb",
+    "/app/%E2%9C%93"
+  ],
+  "other": [
+    "/app/index.html",
+    "/app/index.html?x=1",
+    "/app/index.html/",
+    "/app/favicon.svg",
+    "/app/manifest.webmanifest",
+    "/app/sw.js",
+    "/app/icons/icon-192.png",
+    "/app/assets",
+    "/app/assets/",
+    "/app/assets/x",
+    "/app/assets/index-abc.js",
+    "/app/assets/index-old.js",
+    "/app/missing.js",
+    "/app/projects/old.css",
+    "/app/projects/x.",
+    "/app/.hidden",
+    "/app/a//b",
+    "/app/a%2Fb.c",
+    "/app/%FF"
+  ]
+}

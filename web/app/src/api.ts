@@ -493,3 +493,30 @@ export function createQueryClient(
     },
   });
 }
+
+/**
+ * Resolves once client has no mutation under way, as a form's save, an
+ * import, or an upload, or once wait milliseconds have passed, as before
+ * the page reloads for a new version of the app (PRD FR-OFF-01), so that a
+ * save that the user made just before is not cut off on its way.
+ */
+export function whenSaved(client: QueryClient, wait: number): Promise<void> {
+  return new Promise((resolve) => {
+    if (client.isMutating() === 0) {
+      resolve();
+      return;
+    }
+    let stop = () => {};
+    const done = () => {
+      stop();
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(done, wait);
+    stop = client.getMutationCache().subscribe(() => {
+      if (client.isMutating() === 0) {
+        done();
+      }
+    });
+  });
+}

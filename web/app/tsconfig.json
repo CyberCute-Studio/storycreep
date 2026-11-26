@@ -19,8 +19,12 @@
     "lint",
     "e2e",
     "bench",
+    "scripts",
     "vite.config.ts",
     "playwright.config.ts",
     "playwright.bench.config.ts"
-  ]
+  ],
+  // The service worker's own script has the types of a worker, not of a
+  // page (tsconfig.sw.json).
+  "exclude": ["src/sw/sw.ts"]
 }

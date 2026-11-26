@@ -34,6 +34,7 @@ import type { Realtime } from "../document/realtime";
 import { ErrorConsoleProvider } from "../errors/ErrorConsole";
 import { createErrorLog } from "../errors/log";
 import { createAppI18n } from "../i18n";
+import type { AppShell } from "../pwa/worker";
 import { parseSearch } from "../router";
 import { routeTree } from "../routeTree.gen";
 
@@ -91,6 +92,8 @@ export interface RenderAppOptions {
    * notifications changed (fakeRealtime); none if not set.
    */
   realtime?: Realtime;
+  /** The page's side of the app's service worker, as a fake (FR-OFF-01); none if not set. */
+  pwa?: AppShell;
 }
 
 /**
@@ -160,6 +163,7 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
       checkSession,
       documents,
       realtime: options.realtime,
+      pwa: options.pwa,
     },
     // The address's values read as the app reads them.
     parseSearch,

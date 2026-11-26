@@ -1,5 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createStore } from "zustand/vanilla";
+import { createQueryClient } from "../api";
+import { createErrorLog } from "../errors/log";
+import { Documents } from "./documents";
 import { whenSent } from "./sent";
 import type { DocumentState, ProjectDocument } from "./store";
 
@@ -64,5 +67,34 @@ describe("whenSent", () => {
     const sent = whenSent(doc, abort.signal, 3_000);
     abort.abort();
     expect(await settled(sent)).toBe(true);
+  });
+});
+
+describe("Documents.whenSent", () => {
+  it("waits for the batches of every document of the page, for at most the wait, as a reload for a new version does", async () => {
+    vi.useFakeTimers();
+    const log = createErrorLog();
+    const documents = new Documents({
+      queryClient: createQueryClient(log),
+      log,
+    });
+    onTestFinished(() => documents.close());
+    const a = documents.get("prj_a");
+    const b = documents.get("prj_b");
+    a.store.setState({ sending: 1 });
+    b.store.setState({ sending: 2 });
+    const sent = documents.whenSent(10_000);
+    expect(await settled(sent)).toBe(false);
+    a.store.setState({ sending: 0 });
+    expect(await settled(sent)).toBe(false);
+    b.store.setState({ sending: 0 });
+    expect(await settled(sent)).toBe(true);
+
+    a.store.setState({ sending: 1 });
+    const waited = documents.whenSent(10_000);
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(await settled(waited)).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await settled(waited)).toBe(true);
   });
 });
