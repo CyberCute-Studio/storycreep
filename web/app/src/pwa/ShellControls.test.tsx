@@ -1,6 +1,13 @@
-import { act, screen, within } from "@testing-library/react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { I18nextProvider } from "react-i18next";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { CrashBoundary } from "../App";
+import { createQueryClient } from "../api";
+import { ErrorConsoleProvider } from "../errors/ErrorConsole";
+import { createErrorLog } from "../errors/log";
+import { createAppI18n } from "../i18n";
 import { renderApp } from "../test/app";
 import type { AppShell, ShellState } from "./worker";
 
@@ -8,7 +15,7 @@ import type { AppShell, ShellState } from "./worker";
 // FR-OFF-01, plan note N95), over a fake of the page's side of the worker
 // (worker.ts): the offer to install, while the browser makes it, and the
 // notice of a new version, which takes neither the focus nor what the user
-// typed.
+// typed; and the crash page's reload, which is the shell's too.
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -91,5 +98,36 @@ describe("the header", () => {
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(true);
+  });
+});
+
+describe("the crash page", () => {
+  it("reloads through the shell, so that a new build's worker that waits takes over first", async () => {
+    // React reports the error that its boundary caught.
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const user = userEvent.setup();
+    const shell = fakeShell({ update: true });
+    const log = createErrorLog();
+    function Fails(): never {
+      throw new Error("a page that fails");
+    }
+    render(
+      <I18nextProvider i18n={createAppI18n(["en"], document.documentElement)}>
+        <QueryClientProvider client={createQueryClient(log)}>
+          <ErrorConsoleProvider log={log}>
+            <CrashBoundary shell={shell}>
+              <Fails />
+            </CrashBoundary>
+          </ErrorConsoleProvider>
+        </QueryClientProvider>
+      </I18nextProvider>,
+    );
+    const reload = (await screen.findByRole("button", {
+      name: "Reload the page",
+    })) as HTMLButtonElement;
+    await user.click(reload);
+    expect(shell.reload).toHaveBeenCalledOnce();
+    shell.set({ reloading: true });
+    expect(reload.disabled).toBe(true);
   });
 });

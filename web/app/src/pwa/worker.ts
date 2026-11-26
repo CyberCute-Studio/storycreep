@@ -9,12 +9,15 @@
 // on, and then waits: the page that its worker answered goes on with its own
 // build, whose files its worker keeps, and says that a new version is
 // ready, and the user reloads when they choose, once they have saved what
-// they are editing. The reload waits for the page's batches that are on
-// their way to the server, and then has the new worker take over, which
-// every page of the app then has, and loads the page anew. The page asks
-// the server for a new worker once an hour, and once it is shown again after
-// that, since a page of the app may stay open for days, and browsers ask
-// only as a page loads.
+// they are editing. A page that no worker answered, as one reloaded past
+// the cache, says so too once a worker installs after one that the
+// browser had; and a page that a new worker took over without its asking,
+// as for another page's reload, says so then. The reload waits a while for
+// the page's batches that are on their way to the server, and then has the
+// new worker take over, which every page of the app then has, and loads
+// the page anew. The page asks the server for a new worker once an hour,
+// and once it is shown again after that, since a page of the app may stay
+// open for days, and browsers ask only as a page loads.
 //
 // The browser's offer to install the app is the page's to make: the page
 // keeps it, rather than let the browser show its own bar, and its header
@@ -28,11 +31,14 @@ export interface ShellState {
   /**
    * Whether the page can have the worker: "insecure" in a page that is not
    * a secure context, as one served over plain HTTP from another machine,
-   * and "unsupported" in a browser without service workers, where the app
-   * runs online alone.
+   * and "unsupported" in a browser without service workers, or that
+   * refuses them as the page asks, where the app runs online alone.
    */
   offline: "available" | "insecure" | "unsupported";
-  /** Whether a new build of the app waits to take over from the page's. */
+  /**
+   * Whether a new build of the app is ready: its worker waits to take over
+   * from the page's, or has taken over the page, whose build is older.
+   */
   update: boolean;
   /** Whether the page is reloading for the new build. */
   reloading: boolean;
@@ -48,8 +54,8 @@ export interface AppShell {
   /** Shows the browser's prompt to install the app, while it offers to. */
   install(): Promise<void>;
   /**
-   * Waits for the page's batches, has the new build's worker take over, if
-   * one waits, and loads the page anew.
+   * Waits a while for the page's batches, has the new build's worker take
+   * over, if one waits, and loads the page anew.
    */
   reload(): Promise<void>;
 }
@@ -100,7 +106,8 @@ export function startShell(win: Window, options: ShellOptions): AppShell {
   let prompt: InstallPromptEvent | undefined;
   let registration: ServiceWorkerRegistration | undefined;
   // Whether this page asked the new worker to take over, and so reloads
-  // once it has: another page, which did not, goes on as it is.
+  // once it has: another page, which did not, goes on as it is, and says
+  // that a new version is ready.
   let takeover = false;
 
   win.addEventListener("beforeinstallprompt", (event) => {
@@ -115,11 +122,23 @@ export function startShell(win: Window, options: ShellOptions): AppShell {
   });
 
   const container =
-    state.offline === "available" ? win.navigator.serviceWorker : undefined;
+    state.offline === "available" ? containerOf(win) : undefined;
   if (container !== undefined && register) {
+    // The worker that answers the page's requests, if one does.
+    let controller = container.controller;
     container.addEventListener("controllerchange", () => {
+      const before = controller;
+      controller = container.controller;
       if (takeover) {
         win.location.reload();
+      } else if (before !== null) {
+        // A new build's worker took over from the page's without the page
+        // asking, as for another page's reload, or once a reload that did
+        // not wait for it loaded the page from the old one: the page goes
+        // on with an older build than the worker's. A worker that takes
+        // over a page that had none, as the first one does, is of the
+        // page's build.
+        set({ update: true });
       }
     });
     container
@@ -143,23 +162,26 @@ export function startShell(win: Window, options: ShellOptions): AppShell {
   }
 
   /**
-   * Follows the workers of r: a new build's that waits, once the page has a
-   * worker, which its build is then of. A page without one, as on the first
-   * visit, or after a reload that skipped the worker, loaded the server's
-   * build, which a worker that waits is of too.
+   * Follows the workers of r. A worker that waits as the page registers is
+   * of a new build if a worker answered the page, which its build is then
+   * of; a page that none answered, as one reloaded past the cache, loaded
+   * the server's build, which a worker that waits is of too. A worker that
+   * installs as the page goes on, after one that the browser had, is of a
+   * newer build than the page's, whether a worker answered the page or
+   * not, unless the page was reloaded past the cache once the server had
+   * that build and before the browser found it, where the notice's reload
+   * loads the same build; the first worker is of the page's build.
    */
   function watch(r: ServiceWorkerRegistration, sw: ServiceWorkerContainer) {
-    const waits = () => {
-      if (r.waiting !== null && sw.controller !== null) {
-        set({ update: true });
-      }
-    };
-    waits();
+    if (r.waiting !== null && sw.controller !== null) {
+      set({ update: true });
+    }
     r.addEventListener("updatefound", () => {
+      const replaces = r.active !== null;
       const worker = r.installing;
       worker?.addEventListener("statechange", () => {
-        if (worker.state === "installed") {
-          waits();
+        if (worker.state === "installed" && replaces) {
+          set({ update: true });
         }
       });
     });
@@ -213,7 +235,9 @@ export function startShell(win: Window, options: ShellOptions): AppShell {
         // The reload goes on: the user asked for it.
       }
       const waiting = registration?.waiting;
-      if (waiting && container?.controller) {
+      if (waiting) {
+        // The new worker takes over this page as it activates, whether a
+        // worker answered it or not (clients.claim, in sw.ts).
         takeover = true;
         waiting.postMessage({ type: "SKIP_WAITING" });
         win.setTimeout(() => win.location.reload(), takeoverWait);
@@ -231,7 +255,20 @@ function offlineState(win: Window): ShellState["offline"] {
   if (!win.isSecureContext) {
     return "insecure";
   }
-  return "serviceWorker" in win.navigator ? "available" : "unsupported";
+  return containerOf(win) === undefined ? "unsupported" : "available";
+}
+
+/**
+ * Returns the service workers of a page of win, or undefined in a browser
+ * that has none, or that refuses them as the page asks, as one may with
+ * the site's data blocked, where the app runs online alone.
+ */
+function containerOf(win: Window): ServiceWorkerContainer | undefined {
+  try {
+    return win.navigator.serviceWorker;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Returns the state of shell, which the component renders anew as it changes. */

@@ -3,8 +3,9 @@ import { type AppShell, type ShellOptions, startShell } from "./worker";
 
 // The page's side of the app's service worker and of installing the app
 // (PRD FR-OFF-01, plan note N95), in a window of fakes: what it registers,
-// where it registers nothing, when it says that a new version is ready, and
-// how its reload has the new version take over, in its page alone.
+// where it registers nothing, when it says that a new version is ready,
+// whether a worker answered the page or not, and how its reload has the
+// new version take over, and reloads its page alone.
 
 /** A worker of the registration, whose state the test moves on. */
 class FakeWorker extends EventTarget {
@@ -22,6 +23,7 @@ class FakeWorker extends EventTarget {
 class FakeRegistration extends EventTarget {
   installing: FakeWorker | null = null;
   waiting: FakeWorker | null = null;
+  active: FakeWorker | null = null;
   update = vi.fn(async () => undefined);
   /** A new worker installs and waits, as of a new build. */
   newWorker(): FakeWorker {
@@ -42,12 +44,25 @@ class FakeContainer extends EventTarget {
     async (_url: string, _options?: RegistrationOptions) =>
       this.registration as unknown as ServiceWorkerRegistration | undefined,
   );
-  /** The waiting worker takes over, as once a page asked it to. */
+  /**
+   * The waiting worker takes over, as once a page asked it to, the page
+   * too, whether a worker answered it or not (clients.claim).
+   */
   takeOver() {
+    const worker = this.registration.waiting;
     this.registration.waiting = null;
-    this.controller = {};
+    this.registration.active = worker;
+    this.controller = worker ?? {};
     this.dispatchEvent(new Event("controllerchange"));
   }
+}
+
+/** A worker of an earlier build answered the page, and is the registration's active one. */
+function answered(w: FakeWindow) {
+  const worker = new FakeWorker();
+  worker.state = "activated";
+  w.container.registration.active = worker;
+  w.container.controller = worker;
 }
 
 interface FakeWindow {
@@ -57,22 +72,36 @@ interface FakeWindow {
   document: EventTarget & { visibilityState: DocumentVisibilityState };
 }
 
-/** Returns a window of fakes: a secure context with service workers, unless told otherwise. */
+/**
+ * Returns a window of fakes: a secure context with service workers, unless
+ * told otherwise, or whose service workers throw as the page asks for them,
+ * if refuses says so.
+ */
 function fakeWindow({
   secure = true,
   serviceWorker = true,
+  refuses = false,
 }: {
   secure?: boolean;
   serviceWorker?: boolean;
+  refuses?: boolean;
 } = {}): FakeWindow {
   const container = new FakeContainer();
   const reload = vi.fn();
   const document = Object.assign(new EventTarget(), {
     visibilityState: "visible" as DocumentVisibilityState,
   });
+  const navigator = serviceWorker ? { serviceWorker: container } : {};
+  if (refuses) {
+    Object.defineProperty(navigator, "serviceWorker", {
+      get() {
+        throw new DOMException("The operation is insecure.", "SecurityError");
+      },
+    });
+  }
   const win = Object.assign(new EventTarget(), {
     isSecureContext: secure,
-    navigator: serviceWorker ? { serviceWorker: container } : {},
+    navigator,
     location: { reload },
     document,
     setInterval: (f: () => void, ms: number) => setInterval(f, ms),
@@ -126,9 +155,12 @@ describe("registering the worker", () => {
     expect(shell.getState().offline).toBe("insecure");
   });
 
-  it("registers nothing in a browser without service workers, nor in the development server", async () => {
+  it("registers nothing in a browser without service workers, or that throws as the page asks for them, nor in the development server", async () => {
     const without = await start(fakeWindow({ serviceWorker: false }));
     expect(without.getState().offline).toBe("unsupported");
+    // As a browser may with the site's data blocked.
+    const refusing = await start(fakeWindow({ refuses: true }));
+    expect(refusing.getState().offline).toBe("unsupported");
     const w = fakeWindow();
     await start(w, { register: false });
     expect(w.container.register).not.toHaveBeenCalled();
@@ -154,7 +186,7 @@ describe("a new version", () => {
   // Verifies: FR-OFF-01/AC2
   it("waits once it has installed, and the page says that it is ready, and goes on as it is until the user reloads", async () => {
     const w = fakeWindow();
-    w.container.controller = {};
+    answered(w);
     const shell = await start(w);
     const changes = vi.fn();
     shell.subscribe(changes);
@@ -169,23 +201,59 @@ describe("a new version", () => {
 
   it("is said to be ready where it waits as the page registers", async () => {
     const w = fakeWindow();
-    w.container.controller = {};
+    answered(w);
     w.container.registration.waiting = new FakeWorker();
     const shell = await start(w);
     expect(shell.getState().update).toBe(true);
   });
 
-  it("is not said of the first worker, nor in a page that loaded without the worker, which has the server's build", async () => {
+  it("is not said of the first worker, which a page that had none takes over, nor where it waits as a page that no worker answered registers, which has the server's build", async () => {
     const w = fakeWindow();
     const shell = await start(w);
     w.container.registration.newWorker();
     expect(shell.getState().update).toBe(false);
+    w.container.takeOver();
+    expect(shell.getState().update).toBe(false);
+    expect(w.reload).not.toHaveBeenCalled();
+
+    // A reload past the cache, as the worker waits.
+    const past = fakeWindow();
+    past.container.registration.active = new FakeWorker();
+    past.container.registration.waiting = new FakeWorker();
+    const loaded = await start(past);
+    expect(loaded.getState().update).toBe(false);
+  });
+
+  it("is said in a page that no worker answered once a worker installs after one that the browser had, and takes the page over once the user reloads", async () => {
+    const w = fakeWindow();
+    w.container.registration.active = new FakeWorker();
+    const shell = await start(w);
+    const worker = w.container.registration.newWorker();
+    expect(shell.getState().update).toBe(true);
+    await shell.reload();
+    expect(worker.posted).toEqual([{ type: "SKIP_WAITING" }]);
+    expect(w.reload).not.toHaveBeenCalled();
+    w.container.takeOver();
+    expect(w.reload).toHaveBeenCalledOnce();
+  });
+
+  it("is said once a new worker has taken over the page without its asking, as after a reload that did not wait for it", async () => {
+    const w = fakeWindow();
+    answered(w);
+    const shell = await start(w);
+    expect(shell.getState().update).toBe(false);
+    w.container.registration.waiting = new FakeWorker();
+    w.container.takeOver();
+    expect(shell.getState().update).toBe(true);
+    expect(w.reload).not.toHaveBeenCalled();
+    await shell.reload();
+    expect(w.reload).toHaveBeenCalledOnce();
   });
 
   // Verifies: FR-OFF-01/AC2
   it("takes over once the user reloads, after the page's batches are sent, and the page loads anew", async () => {
     const w = fakeWindow();
-    w.container.controller = {};
+    answered(w);
     let sent = () => {};
     const beforeReload = vi.fn(
       () => new Promise<void>((resolve) => (sent = resolve)),
@@ -208,7 +276,7 @@ describe("a new version", () => {
 
   it("loads the page anew all the same where the worker has not taken over in a while", async () => {
     const w = fakeWindow();
-    w.container.controller = {};
+    answered(w);
     const shell = await start(w, { takeoverWait: 3_000 });
     w.container.registration.newWorker();
     await shell.reload();
@@ -221,7 +289,7 @@ describe("a new version", () => {
   // Verifies: FR-OFF-01/AC2
   it("taking over for another page leaves this one as it is, which reloads at once when its user asks", async () => {
     const w = fakeWindow();
-    w.container.controller = {};
+    answered(w);
     const shell = await start(w);
     w.container.registration.newWorker();
     // Another page's user reloaded: the worker takes over every page.

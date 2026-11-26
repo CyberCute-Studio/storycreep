@@ -142,3 +142,31 @@ export function shellOf(response: Response, body: string): string {
   const nonce = nonceOf(response);
   return nonce === undefined ? body : body.replaceAll(nonce, noncePlace);
 }
+
+/** An src or href attribute of an element, with its value. */
+const linkAttribute = /\s(?:src|href)="([^"]*)"/g;
+
+/**
+ * Returns the URLs of the files of assets/ that body, the entry page at
+ * shell, names in its src and href attributes: the scripts and styles of
+ * its build, whose names hold a hash of their content, so that the entry
+ * page of another build names others, which a worker whose list does not
+ * have them cannot answer once the server has them no longer.
+ */
+export function assetsOf(body: string, shell: string): string[] {
+  const dir = new URL(`${assetsDir}/`, shell);
+  const urls: string[] = [];
+  for (const [, value] of body.matchAll(linkAttribute)) {
+    let url: URL;
+    try {
+      url = new URL(value, shell);
+    } catch {
+      // No URL, which names no file.
+      continue;
+    }
+    if (url.origin === dir.origin && url.pathname.startsWith(dir.pathname)) {
+      urls.push(url.href);
+    }
+  }
+  return urls;
+}

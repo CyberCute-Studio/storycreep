@@ -4,6 +4,7 @@ import paths from "../../../../schema/app-shell/paths.json" with {
 };
 import {
   answersWithShell,
+  assetsOf,
   newNonce,
   nonceOf,
   shellOf,
@@ -111,5 +112,26 @@ describe("shellOf", () => {
     const c = entryPage(newNonce());
     const other = c.body.replace("index-abc.js", "index-def.js");
     expect(shellOf(c.response, other)).not.toBe(shellOf(a.response, a.body));
+  });
+});
+
+describe("assetsOf", () => {
+  it("names the files of assets/ that the entry page loads, and no other", () => {
+    const shell = `${origin}/app/`;
+    const body = [
+      '<link rel="icon" type="image/svg+xml" href="/app/favicon.svg" />',
+      '<script type="module" crossorigin src="/app/assets/index-abc.js" nonce="N"></script>',
+      '<link rel="modulepreload" crossorigin href="assets/chunk-def.js">',
+      '<link rel="stylesheet" crossorigin href="/app/assets/index-ghi.css">',
+      '<link rel="manifest" href="/app/manifest.webmanifest">',
+      '<link rel="preconnect" href="https://other.example.com/app/assets/x.js">',
+      '<a href="http://[">',
+    ].join("\n");
+    expect(assetsOf(body, shell)).toEqual([
+      `${origin}/app/assets/index-abc.js`,
+      `${origin}/app/assets/chunk-def.js`,
+      `${origin}/app/assets/index-ghi.css`,
+    ]);
+    expect(assetsOf("<!doctype html><p>placeholder</p>", shell)).toEqual([]);
   });
 });

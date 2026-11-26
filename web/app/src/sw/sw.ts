@@ -5,10 +5,15 @@
 // build is answered from the cache: the files of a build go together, so a
 // page that the worker answered with its shell loads the scripts of that
 // shell's build, and keeps loading them, as a route's that it opens later,
-// once the server has another build and has them no longer. A new build is
-// a new worker, which waits, until the page asks it to take over
-// (SKIP_WAITING), as once the user takes the reload that the page offers
-// (src/pwa/worker.ts), or every page of the old one has gone.
+// once the server has another build and has them no longer. An entry page
+// that names files of assets/ that the list does not have, as one of the
+// other build while two serve at once, fails the install, which the browser
+// tries again as it next asks for the worker. As it activates, the worker
+// takes over each page of the app that has none, as the page that
+// registered the first worker, so that it keeps that page's files too. A
+// new build is a new worker, which waits, until the page asks it to take
+// over (SKIP_WAITING), as once the user takes the reload that the page
+// offers (src/pwa/worker.ts), or every page of the old one has gone.
 //
 // A navigation that the server answers with the entry page is answered with
 // the shell that the cache holds, with a new nonce (shell.ts), and the
@@ -20,8 +25,9 @@
 // there were no worker, and no answer of the server's is ever kept but the
 // build's files.
 
-import { cacheNames } from "workbox-core";
+import { cacheNames, clientsClaim } from "workbox-core";
 import {
+  addPlugins,
   cleanupOutdatedCaches,
   getCacheKeyForURL,
   matchPrecache,
@@ -29,7 +35,13 @@ import {
   precacheAndRoute,
 } from "workbox-precaching";
 import { registerRoute } from "workbox-routing";
-import { answersWithShell, newNonce, shellOf, withNonce } from "./shell";
+import {
+  answersWithShell,
+  assetsOf,
+  newNonce,
+  shellOf,
+  withNonce,
+} from "./shell";
 
 declare const self: ServiceWorkerGlobalScope & {
   /** The build's files, which vite-plugin-pwa writes in place of this. */
@@ -44,19 +56,48 @@ const shellURL = new URL("./", self.location.href).href;
 registerRoute(
   ({ request, url }) =>
     request.mode === "navigate" && answersWithShell(url, self.location.origin),
-  async ({ event, request }) => {
+  async ({ request }) => {
     const cached = await matchPrecache(shellURL);
     if (cached === undefined) {
       // biome-ignore lint/plugin: the service worker passes on what it cannot answer
       return fetch(request);
     }
     const body = await cached.text();
-    event.waitUntil(refreshShell(cached, body));
+    // Not held with waitUntil: the browser activates a new worker, which
+    // the user's reload waits for, only once this one has no event under
+    // way. A browser keeps a worker that has just answered running for a
+    // while, which the refresh needs; one that it stops first leaves the
+    // cached shell, as offline does.
+    void refreshShell(cached, body);
     return withNonce(cached, body, newNonce());
   },
 );
 precacheAndRoute(self.__WB_MANIFEST);
+// What the precache keeps as the worker installs: the entry page only if
+// the list has every file of assets/ that it names. As two builds serve at
+// once, as while the replicas of an instance are upgraded one by one, the
+// server may answer the page of the other build, whose scripts nothing
+// would have once that build is gone. A plugin that decides what the
+// precache keeps replaces Workbox's own, which keeps no error's answer, so
+// it keeps none either.
+addPlugins([
+  {
+    async cacheWillUpdate({ request, response }) {
+      if (response.status >= 400) {
+        return null;
+      }
+      if (request.url !== shellURL) {
+        return response;
+      }
+      const files = assetsOf(await response.clone().text(), shellURL);
+      return files.every((url) => getCacheKeyForURL(url) !== undefined)
+        ? response
+        : null;
+    },
+  },
+]);
 cleanupOutdatedCaches();
+clientsClaim();
 
 self.addEventListener("message", (event) => {
   if (event.data?.type === "SKIP_WAITING") {
