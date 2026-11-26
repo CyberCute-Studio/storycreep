@@ -957,10 +957,21 @@ export class ProjectDocument {
         : this.options.copies
             .readCopy(this.userId, this.projectId)
             .catch(() => undefined);
-    const body = await this.options.queryClient.ensureQueryData(
+    let body = await this.options.queryClient.ensureQueryData(
       projectQuery(this.projectId),
     );
     const copy = await copying;
+    // The read of the project that the query client holds may be older than
+    // the copy, as one kept from before another tab wrote it, whose seq the
+    // client's read does not follow but as the project itself changes
+    // (projectFollowed): the project is read anew before the copy is passed
+    // over, which, offline, gives the copy's own (offline/kept.ts).
+    if (copy !== undefined && copy.doc.seq > body.seq && !this.disposed) {
+      const held = body;
+      body = await this.options.queryClient
+        .fetchQuery({ ...projectQuery(this.projectId), staleTime: 0 })
+        .catch(() => held);
+    }
     if (this.disposed) {
       return;
     }

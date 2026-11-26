@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto";
 import type { Board } from "@storycreep/shared/api";
+import { onlineManager } from "@tanstack/react-query";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { IDBFactory } from "fake-indexeddb";
@@ -20,6 +21,9 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  // TanStack Query, which heard the "offline" event of goOffline, takes the
+  // next test's page for online again, as the browser does.
+  onlineManager.setOnline(true);
 });
 
 const quay: Board = {

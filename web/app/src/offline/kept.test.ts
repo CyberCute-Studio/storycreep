@@ -4,6 +4,7 @@ import {
   accountQuery,
   createQueryClient,
   instanceQuery,
+  sessionAgainWait,
   sessionQuery,
 } from "../api";
 import { createErrorLog } from "../errors/log";
@@ -63,8 +64,14 @@ function client(withReads = true) {
   return queryClient;
 }
 
+/** Makes the browser say that it has no connection, as the reads read it. */
+function offline() {
+  vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+}
+
 describe("a page that the server does not answer", () => {
   it("reads the session, the account, the instance, the project, and its workspace that the device keeps", async () => {
+    offline();
     fakeApi(() => {
       throw new NetworkError(new TypeError("Failed to fetch"));
     });
@@ -85,6 +92,7 @@ describe("a page that the server does not answer", () => {
   });
 
   it("reads the device's account only of the account that the page is signed in to", async () => {
+    offline();
     fakeApi(() => {
       throw new NetworkError(new TypeError("Failed to fetch"));
     });
@@ -110,6 +118,54 @@ describe("a page that the server does not answer", () => {
     await expect(client(false).fetchQuery(sessionQuery)).rejects.toThrow(
       NetworkError,
     );
+  });
+});
+
+describe("a page's session, where a request of it gets no answer", () => {
+  it("is asked for once more a moment after, while the browser says that it is online, before the device's is taken", async () => {
+    vi.useFakeTimers();
+    let answered = 0;
+    fakeApi((operation) => {
+      if (operation !== "getSession") {
+        throw new Error(`unexpected ${operation}`);
+      }
+      answered++;
+      if (answered === 1) {
+        throw new NetworkError(new TypeError("Failed to fetch"));
+      }
+      return testSession;
+    });
+    const session = client().fetchQuery(sessionQuery);
+    await vi.advanceTimersByTimeAsync(sessionAgainWait);
+    expect(await session).toEqual(testSession);
+    expect(answered).toBe(2);
+  });
+
+  it("is the device's where the server does not answer that either", async () => {
+    vi.useFakeTimers();
+    fakeApi(() => {
+      throw new NetworkError(new TypeError("Failed to fetch"));
+    });
+    const session = client().fetchQuery(sessionQuery);
+    await vi.advanceTimersByTimeAsync(sessionAgainWait);
+    expect(await session).toEqual(kept.session);
+  });
+
+  it("is kept where the page holds its own, as the server answered it, rather than taken for the device's", async () => {
+    offline();
+    fakeApi(() => {
+      throw new NetworkError(new TypeError("Failed to fetch"));
+    });
+    const queryClient = client();
+    queryClient.setQueryData(sessionQuery.queryKey, testSession);
+    expect(
+      await queryClient.fetchQuery({ ...sessionQuery, staleTime: 0 }),
+    ).toEqual(testSession);
+    // The device's, which the page started from, is the device's still.
+    queryClient.setQueryData(sessionQuery.queryKey, kept.session);
+    expect(
+      await queryClient.fetchQuery({ ...sessionQuery, staleTime: 0 }),
+    ).toEqual(kept.session);
   });
 });
 

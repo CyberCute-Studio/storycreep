@@ -13,6 +13,7 @@ import { NetworkError, type ProjectBody } from "@storycreep/shared/api";
 import type { QueryClient } from "@tanstack/react-query";
 import type { Workspace } from "../workspace/queries";
 import type { KeptSession } from "./db";
+import { online } from "./online";
 
 /** What the device keeps, as the page reads it once the server does not answer. */
 export interface KeptReads {
@@ -66,12 +67,17 @@ export function askForOwnSession(
  * Returns what read answers, or, where it rejects with a NetworkError, as
  * once the browser has no connection, what from finds that the device keeps
  * of it, for client's page; where the device keeps none, or client's page
- * has no device's, it rejects as read did.
+ * has no device's, it rejects as read did. Where again is set, and the
+ * browser says that it is online, read is tried once more again
+ * milliseconds after, before what from found is taken, so that a request
+ * that a moment's failure of the network left without an answer is not
+ * taken for the server's silence.
  */
 export async function orKept<T>(
   client: QueryClient,
   read: () => Promise<T>,
   from: (reads: KeptReads) => Promise<T | undefined>,
+  again?: number,
 ): Promise<T> {
   try {
     return await read();
@@ -83,6 +89,16 @@ export async function orKept<T>(
     const found = await from(reads).catch(() => undefined);
     if (found === undefined) {
       throw error;
+    }
+    if (again !== undefined && online()) {
+      await new Promise((resolve) => setTimeout(resolve, again));
+      try {
+        return await read();
+      } catch (second) {
+        if (!(second instanceof NetworkError)) {
+          throw second;
+        }
+      }
     }
     return found;
   }

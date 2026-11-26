@@ -22,13 +22,13 @@ import {
   instanceQuery,
   sessionQuery,
 } from "../api";
-import type { ComponentEntry } from "../document/doc";
+import { type ComponentEntry, emptyDoc, projectOf } from "../document/doc";
 import { Documents } from "../document/documents";
 import { createErrorLog } from "../errors/log";
 import { testAccount, testInstance, testSession } from "../test/app";
 import { fakeApi, refused, testProject, testWorkspace } from "../test/fake";
 import { fakeRealtime } from "../test/realtime";
-import { copySource, OfflineDatabase } from "./db";
+import { copySource, OfflineDatabase, openWait } from "./db";
 import { OfflineKeeper } from "./keeper";
 
 // The keeper of the projects that the device keeps offline (PRD FR-OFF-02,
@@ -114,14 +114,29 @@ const jo = {
 
 const page = <T>(items: T[]) => ({ items, next_cursor: null });
 
-/** Serves the test projects: each with boards bd_a and bd_b of two nodes and one, a variable, and a component, which reads whole. */
-function serve() {
+/**
+ * Serves the test projects: each with boards bd_a and bd_b of two nodes and
+ * one, a variable, and a component, which reads whole; an operation that
+ * fail returns an error for throws it, as the server's answer would be.
+ */
+function serve(
+  options: {
+    fail?: (operation: string) => Error | undefined;
+    component?: () => unknown;
+  } = {},
+) {
   const calls: string[] = [];
+  const times: number[] = [];
   const projects = new Map(
     [testProject, lighthouse, tower].map((p) => [p.id, p]),
   );
   fakeApi((operation, input) => {
     calls.push(operation);
+    times.push(Date.now());
+    const failure = options.fail?.(operation);
+    if (failure !== undefined) {
+      throw failure;
+    }
     const path =
       (input as { path?: Record<string, string> } | undefined)?.path ?? {};
     const project = path.project_id;
@@ -160,14 +175,28 @@ function serve() {
       case "listComponents":
         return page([jo]);
       case "getComponent":
-        return { ...jo, description: "The hero.", attributes: {} };
+        return (
+          options.component?.() ?? {
+            ...jo,
+            description: "The hero.",
+            attributes: {},
+          }
+        );
     }
     throw new Error(`unexpected ${operation}`);
   });
-  return calls;
+  return Object.assign(calls, { times });
 }
 
-function setup(options: { secure?: boolean; retryDelay?: number } = {}) {
+function setup(
+  options: {
+    secure?: boolean;
+    retryDelay?: number;
+    writeDelay?: number;
+    reachable?: () => Promise<boolean>;
+    pace?: { burst: number; interval: number };
+  } = {},
+) {
   const log = createErrorLog();
   // The other tabs' channel, which a test speaks on as another tab would.
   const heard = new Set<() => void>();
@@ -207,8 +236,10 @@ function setup(options: { secure?: boolean; retryDelay?: number } = {}) {
       },
     },
     storage: { persist },
-    writeDelay: 0,
+    writeDelay: options.writeDelay ?? 0,
     retryDelay: options.retryDelay ?? 20,
+    reachable: options.reachable,
+    pace: options.pace ?? { burst: 1, interval: 0 },
   });
   keeper.start();
   onTestFinished(async () => {
@@ -548,5 +579,239 @@ describe("a copy that the browser's quota refuses", () => {
       keeper.store.getState().pins.get(testProject.id)?.failure,
     ).toBeUndefined();
     await statusOf(keeper, testProject.id, "ready");
+  });
+});
+
+describe("the last opened project, where the server does not answer", () => {
+  it("stays though the browser says that it is online, as on a flight's network without the internet, and moves once the server answers", async () => {
+    serve();
+    let answers = true;
+    const { keeper, db, setOnline } = setup({
+      reachable: async () => answers,
+    });
+    keeper.opened(testProject.id, testProject.name);
+    await statusOf(keeper, testProject.id, "ready");
+    answers = false;
+    keeper.opened(lighthouse.id, lighthouse.name);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await keeper.idle();
+    expect(keeper.store.getState().pins.has(lighthouse.id)).toBe(false);
+    expect(keeper.store.getState().pins.get(testProject.id)?.auto).toBe(true);
+    expect(
+      await db.readCopy(testSession.user_id, testProject.id),
+    ).toBeDefined();
+    answers = true;
+    setOnline(true);
+    await statusOf(keeper, lighthouse.id, "ready");
+    expect(keeper.store.getState().pins.has(testProject.id)).toBe(false);
+  });
+});
+
+describe("a project's download", () => {
+  it("reads at the pace of the keeper's downloads, once it has read as many as it reads at once", async () => {
+    const calls = serve();
+    const { keeper } = setup({ pace: { burst: 1, interval: 150 } });
+    await keeper.pin(testProject.id, testProject.name);
+    await statusOf(keeper, testProject.id, "ready");
+    // The variables, the components, the two boards' content, and the
+    // component whole, each a turn after the one before.
+    const boards = calls.times.filter((_, i) => calls[i] === "listBoardNodes");
+    expect(boards).toHaveLength(2);
+    expect(boards[1] - boards[0]).toBeGreaterThanOrEqual(120);
+  });
+
+  it("waits a while to read again what a pass of reads left unread, as a component that keeps changing as it is read", async () => {
+    // The component reads without its values, as though an operation had
+    // changed it each time while it was read.
+    const calls = serve({ component: () => ({ ...jo, description: "" }) });
+    const { keeper } = setup({ retryDelay: 60_000 });
+    await keeper.pin(testProject.id, testProject.name);
+    await vi.waitFor(() =>
+      expect(calls.filter((c) => c === "getComponent").length).toBeGreaterThan(
+        0,
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const read = calls.filter((c) => c === "getComponent").length;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(calls.filter((c) => c === "getComponent").length).toBe(read);
+    expect(read).toBeLessThanOrEqual(3);
+    expect(keeper.store.getState().pins.get(testProject.id)?.status).toBe(
+      "downloading",
+    );
+  });
+
+  it("is tried again at once once the browser is online again, though a read failed a moment before", async () => {
+    let failing = true;
+    serve({
+      fail: (operation) =>
+        failing && operation === "listBoards"
+          ? refused(503, { code: "unavailable" })
+          : undefined,
+    });
+    // Nothing is tried again of itself within the test.
+    const { keeper, setOnline } = setup({ retryDelay: 60_000 });
+    await keeper.pin(testProject.id, testProject.name);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    failing = false;
+    setOnline(false);
+    setOnline(true);
+    await statusOf(keeper, testProject.id, "ready");
+  });
+
+  it("says that the copy could not be written where the project's workspace cannot be read", async () => {
+    serve({
+      fail: (operation) =>
+        operation === "listWorkspaces"
+          ? refused(403, { code: "forbidden" })
+          : undefined,
+    });
+    const { keeper } = setup({ retryDelay: 60_000 });
+    await keeper.pin(testProject.id, testProject.name);
+    await statusOf(keeper, testProject.id, "failed");
+    expect(keeper.store.getState().pins.get(testProject.id)?.failure).toBe(
+      "error",
+    );
+  });
+});
+
+describe("a kept project's copy", () => {
+  it("is written while operations keep coming, at the latest some writeDelays after the first", async () => {
+    serve();
+    const { keeper, db, realtime } = setup({ writeDelay: 40 });
+    await keeper.pin(testProject.id, testProject.name);
+    await statusOf(keeper, testProject.id, "ready");
+    const id = testProject.id;
+    realtime.hold(id);
+    let rev = 1;
+    // An operation every 10 milliseconds, each of which would put off a
+    // write a writeDelay after the last change.
+    const sending = setInterval(() => {
+      rev++;
+      realtime.send(
+        id,
+        [
+          {
+            type: "board.rename",
+            payload: { id: `bd_a${id}`, name: `Quay ${rev}` },
+          },
+        ],
+        [{ id: `bd_a${id}`, rev }],
+      );
+    }, 10);
+    try {
+      await vi.waitFor(
+        async () =>
+          expect(
+            (await db.readCopy(testSession.user_id, id))?.doc.seq,
+          ).toBeGreaterThan(1),
+        { timeout: 2_000 },
+      );
+    } finally {
+      clearInterval(sending);
+    }
+  });
+
+  it("is not taken back to an older seq by a document whose channel is not live, which writes once it is", async () => {
+    serve();
+    const user = testSession.user_id;
+    const { keeper, db, realtime } = setup();
+    await vi.waitFor(() => expect(keeper.available).toBe(true));
+    // The copy that another tab wrote, at a seq past the document's, as
+    // the server's, whose channel has yet to bring it up to it.
+    await db.changePin(user, testProject.id, () => ({
+      user_id: user,
+      project_id: testProject.id,
+      name: testProject.name,
+      chosen: true,
+      auto: false,
+      pinned_at: "2026-11-01T10:00:00Z",
+      status: "ready",
+    }));
+    await db.writeCopy(
+      {
+        user_id: user,
+        project_id: testProject.id,
+        seq: 5,
+        project: { ...testProject, seq: 5 },
+        workspace: {
+          id: testWorkspace.id,
+          name: testWorkspace.name,
+          slug: testWorkspace.slug,
+          default_locale: "en",
+          role: "owner",
+          membership: true,
+        },
+        saved_at: "2026-11-01T10:00:00Z",
+      },
+      { ...emptyDoc(5), project: projectOf(testProject) },
+      undefined,
+    );
+    await keeper.pin(testProject.id, testProject.name);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect((await db.readCopy(user, testProject.id))?.doc.seq).toBe(5);
+    // Live, the document is what the server has, as after a restore.
+    realtime.hold(testProject.id);
+    await vi.waitFor(
+      async () =>
+        expect((await db.readCopy(user, testProject.id))?.doc.seq).toBe(1),
+      { timeout: 4000 },
+    );
+  });
+
+  it("is said not kept where the device refuses the session that a page loaded offline starts from", async () => {
+    serve();
+    let full = true;
+    const put = IDBObjectStore.prototype.put;
+    vi.spyOn(IDBObjectStore.prototype, "put").mockImplementation(function (
+      this: IDBObjectStore,
+      ...args: Parameters<IDBObjectStore["put"]>
+    ) {
+      if (full && this.name === "sessions") {
+        throw new DOMException(
+          "The quota has been exceeded.",
+          "QuotaExceededError",
+        );
+      }
+      return put.apply(this, args);
+    });
+    const { keeper, db } = setup({ retryDelay: 20 });
+    await keeper.pin(testProject.id, testProject.name);
+    await statusOf(keeper, testProject.id, "failed");
+    expect(keeper.store.getState().pins.get(testProject.id)?.failure).toBe(
+      "quota",
+    );
+    expect(await db.session()).toBeUndefined();
+    full = false;
+    await statusOf(keeper, testProject.id, "ready");
+    expect((await db.session())?.user_id).toBe(testSession.user_id);
+  });
+});
+
+describe("what the device keeps, as a page that the server does not answer reads it", () => {
+  it("is none where the device's database does not open in time, rather than wait for it", async () => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const db = new OfflineDatabase();
+    vi.spyOn(db, "open").mockReturnValue(new Promise(() => {}));
+    const log = createErrorLog();
+    const queryClient = createQueryClient(log);
+    const keeper = new OfflineKeeper({
+      queryClient,
+      documents: new Documents({ queryClient, log }),
+      log,
+      db,
+      secure: true,
+      online: () => true,
+      onConnection: () => () => {},
+      lock: () => {},
+    });
+    const session = keeper.reads.session();
+    const project = keeper.reads.project(testSession.user_id, testProject.id);
+    await vi.advanceTimersByTimeAsync(openWait);
+    await expect(session).resolves.toBeUndefined();
+    await expect(project).resolves.toBeUndefined();
   });
 });

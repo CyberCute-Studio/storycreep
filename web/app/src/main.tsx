@@ -13,6 +13,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import {
   createQueryClient,
+  fetchSession,
   requestsIn,
   requestVersion,
   sessionQuery,
@@ -94,6 +95,14 @@ const offline = new OfflineKeeper({
   lock: writerLock(navigator),
   broadcast: secure ? tabsBroadcast() : undefined,
   storage: navigator.storage,
+  // The server answers where it answers the page's session, as signed in
+  // or out, which the keeper asks before it moves the pin of the project
+  // opened last (OfflineKeeper.opened).
+  reachable: () =>
+    fetchSession().then(
+      () => true,
+      () => false,
+    ),
 });
 if (secure) {
   keepReads(queryClient, offline.reads);

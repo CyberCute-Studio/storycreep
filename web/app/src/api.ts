@@ -182,6 +182,14 @@ export async function fetchSession(
 }
 
 /**
+ * How long, in milliseconds, the page waits to ask the server for its
+ * session once more, where the request got no answer while the browser said
+ * that it was online, before it takes the session that the device keeps
+ * (sessionQuery).
+ */
+export const sessionAgainWait = 1_000;
+
+/**
  * The session of the page, or null if the page is signed out. Signing in
  * and out set it (auth/session.ts), and so does the page once it asks the
  * server for it again (followSession): when it is shown again after another
@@ -194,12 +202,26 @@ export const sessionQuery = queryOptions({
   // A page that the server does not answer, as offline, is signed in to the
   // account that the device keeps the session of, which keeps projects
   // offline (PRD FR-OFF-02): the page asks the server again once the
-  // browser is online (main.tsx).
+  // browser is online (main.tsx). While the browser says that it is online,
+  // the page asks once more a moment after first, as a request that a
+  // moment's failure of the network left without an answer would else give
+  // the page the device's session, which has no CSRF token, which the
+  // server refuses what the page changes without. A page that holds its own
+  // session, as the server answered it, keeps it, as once its tab is shown
+  // again before the network is back (followSession), rather than take the
+  // device's in its place.
   queryFn: ({ signal, client }): Promise<SignedInBody | null> =>
     orKept(
       client,
       () => fetchSession(signal),
-      async (kept) => (await kept.session())?.session,
+      async (kept) => {
+        const held = client.getQueryData(sessionQuery.queryKey);
+        if (held === null || (held !== undefined && held.csrf_token !== "")) {
+          return held;
+        }
+        return (await kept.session())?.session;
+      },
+      sessionAgainWait,
     ),
   ...readByThePage,
   ...readOffline,

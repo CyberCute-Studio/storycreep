@@ -140,7 +140,10 @@ function newVersion(): string {
 export const openWait = 3_000;
 
 /** Resolves to whether db opens within wait milliseconds, leaving no timer behind. */
-function opensWithin(db: OfflineDatabase, wait: number): Promise<boolean> {
+export function opensWithin(
+  db: OfflineDatabase,
+  wait: number,
+): Promise<boolean> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve(false), wait);
     const done = (opened: boolean) => {

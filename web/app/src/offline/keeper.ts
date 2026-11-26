@@ -31,6 +31,8 @@ import { workspaceQuery } from "../workspace/queries";
 import {
   type CopyRecord,
   OfflineDatabase,
+  opensWithin,
+  openWait,
   overQuota,
   type PinFailure,
   type PinRecord,
@@ -99,10 +101,88 @@ export interface KeeperOptions {
   writeDelay?: number;
   /** How long, in milliseconds, after a read or a write that failed it is tried again: 30 seconds, if not set. */
   retryDelay?: number;
+  /**
+   * Resolves to whether the server answers, which the keeper asks before it
+   * moves the pin of the project that the account last opened, whose copy
+   * of the one before the device could not download again while the server
+   * does not answer, as on a flight's network without the internet, where
+   * the browser says that it is online (opened); always, if not set.
+   */
+  reachable?: () => Promise<boolean>;
+  /**
+   * How many of the parts and components of the projects that the keeper
+   * downloads it reads at once, at most, and how long, in milliseconds, it
+   * waits between reads after (Pace): readBurst and readInterval, if not set.
+   */
+  pace?: { burst: number; interval: number };
 }
 
 /** How many reads a kept project's document makes at once, as play mode's (inTurns). */
 const readsAtOnce = 6;
+
+/**
+ * How many of the parts and the components of the projects that the keeper
+ * downloads it reads at once, at most, as the boards of a project of the
+ * `medium` fixture, before it reads one each readInterval: a board's
+ * content is two requests, or more for one of more than 200 nodes, and a
+ * component one, so that the download of a project of the `large` fixture,
+ * of 100 boards and 100 components, which is in the background, makes about
+ * 200 of the 600 reads a minute that the server lets the account make (PRD
+ * NFR-SEC-06) in its first minute, and about 120 at most in each after,
+ * leaving the rest to the pages that the user reads.
+ */
+const readBurst = 40;
+
+/** How long, in milliseconds, the keeper waits between the reads of its downloads, once it has made readBurst at once (Pace). */
+const readInterval = 1_000;
+
+/**
+ * How many writeDelays after the first change of a kept project's document
+ * that no step has followed its copy is written at the latest, as while
+ * changes keep coming, from the sessions of many, each of which would else
+ * put the write off by a writeDelay again (Kept.changed).
+ */
+const maxWaits = 10;
+
+/**
+ * The pace of the reads of the keeper's downloads: burst at once, at most,
+ * then one each interval milliseconds, as a bucket that holds burst reads,
+ * and fills with one each interval, does.
+ */
+class Pace {
+  private readonly burst: number;
+  private readonly interval: number;
+  private tokens: number;
+  private at = Date.now();
+
+  constructor(burst: number, interval: number) {
+    this.burst = burst;
+    this.interval = interval;
+    this.tokens = burst;
+  }
+
+  /** Resolves once the next read may be made. */
+  async turn(): Promise<void> {
+    if (this.interval <= 0) {
+      return;
+    }
+    for (;;) {
+      const now = Date.now();
+      this.tokens = Math.min(
+        this.burst,
+        this.tokens + (now - this.at) / this.interval,
+      );
+      this.at = now;
+      if (this.tokens >= 1) {
+        this.tokens -= 1;
+        return;
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, (1 - this.tokens) * this.interval),
+      );
+    }
+  }
+}
 
 /** Returns a lock of the writer of navigator's, or one that every tab holds at once where the browser has no Web Locks. */
 export function writerLock(
@@ -147,12 +227,15 @@ export class OfflineKeeper {
   private writer = false;
   /** The account whose records the device keeps, null once the page is signed out, undefined until the session is known. */
   private followed: string | null | undefined;
-  /** The project whose pages the page last opened, which opened has pinned already. */
+  /** The project whose pages the page last opened, which opened has pinned already, or has to once the server answers. */
   private lastOpened: string | undefined;
-  /** The project whose pages the page opened while the browser had no connection, which opened pins once it has one. */
-  private openedOffline: { projectId: string; name: string } | undefined;
+  /** The project whose pages the page opened last, whose pin moves once the server answers, while it has not yet (moveAuto). */
+  private toMove: { projectId: string; name: string } | undefined;
   /** The changes of the records under way, one at a time, in order. */
   private queue: Promise<void> = Promise.resolve();
+  /** The steps of the copies' keeping under way (Kept), which may still write after the keeper has stopped, until they are done (idle). */
+  private readonly steps = new Set<Promise<void>>();
+  private readonly pace: Pace;
   private readonly stops: (() => void)[] = [];
   private stopWriting: (() => void) | undefined;
   /** Whether the keeper has stopped, after which it changes no record. */
@@ -162,6 +245,10 @@ export class OfflineKeeper {
     this.options = options;
     this.db = options.db ?? new OfflineDatabase();
     this.now = options.now ?? (() => new Date().toISOString());
+    this.pace = new Pace(
+      options.pace?.burst ?? readBurst,
+      options.pace?.interval ?? readInterval,
+    );
     this.store = createStore<OfflineState>(() => ({
       available: options.secure ? undefined : false,
       userId: undefined,
@@ -169,16 +256,47 @@ export class OfflineKeeper {
     }));
   }
 
-  /** The reads of what the device keeps, which the page's queries read once the server does not answer (offline/kept.ts). */
+  /**
+   * The reads of what the device keeps, which the page's queries read once
+   * the server does not answer (offline/kept.ts): none where the device's
+   * database does not open within openWait, as a browser's open of it may
+   * never settle, which would else keep the page loading, rather than show
+   * that the server does not answer (copySource).
+   */
   readonly reads: KeptReads = {
-    session: () => this.db.session(),
+    session: async () =>
+      (await this.opensSoon()) ? this.db.session() : undefined,
     project: async (userId, projectId) =>
-      (await this.db.copies(userId)).find((c) => c.project_id === projectId)
-        ?.project,
+      (await this.opensSoon())
+        ? (await this.db.copies(userId)).find((c) => c.project_id === projectId)
+            ?.project
+        : undefined,
     workspace: async (userId, workspaceId) =>
-      (await this.db.copies(userId)).find((c) => c.workspace.id === workspaceId)
-        ?.workspace,
+      (await this.opensSoon())
+        ? (await this.db.copies(userId)).find(
+            (c) => c.workspace.id === workspaceId,
+          )?.workspace
+        : undefined,
   };
+
+  /** Resolves to whether the device's database opens within openWait. */
+  private opensSoon(): Promise<boolean> {
+    return opensWithin(this.db, openWait);
+  }
+
+  /** Resolves once the next read of the downloads of the copies may be made, at their pace (Pace). */
+  turn(): Promise<void> {
+    return this.pace.turn();
+  }
+
+  /** Has the keeper wait for step, a step of a copy's keeping (Kept), before it is idle. */
+  track(step: Promise<void>): void {
+    this.steps.add(step);
+    const done = () => {
+      this.steps.delete(step);
+    };
+    step.then(done, done);
+  }
 
   /** Starts following the page's session, and keeping its account's copies once the tab is the writer. */
   start(): void {
@@ -216,13 +334,14 @@ export class OfflineKeeper {
     this.stops.push(
       this.options.onConnection((online) => {
         if (online) {
-          const opened = this.openedOffline;
-          this.openedOffline = undefined;
+          const opened = this.toMove;
           if (opened !== undefined) {
             this.moveAuto(opened.projectId, opened.name);
           }
+          // Everything is tried at once, what failed a while ago too, as
+          // without the connection.
           for (const kept of this.kept.values()) {
-            kept.schedule(0);
+            kept.retry();
           }
         }
       }),
@@ -251,9 +370,20 @@ export class OfflineKeeper {
     this.stopWriting?.();
   }
 
-  /** Resolves once the change of the records under way is done, after which a keeper that has stopped changes none, as before its database is closed. */
-  idle(): Promise<void> {
-    return this.queue;
+  /**
+   * Resolves once the change of the records under way is done, and the
+   * steps of the copies' keeping under way, after which a keeper that has
+   * stopped changes none, as before its database is closed.
+   */
+  async idle(): Promise<void> {
+    for (;;) {
+      await Promise.allSettled([...this.steps]);
+      await this.queue;
+      // A keeper that has not stopped may begin another at any time.
+      if (this.steps.size === 0 || !this.stopped) {
+        return;
+      }
+    }
   }
 
   /** Reports whether the page can keep projects offline, as far as it knows yet. */
@@ -294,48 +424,62 @@ export class OfflineKeeper {
   /**
    * Pins the project of projectId, named name, as the project that the
    * account last opened on the device, in place of the one before, whose
-   * copy goes unless the user made it available offline. While the browser
-   * has no connection, the pin moves once it has one: the copy of the one
-   * before, which the device could not download again until then, stays
-   * meanwhile, as for a user on a flight who goes from one project that the
-   * device keeps to another, and back.
+   * copy goes unless the user made it available offline. While the server
+   * does not answer, as while the browser has no connection, or on a
+   * flight's network without the internet, where the browser says that it
+   * is online, the pin moves once the browser is online again, and the
+   * server answers, or at the next project opened that it answers: the copy
+   * of the one before, which the device could not download again until
+   * then, stays meanwhile, as for a user on a flight who goes from one
+   * project that the device keeps to another, and back.
    */
   opened(projectId: string, name: string): void {
     if (!this.options.secure || this.lastOpened === `${projectId}:${name}`) {
       return;
     }
     this.lastOpened = `${projectId}:${name}`;
-    if (!this.options.online()) {
-      this.openedOffline = { projectId, name };
-      return;
-    }
-    this.openedOffline = undefined;
     this.moveAuto(projectId, name);
   }
 
-  /** Moves the pin of the project that the account last opened to projectId, named name, as opened says. */
+  /** Moves the pin of the project that the account last opened to projectId, named name, as opened says, once the server answers. */
   private moveAuto(projectId: string, name: string): void {
-    // The session's account is known once the changes before it are done,
-    // as the page's first, which follows the session (follow).
-    this.enqueue(async () => {
-      const userId = this.store.getState().userId;
-      if (userId === undefined || !(await this.ready())) {
-        return;
-      }
-      for (const pin of await this.db.pins(userId)) {
-        if (pin.auto && pin.project_id !== projectId) {
-          await this.db.changePin(userId, pin.project_id, (p) =>
-            p === undefined ? undefined : { ...p, auto: false },
-          );
+    const opened = { projectId, name };
+    this.toMove = opened;
+    if (!this.options.online()) {
+      return;
+    }
+    const reachable = this.options.reachable ?? (async () => true);
+    void reachable()
+      .catch(() => false)
+      .then((answers) => {
+        // A project opened since moves the pin in its place, and the
+        // session of another account forgets it (follow).
+        if (!answers || this.toMove !== opened) {
+          return;
         }
-      }
-      await this.db.changePin(userId, projectId, (pin) => ({
-        ...(pin ?? this.newPin(projectId, name)),
-        name,
-        auto: true,
-      }));
-      await this.changed();
-    });
+        this.toMove = undefined;
+        // The session's account is known once the changes before it are
+        // done, as the page's first, which follows the session (follow).
+        this.enqueue(async () => {
+          const userId = this.store.getState().userId;
+          if (userId === undefined || !(await this.ready())) {
+            return;
+          }
+          for (const pin of await this.db.pins(userId)) {
+            if (pin.auto && pin.project_id !== projectId) {
+              await this.db.changePin(userId, pin.project_id, (p) =>
+                p === undefined ? undefined : { ...p, auto: false },
+              );
+            }
+          }
+          await this.db.changePin(userId, projectId, (pin) => ({
+            ...(pin ?? this.newPin(projectId, name)),
+            name,
+            auto: true,
+          }));
+          await this.changed();
+        });
+      });
   }
 
   /**
@@ -368,19 +512,27 @@ export class OfflineKeeper {
     });
   }
 
-  /** Records that the copy of projectId has been written, which the page shows. */
+  /**
+   * Records that the copy of projectId has been written, which the page
+   * shows, and keeps the session for it, which a page that loads offline
+   * starts from: it rejects as that write does, as for the quota, after the
+   * pins have been read again, which the copy's caller records (Kept).
+   */
   async wrote(projectId: string): Promise<void> {
     if (this.stopped) {
       return;
     }
     this.failures.delete(projectId);
-    await this.saveSession();
-    await this.changed();
+    try {
+      await this.saveSession();
+    } finally {
+      await this.changed();
+    }
   }
 
-  /** Takes the pin and the copy of projectId off the device, as once the project can no longer be read. */
-  forget(projectId: string): Promise<void> {
-    return this.change(projectId, () => undefined);
+  /** Takes the pin and the copy of userId's projectId off the device, as once the project can no longer be read, while the page's session is still userId's. */
+  forget(userId: string, projectId: string): Promise<void> {
+    return this.change(projectId, () => undefined, userId);
   }
 
   /** Returns a new pin of projectId, of the account, neither chosen nor auto yet. */
@@ -396,17 +548,22 @@ export class OfflineKeeper {
     };
   }
 
-  /** Changes the pin of projectId, as change returns it, once the changes before it are done. */
+  /** Changes the pin of projectId, as change returns it, once the changes before it are done, of the account of, if set, alone. */
   private change(
     projectId: string,
     change: (pin: PinRecord | undefined) => PinRecord | undefined,
+    of?: string,
   ): Promise<void> {
     if (!this.options.secure) {
       return Promise.resolve();
     }
     return this.enqueue(async () => {
       const userId = this.store.getState().userId;
-      if (userId === undefined || !(await this.ready())) {
+      if (
+        userId === undefined ||
+        (of !== undefined && of !== userId) ||
+        !(await this.ready())
+      ) {
         return;
       }
       const pin = await this.db.changePin(userId, projectId, change);
@@ -444,7 +601,7 @@ export class OfflineKeeper {
     }
     this.followed = userId;
     this.lastOpened = undefined;
-    this.openedOffline = undefined;
+    this.toMove = undefined;
     this.enqueue(async () => {
       for (const kept of this.kept.values()) {
         kept.stop();
@@ -603,6 +760,10 @@ class Kept {
   private timer: ReturnType<typeof setTimeout> | undefined;
   /** Before when nothing is tried again, after a read or a write that failed. */
   private notBefore = 0;
+  /** Since when the document has changed without a step of the copy's after, which one follows at most maxWaits writeDelays after (changed). */
+  private changedSince: number | undefined;
+  /** What the last pass of reads had yet to read, which a pass that finds it unread still, as of changes that went on as it was read, waits a while to read again (stepOnce). */
+  private unreadBefore: string | undefined;
   private stopped = false;
   private stepping = false;
   private again = false;
@@ -629,7 +790,7 @@ class Kept {
     }
     this.doc = doc;
     this.release = release;
-    this.unsubscribe = doc.store.subscribe(() => this.schedule());
+    this.unsubscribe = doc.store.subscribe(() => this.changed());
     this.schedule(0);
   }
 
@@ -654,7 +815,22 @@ class Kept {
     }
     clearTimeout(this.timer);
     const wait = Math.max(delay, this.notBefore - Date.now());
-    this.timer = setTimeout(() => void this.step(), wait);
+    this.timer = setTimeout(() => {
+      this.changedSince = undefined;
+      void this.step();
+    }, wait);
+  }
+
+  /**
+   * Writes the copy a writeDelay after the document's last change, but, as
+   * while changes keep coming, from the sessions of many, maxWaits
+   * writeDelays after the first that no step has followed, at the latest.
+   */
+  private changed(): void {
+    const now = Date.now();
+    this.changedSince ??= now;
+    const latest = this.changedSince + this.delay() * maxWaits;
+    this.schedule(Math.min(this.delay(), Math.max(0, latest - now)));
   }
 
   private delay(): number {
@@ -665,30 +841,35 @@ class Kept {
     return this.keeper.options.retryDelay ?? 30_000;
   }
 
-  private async step(): Promise<void> {
+  private step(): Promise<void> {
     if (this.stepping) {
       this.again = true;
-      return;
+      return Promise.resolve();
     }
     this.stepping = true;
-    try {
-      await this.stepOnce();
-    } catch (error) {
-      this.keeper.options.log.record("error", error);
-    } finally {
-      this.stepping = false;
-      if (this.again) {
-        this.again = false;
-        this.schedule();
+    const step = (async () => {
+      try {
+        await this.stepOnce();
+      } catch (error) {
+        this.keeper.options.log.record("error", error);
+      } finally {
+        this.stepping = false;
+        if (this.again) {
+          this.again = false;
+          this.schedule();
+        }
       }
-    }
+    })();
+    this.keeper.track(step);
+    return step;
   }
 
   /**
    * Has the document read what it has yet to of the whole of the project,
    * and writes it once it holds it, and nothing that it has yet to read, but
    * while the browser has no connection, which the keeper tries again after
-   * (start), and after a failure, which it tries again a while after.
+   * (start), and after a failure, which it tries again a while after. A
+   * step that the Kept stopped during does nothing more.
    */
   private async stepOnce(): Promise<void> {
     const doc = this.doc;
@@ -696,7 +877,7 @@ class Kept {
       return;
     }
     if (doc.store.getState().gone) {
-      await this.keeper.forget(this.projectId);
+      await this.keeper.forget(this.userId, this.projectId);
       return;
     }
     try {
@@ -704,13 +885,20 @@ class Kept {
       // document's ready would not.
       await doc.load("tree");
     } catch (error) {
-      // A project that the account can no longer read, as one in the trash,
-      // is kept no more; another failure is tried again a while after.
-      if (notFoundBy(error)) {
-        await this.keeper.forget(this.projectId);
+      if (this.stopped) {
         return;
       }
-      this.failedNow();
+      // A project that the account can no longer read, as one in the trash,
+      // is kept no more; another failure is tried again a while after, but
+      // one of a connection that went meanwhile, once it is back (start).
+      if (notFoundBy(error)) {
+        await this.keeper.forget(this.userId, this.projectId);
+      } else if (this.keeper.options.online()) {
+        this.failedNow();
+      }
+      return;
+    }
+    if (this.stopped) {
       return;
     }
     if (!this.based) {
@@ -720,25 +908,47 @@ class Kept {
     const view = doc.doc;
     const unread = unreadOf(doc, view);
     if (unread.parts.length > 0 || unread.components.length > 0) {
+      // A pass that leaves what it read unread, as a component that another
+      // session changes again and again as it is read (readComponent), is
+      // tried again a while after, rather than at once, again and again.
+      const what = [...unread.parts, ...unread.components].join(" ");
+      if (what === this.unreadBefore) {
+        this.unreadBefore = undefined;
+        this.failedNow();
+        return;
+      }
+      // The reads go at the pace of the keeper's downloads (Pace), and
+      // those that a stopped Kept has yet to begin are not made.
+      const paced = (read: () => Promise<void>) => async () => {
+        await this.keeper.turn();
+        if (!this.stopped) {
+          await read();
+        }
+      };
       try {
         await inTurns(
           [
-            ...unread.parts.map((part) => () => doc.load(part)),
-            ...unread.components.map((id) => () => doc.readComponent(id)),
+            ...unread.parts.map((part) => paced(() => doc.load(part))),
+            ...unread.components.map((id) =>
+              paced(() => doc.readComponent(id)),
+            ),
           ],
           readsAtOnce,
         );
       } catch {
+        this.unreadBefore = undefined;
         // The document recorded what failed, as it records a page's reads.
-        if (this.keeper.options.online()) {
+        if (!this.stopped && this.keeper.options.online()) {
           this.failedNow();
           await this.keeper.failed(this.userId, this.projectId, "error");
         }
         return;
       }
+      this.unreadBefore = what;
       this.schedule(0);
       return;
     }
+    this.unreadBefore = undefined;
     if (!doc.settled) {
       this.schedule();
       return;
@@ -762,11 +972,27 @@ class Kept {
     this.schedule();
   }
 
-  /** Writes the document's copy, as of its seq, with the project's role and its workspace, as the page reads them. */
+  /**
+   * Writes the document's copy, as of its seq, with the project's role and
+   * its workspace, as the page reads them, and the session that a page that
+   * loads offline starts from (OfflineKeeper.wrote). A document behind the
+   * copy that the device has, while its channel is not live, as in a tab
+   * that has just become the writer, whose socket is still being opened,
+   * writes nothing until the channel is, which brings it up to the server,
+   * rather than take the copy back to an older seq.
+   */
   private async write(doc: ProjectDocument): Promise<void> {
     const view = doc.doc;
     const project = view.project;
     if (project === undefined) {
+      return;
+    }
+    const kept = this.keeper.store.getState().pins.get(this.projectId)?.copy;
+    if (
+      kept !== undefined &&
+      kept.seq > view.seq &&
+      !doc.store.getState().live
+    ) {
       return;
     }
     const client = this.keeper.options.queryClient;
@@ -785,17 +1011,35 @@ class Kept {
         saved_at: this.keeper.now(),
       };
     } catch {
-      this.failedNow();
+      // The pin says that the copy could not be written, rather than that
+      // it is being downloaded still.
+      if (!this.stopped && this.keeper.options.online()) {
+        this.failedNow();
+        await this.keeper.failed(this.userId, this.projectId, "error");
+      }
       return;
     }
     if (this.stopped || doc.doc !== view) {
       this.schedule();
       return;
     }
-    let written: Written | undefined;
     try {
-      written = await this.keeper.db.writeCopy(record, view, this.written);
+      const written = await this.keeper.db.writeCopy(
+        record,
+        view,
+        this.written,
+      );
+      if (written === undefined) {
+        // The project was unpinned meanwhile, as in another tab.
+        return;
+      }
+      this.written = written;
+      this.notBefore = 0;
+      await this.keeper.wrote(this.projectId);
     } catch (error) {
+      // A copy that was written, whose session the device could not keep,
+      // as for its quota, is one that a page loaded offline could not
+      // start from: the pin says so, as of a copy not written.
       const quota = overQuota(error);
       if (!quota) {
         this.keeper.options.log.record("error", error);
@@ -806,14 +1050,6 @@ class Kept {
         this.projectId,
         quota ? "quota" : "error",
       );
-      return;
     }
-    if (written === undefined) {
-      // The project was unpinned meanwhile, as in another tab.
-      return;
-    }
-    this.written = written;
-    this.notBefore = 0;
-    await this.keeper.wrote(this.projectId);
   }
 }

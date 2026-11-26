@@ -7,6 +7,7 @@ import {
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createQueryClient, sessionQuery } from "../api";
 import { createErrorLog } from "../errors/log";
+import { projectQuery } from "../project/queries";
 import { testSession } from "../test/app";
 import { fakeApi, testProject } from "../test/fake";
 import { fakeRealtime } from "../test/realtime";
@@ -101,11 +102,19 @@ function serve(seq: number, project = () => ({ ...testProject, seq })) {
 
 function open(
   copy: StartingCopy | undefined,
-  options: { online?: () => boolean } = {},
+  options: { online?: () => boolean; cached?: number } = {},
 ) {
   const log = createErrorLog();
   const queryClient = createQueryClient(log);
   queryClient.setQueryData(sessionQuery.queryKey, testSession);
+  // The project as the query client kept it from an earlier read, at the
+  // seq that it had then.
+  if (options.cached !== undefined) {
+    queryClient.setQueryData(projectQuery(testProject.id).queryKey, {
+      ...testProject,
+      seq: options.cached,
+    });
+  }
   const realtime = fakeRealtime();
   const readCopy = vi.fn(async () => copy);
   const doc = new ProjectDocument(testProject.id, {
@@ -215,6 +224,16 @@ describe("a document that starts from the device's copy", () => {
     await doc.load("tree");
     expect(calls).toContain("listBoards");
     expect(doc.doc.boards.get("bd_a")?.name).toBe("Server's");
+  });
+
+  it("reads the project anew, rather than pass the copy over, where the query client's read of it is older than the copy", async () => {
+    // As a read kept from before another tab wrote the copy.
+    const { calls } = serve(4);
+    const { doc } = open(copyOf(3), { cached: 2 });
+    await doc.ready;
+    expect(doc.copy?.version).toBe("v1");
+    expect(doc.hasRead("tree")).toBe(true);
+    expect(calls).toEqual(["getProject"]);
   });
 
   it("reads the parts from the server where the device keeps no copy", async () => {
