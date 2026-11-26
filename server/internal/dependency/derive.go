@@ -93,9 +93,11 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 	if err != nil {
 		return fmt.Errorf("dependency: read what the texts name: %w", err)
 	}
-	// The sites of the texts that name something, each once, in the order of
-	// their first reference.
-	at := map[ids.UUID]int{}
+	// The sites of the texts that name something, each once, by their
+	// owners' kinds and UUIDs, since a node, a connection, and a component
+	// may share a UUID, as a client chooses their IDs, in the order of their
+	// first reference.
+	at := map[commands.Ref]int{}
 	var sites []Site
 	for _, r := range refs {
 		u, err := InlineUse(r.Inline)
@@ -104,13 +106,7 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 		}
 		s := Site{Node: r.NodeID.Bytes, Connection: r.ConnectionID.Bytes, Component: r.ComponentID.Bytes,
 			Board: r.BoardID.Bytes}
-		owner := s.Node
-		switch {
-		case r.ConnectionID.Valid:
-			owner = s.Connection
-		case r.ComponentID.Valid:
-			owner = s.Component
-		}
+		owner := textOwner(r.NodeID, r.ConnectionID, r.ComponentID)
 		i, ok := at[owner]
 		if !ok {
 			i = len(sites)
