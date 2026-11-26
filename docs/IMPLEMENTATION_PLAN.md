@@ -943,7 +943,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-OFF-01 AC1–AC4 pass.
 
 ### 89. Client-side analysis engine and projection cross-check
-**Status:** todo · **Depends on:** 44, 48, 49, 71, 76
+**Status:** done ([#105](https://github.com/CyberCute-Studio/storycreep/pull/105)) · **Depends on:** 44, 48, 49, 71, 76
 **PRD:** FR-OFF-05 (prerequisite), §6.2 (projection cross-check, N10)
 - TypeScript ports of the dependency index, the validation rules, and the dependency graph: pure functions of the project's document as the page holds it, read as the server reads the draft, of the entities outside the trash, each expression compiled from its source, with no request to the server (`web/app/src/analysis`: `draft.ts`, `uses.ts`, `validation.ts`, `overlap.ts`, `graph.ts`, N96).
 - Cross-checked against the Go services on generated fixtures in CI: the end-to-end tests load the `small` and `medium` fixtures with `cmd/fixturegen`, and build a project that each rule finds something in, read each as the web app's document reads it, and hold the engine's findings and graph, and the contributions and the usages that N96 names, to the server's answers (`web/app/e2e/analysis.spec.ts`, N96).
