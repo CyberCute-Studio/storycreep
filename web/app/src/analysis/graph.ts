@@ -343,9 +343,9 @@ function compareEnds(a: End, b: End): number {
  * Orders contributions by their targets, the variables, the components, or
  * the nodes visited, their attributes' definitions, and their ends, each by
  * its node, its site's type, and its site's connection or output. The
- * server orders a site of an expression by the expression's own ID, which
- * no client holds, so its order of two sites of one node may differ; the
- * contributions are the same.
+ * server orders the sites of one node by their UUIDs, an expression's its
+ * own, which no client holds, and a text's its owner's, so its order of two
+ * sites of one node may differ; the contributions are the same.
  */
 export function contributionOrder(a: Contribution, b: Contribution): number {
   const target = (c: Contribution) =>

@@ -376,6 +376,36 @@ describe("a finding", () => {
     ]);
     expect([...all].sort(compareFindings)).toEqual(all);
   });
+
+  test("of entities, or of things named, that share a UUID is in the order of their kinds", () => {
+    const w = new World();
+    // A branch's output and a connection that leaves the branch by it,
+    // whose UUID a client chose to be the output's, neither of whose
+    // conditions compiles; and the project's entry, of a board and a node,
+    // neither of which the draft holds, that share a UUID.
+    const b = w.branch(w.main);
+    w.connect(w.start, b);
+    const o = w.output(b, "nope");
+    const c = w.connectionOf(w.connectOutput(b, o, w.end));
+    const uuid = o.slice(o.indexOf("_") + 1);
+    c.id = `cn_${uuid}`;
+    c.condition = expression("nope");
+    w.entry = { board_id: `bd_${uuid}`, node_id: `nd_${uuid}` };
+    const all = findings(w);
+    const invalid = all.filter((f) => f.code === "expr_invalid");
+    expect(invalid.map((f) => [f.entity_type, f.entity_id])).toEqual([
+      ["branch_output", o],
+      ["connection", c.id],
+    ]);
+    const entry = all.filter((f) => f.field === "entry");
+    expect(entry.map((f) => f.target)).toEqual([
+      { type: "board", id: `bd_${uuid}` },
+      { type: "node", id: `nd_${uuid}` },
+    ]);
+    // By their kinds, whichever the rules found first.
+    expect([...invalid].reverse().sort(compareFindings)).toEqual(invalid);
+    expect([...entry].reverse().sort(compareFindings)).toEqual(entry);
+  });
 });
 
 // Verifies: FR-DEP-03/AC1, FR-TEXT-02/AC2

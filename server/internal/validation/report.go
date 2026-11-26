@@ -95,12 +95,27 @@ func Run(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*Result, error
 
 // compare orders findings as a report lists them: by their severities and
 // the order of their rules (order), their boards, their nodes, their
-// entities, their fields, and what they name.
+// entities, their fields, and what they name, each by its UUID, and then by
+// the names of the kinds of their entities and of what they name, which tell
+// apart two findings that differ by those alone, as a client may choose the
+// UUID of a branch's output and of a connection that leaves the branch to be
+// the same, so that the order of a report is the same whatever the order of
+// the rows that it was read of, as the client's twin of the rules gives it
+// (web/app/src/analysis/validation.ts).
 func compare(a, b finding) int {
 	return cmp.Or(cmp.Compare(order[a.code], order[b.code]),
 		bytes.Compare(a.board[:], b.board[:]), bytes.Compare(a.node[:], b.node[:]),
 		bytes.Compare(a.entity.id[:], b.entity.id[:]), cmp.Compare(a.field, b.field),
-		bytes.Compare(a.target.id[:], b.target.id[:]), bytes.Compare(a.attribute[:], b.attribute[:]))
+		bytes.Compare(a.target.id[:], b.target.id[:]), bytes.Compare(a.attribute[:], b.attribute[:]),
+		cmp.Compare(kindName(a.entity), kindName(b.entity)), cmp.Compare(kindName(a.target), kindName(b.target)))
+}
+
+// kindName returns the name of the kind of r, or "" for none, the zero ref.
+func kindName(r ref) string {
+	if r == (ref{}) {
+		return ""
+	}
+	return r.kind.String()
 }
 
 // order holds the place of each code's findings in a report, by the code:

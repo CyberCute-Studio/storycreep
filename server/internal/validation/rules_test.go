@@ -505,6 +505,32 @@ func TestReachability(t *testing.T) {
 	}
 }
 
+// TestCompareKinds checks that the order of a report tells apart two
+// findings that differ by the kinds of their entities alone, as those of a
+// branch's output and of a connection that leaves the branch do if a client
+// chose their UUIDs to be the same, or by the kinds of what they name alone,
+// as those of the project's entry do if its board and its node share a UUID:
+// by the names of the kinds, whichever finding the rules found first, as the
+// client's twin of the rules orders them (web/app/src/analysis/validation.ts).
+func TestCompareKinds(t *testing.T) {
+	shared, board, node := ids.New(), ids.New(), ids.New()
+	output := finding{code: ExprInvalid, entity: ref{ids.BranchOutput, shared}, board: board, node: node,
+		field: fieldCondition}
+	connection := output
+	connection.entity.kind = ids.Connection
+	toBoard := finding{code: RefDangling, entity: ref{ids.Project, ids.New()}, field: fieldEntry,
+		target: ref{ids.Board, shared}}
+	toNode := toBoard
+	toNode.target.kind = ids.Node
+	for _, pair := range [][2]finding{{output, connection}, {toBoard, toNode}} {
+		first, second := pair[0], pair[1]
+		if compare(first, second) >= 0 || compare(second, first) <= 0 {
+			t.Errorf("the finding of the %s that names %q does not come before that of the %s that names %q",
+				kindName(first.entity), kindName(first.target), kindName(second.entity), kindName(second.target))
+		}
+	}
+}
+
 // TestMutable checks that a mute may silence exactly the warnings and the
 // infos about each kind of entity, and that MuteOwners are the kinds that a
 // warning or an info is about. httpserver's TestValidationMuteCodes checks

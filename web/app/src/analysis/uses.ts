@@ -381,9 +381,10 @@ function usagesOf(
 
 /**
  * Orders usages by their boards, their nodes, their sites' types, the
- * entities of their sites, and their attributes. The server orders a node's
- * expressions by their own IDs, which no client holds, so its order of two
- * sites of one node may differ; the sites are the same.
+ * entities of their sites, and their attributes. The server orders the
+ * sites of one node by their UUIDs, an expression's its own, which no
+ * client holds, and a text's its owner's, so its order of two sites of one
+ * node may differ; the sites are the same.
  */
 export function usageOrder(a: Usage, b: Usage): number {
   return (

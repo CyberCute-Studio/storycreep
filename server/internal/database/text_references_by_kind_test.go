@@ -15,10 +15,13 @@ import (
 // name (expression_ref) holds the rows that the derivation wrote before plan
 // item 89 of the texts of a node, a connection, and a component that share a
 // UUID, which one batch changed: what all three name, as the node's, which it
-// took them for. It checks that the migration writes each owner's rows anew,
+// took them for; and of a node and a component whose twins, which shared
+// their UUIDs, have since been purged: what the node and its twin named, as
+// the node's, and nothing as the component's, whose rows the twin's purge
+// deleted. It checks that the migration writes each such owner's rows anew,
 // of what its own text names, as package dependency gives them, which a
-// recomputation from scratch reads (dependencytest.Drift), and keeps those of
-// a text whose owner shares its UUID with none.
+// recomputation from scratch reads (dependencytest.Drift), and leaves as they
+// are the rows of the texts whose rows are what they name.
 func TestTextReferencesByKind(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -30,7 +33,7 @@ func TestTextReferencesByKind(t *testing.T) {
 	admin := d.Admin(t)
 	ws, project, folder, board := ids.New(), ids.New(), ids.New(), ids.New()
 	gold, tide, cast, trust, elara := ids.New(), ids.New(), ids.New(), ids.New(), ids.New()
-	shared, keeper := ids.New(), ids.New()
+	shared, keeper, orphan, bereft := ids.New(), ids.New(), ids.New(), ids.New()
 	enc := func(k ids.Kind, u ids.UUID) string { return ids.Encode(k, u) }
 	text := func(inline string) string {
 		return `{"type": "doc", "content": [{"type": "paragraph", "content": [` + inline + `]}]}`
@@ -63,31 +66,40 @@ func TestTextReferencesByKind(t *testing.T) {
 				default_value, is_runtime)
 			VALUES ($1, $2, $3, $4, 'V', 'trust', 'Trust', 'int', '0', true)`, []any{trust, ws, project, cast}},
 		// The component that shares its UUID with the node and the
-		// connection mentions Elara, whose own description shows tide.
+		// connection mentions Elara, whose own description shows tide, and
+		// Nell, whose twin is purged, mentions Elara too.
 		{`INSERT INTO component (id, workspace_id, project_id, component_type_id, "order", key, name, description)
-			VALUES ($1, $3, $4, $5, 'V', 'mira', 'Mira', $6), ($2, $3, $4, $5, 'W', 'elara', 'Elara', $7)`,
-			[]any{shared, elara, ws, project, cast, text(mention(elara)), text(value(enc(ids.Variable, tide)))}},
-		// The node that shares its UUID shows gold, and Keeper shows tide.
+			VALUES ($1, $4, $5, $6, 'V', 'mira', 'Mira', $7), ($2, $4, $5, $6, 'W', 'elara', 'Elara', $8),
+				($3, $4, $5, $6, 'X', 'nell', 'Nell', $7)`,
+			[]any{shared, elara, bereft, ws, project, cast, text(mention(elara)),
+				text(value(enc(ids.Variable, tide)))}},
+		// The node that shares its UUID shows gold, Keeper shows tide, and
+		// the node whose twin is purged shows gold.
 		{`INSERT INTO node (id, workspace_id, project_id, board_id, type, kind, text, x, y)
-			VALUES ($1, $3, $4, $5, 'element', 'narration', $6, 0, 0),
-				($2, $3, $4, $5, 'element', 'narration', $7, 0, 0)`,
-			[]any{shared, keeper, ws, project, board, text(value(enc(ids.Variable, gold))),
+			VALUES ($1, $4, $5, $6, 'element', 'narration', $7, 0, 0),
+				($2, $4, $5, $6, 'element', 'narration', $8, 0, 0),
+				($3, $4, $5, $6, 'element', 'narration', $7, 0, 0)`,
+			[]any{shared, keeper, orphan, ws, project, board, text(value(enc(ids.Variable, gold))),
 				text(value(enc(ids.Variable, tide)))}},
 		// The connection that shares its UUID, from Keeper to the node,
 		// shows Elara's trust.
 		{`INSERT INTO connection (id, workspace_id, project_id, board_id, from_node_id, to_node_id, "order", label)
 			VALUES ($1, $2, $3, $4, $5, $1, 'V', $6)`, []any{shared, ws, project, board, keeper, text(attr(elara, trust))}},
 		// The index's rows, as the derivation wrote them: Keeper's and
-		// Elara's, and what the three texts that share a UUID name, all of
-		// them as the node's.
+		// Elara's; what the three texts that share a UUID name, all of them
+		// as the node's; and what the node whose twin is purged and the
+		// twin, a connection that showed tide, named, as the node's, while
+		// Nell's rows, which were its twin's, a node, are gone with it.
 		{`INSERT INTO expression_ref (workspace_id, project_id, node_id, component_id, board_id, target_kind, target_id,
 				attribute_def_id, access)
 			VALUES ($1, $2, $3, NULL, $4, 'variable', $7, NULL, 'read'),
 				($1, $2, NULL, $5, NULL, 'variable', $7, NULL, 'read'),
 				($1, $2, $6, NULL, $4, 'variable', $8, NULL, 'read'),
 				($1, $2, $6, NULL, $4, 'attribute', $5, $9, 'read'),
-				($1, $2, $6, NULL, $4, 'component', $5, NULL, 'read')`,
-			[]any{ws, project, keeper, board, elara, shared, tide, gold, trust}},
+				($1, $2, $6, NULL, $4, 'component', $5, NULL, 'read'),
+				($1, $2, $10, NULL, $4, 'variable', $8, NULL, 'read'),
+				($1, $2, $10, NULL, $4, 'variable', $7, NULL, 'read')`,
+			[]any{ws, project, keeper, board, elara, shared, tide, gold, trust, orphan}},
 	} {
 		if _, err := admin.Exec(ctx, c.sql, c.args...); err != nil {
 			t.Fatalf("%s: %v", c.sql, err)
@@ -99,9 +111,21 @@ func TestTextReferencesByKind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(drift) != 4 {
-		t.Fatalf("before the migration, the index differs from what the texts name by %q, want 4 rows", drift)
+	if len(drift) != 6 {
+		t.Fatalf("before the migration, the index differs from what the texts name by %q, want 6 rows", drift)
 	}
+	// Where the rows of Keeper's and Elara's texts, which are what they
+	// name, are stored, which a migration that wrote them anew would change.
+	kept := func() string {
+		t.Helper()
+		var at string
+		if err := admin.QueryRow(ctx, `SELECT string_agg(ctid::text, ' ' ORDER BY ctid) FROM expression_ref
+			WHERE node_id = $1 OR component_id = $2`, keeper, elara).Scan(&at); err != nil {
+			t.Fatal(err)
+		}
+		return at
+	}
+	before := kept()
 	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -110,5 +134,8 @@ func TestTextReferencesByKind(t *testing.T) {
 	}
 	if len(drift) > 0 {
 		t.Errorf("the migration's rows are not what the texts name: %q", drift)
+	}
+	if after := kept(); after != before {
+		t.Errorf("the rows of the texts whose rows are what they name are at %s, want them left at %s", after, before)
 	}
 }

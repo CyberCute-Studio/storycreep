@@ -103,7 +103,8 @@ const emptyText = canonical({ type: "doc", content: [{ type: "paragraph" }] });
  * Returns what the rules find of the draft, whose index is index, in the
  * order of the server's report: by their severities and the order of their
  * rules, their boards, their nodes, their entities, their fields, and what
- * they name, each by its UUID.
+ * they name, each by its UUID, and then by the kinds of their entities and
+ * of what they name.
  */
 export function validate(draft: Draft, index: Index): AnalysisFinding[] {
   const c = new Checker(draft, index);
@@ -119,7 +120,16 @@ export function validate(draft: Draft, index: Index): AnalysisFinding[] {
   return c.out.sort(compareFindings);
 }
 
-/** Orders findings as the server's report lists them. */
+/**
+ * Orders findings as the server's report lists them. The kinds of their
+ * entities and of what they name, by their names, come last, and tell
+ * apart two findings that differ by those alone, as those of a branch's
+ * output and of a connection that leaves the branch do if a client chose
+ * their UUIDs to be the same. The server compares what names an attribute
+ * by its component's kind, and this by its type, attribute, which order
+ * alike, as two findings whose attributes are the same both name one or
+ * neither does.
+ */
 export function compareFindings(
   a: AnalysisFinding,
   b: AnalysisFinding,
@@ -131,7 +141,9 @@ export function compareFindings(
     compareIds(a.entity_id, b.entity_id) ||
     compareStrings(a.field ?? "", b.field ?? "") ||
     compareIds(a.target?.id, b.target?.id) ||
-    compareIds(a.target?.attribute_id, b.target?.attribute_id)
+    compareIds(a.target?.attribute_id, b.target?.attribute_id) ||
+    compareStrings(a.entity_type, b.entity_type) ||
+    compareStrings(a.target?.type ?? "", b.target?.type ?? "")
   );
 }
 
