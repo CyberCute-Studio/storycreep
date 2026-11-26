@@ -18,7 +18,7 @@ import type {
 } from "@storycreep/shared/api";
 import { type Draft, readDraft } from "../analysis/draft";
 import { type Index, indexOf } from "../analysis/uses";
-import type { ComponentEntry } from "../document/doc";
+import { boardPart, type ComponentEntry } from "../document/doc";
 import { testConnection, testNode } from "./canvas";
 import {
   expression,
@@ -44,6 +44,8 @@ export class World {
   componentTypes: ComponentType[] = [];
   components: ComponentEntry[] = [];
   entry: { board_id?: string; node_id?: string } = {};
+  /** The boards whose content the document has not read, of which it holds no part; it holds every other board's. */
+  readonly unread = new Set<string>();
   readonly main: string;
   readonly start: string;
   readonly end: string;
@@ -287,6 +289,11 @@ export class World {
         components: this.components,
         entry: this.entry,
       }),
+      parts: new Set(
+        this.boards
+          .filter((b) => !this.unread.has(b.id))
+          .map((b) => boardPart(b.id)),
+      ),
     });
     return { draft, index: indexOf(draft) };
   }

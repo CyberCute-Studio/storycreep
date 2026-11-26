@@ -524,11 +524,24 @@ describe("the draft", () => {
     expect(() => w.analyse()).toThrow(/has not been read whole/);
   });
 
+  test("is not read of a document that has not read a board's content", () => {
+    const w = new World();
+    const other = w.board("Other");
+    w.unread.add(other);
+    expect(() => w.analyse()).toThrow(
+      `the content of the board ${other} has not been read`,
+    );
+    // A board in the trash is no part of the draft, read or not.
+    w.boardOf(other).deleted_at = "2026-11-02T10:00:00Z";
+    expect(() => w.analyse()).not.toThrow();
+  });
+
   test("is not read of a document that has not read the project", () => {
     expect(() =>
       readDraft({
         seq: 0,
         project: undefined,
+        parts: new Set(),
         boards: new Map(),
         nodes: new Map(),
         connections: new Map(),

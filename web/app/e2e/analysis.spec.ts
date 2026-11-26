@@ -50,7 +50,7 @@ import {
   variableUsages,
 } from "../src/analysis/uses.ts";
 import { rules, validate } from "../src/analysis/validation.ts";
-import { emptyDoc } from "../src/document/doc.ts";
+import { boardPart, emptyDoc } from "../src/document/doc.ts";
 import { projectDraft } from "../src/play/projection.ts";
 import { readZip } from "../src/releases/zip.ts";
 import { makeProject } from "./boards.ts";
@@ -106,10 +106,11 @@ test.describe("the client-side analysis engine", () => {
   }) => {
     const session = await signedIn(request);
     const projectId = await makeProject(request, session, "Every rule");
-    await buildEveryRule(request, session, projectId);
+    const gone = await buildEveryRule(request, session, projectId);
     const findings = await crossCheck(request, projectId, {
       usages: true,
       contributions: "all",
+      gone,
     });
     // Every rule finds something, so that each is cross-checked.
     expect([...new Set(findings.map((f) => f.code))].sort()).toEqual(
@@ -231,7 +232,8 @@ async function every<T>(
  * Reads the project as the web app's document reads it (store.ts, and play
  * mode's reads of what the document lacks, session.ts): the project, its
  * boards, its variables, its component types, and its components, each of
- * them whole, and every board's nodes and connections.
+ * them whole, and every board's nodes and connections, so that it holds
+ * every board's part.
  */
 async function readDocument(
   request: APIRequestContext,
@@ -263,6 +265,7 @@ async function readDocument(
   return {
     ...emptyDoc(seq),
     project,
+    parts: new Set(boards.map((b) => boardPart(b.id))),
     boards: byId(boards),
     nodes: byId(nodes),
     connections: byId(connections),
@@ -278,6 +281,8 @@ interface Checks {
   usages: boolean;
   /** The contributions of how many edges to compare: of every edge, or of the first few. */
   contributions: "all" | number;
+  /** The variables and the components that the draft does not hold, whose usages the server answers with 404, as the engine answers none. */
+  gone?: { variables: readonly string[]; components: readonly string[] };
 }
 
 /**
@@ -403,6 +408,25 @@ async function crossCheck(
       }
     }
   }
+  // No usages of a variable or a component that the draft does not hold,
+  // which its texts and its speakers may name still, as the server answers
+  // 404 of them.
+  for (const v of checks.gone?.variables ?? []) {
+    for (const access of ["read", "write"] as const) {
+      const path = `${at}/variables/${v}/usages?access=${access}`;
+      const res = await request.get(path);
+      expect(res.status(), `${path}: ${await res.text()}`).toBe(404);
+      expect(variableUsages(draft, index, v, access), path).toBeUndefined();
+    }
+  }
+  for (const c of checks.gone?.components ?? []) {
+    for (const use of ["speaker", "mention", "read", "write"] as const) {
+      const path = `${at}/components/${c}/usages?use=${use}`;
+      const res = await request.get(path);
+      expect(res.status(), `${path}: ${await res.text()}`).toBe(404);
+      expect(componentUsages(draft, index, c, use), path).toBeUndefined();
+    }
+  }
 
   // Play mode's projection of the draft, file by file, against the
   // serializer's draft export, but for the manifest's generator and the
@@ -456,13 +480,15 @@ function paragraph(text: string): RichTextDoc {
  * and a component, choices of one label whose conditions the prover of
  * duplicate choices proves exclusive, and does not, and owners of
  * expressions and texts in the trash whose UUIDs are those of entities of
- * other kinds outside it.
+ * other kinds outside it. It returns the variable and the component whose
+ * forced deletions leave a text that shows the one, and a speaker and a
+ * mention of the other.
  */
 async function buildEveryRule(
   request: APIRequestContext,
   session: ApiSession,
   projectId: string,
-): Promise<void> {
+): Promise<NonNullable<Checks["gone"]>> {
   const [harbour, lighthouse, mill, nook] = [0, 1, 2, 3].map(() =>
     newId("board"),
   );
@@ -760,4 +786,5 @@ async function buildEveryRule(
     { type: "node.delete", payload: { id: nookStart } },
     { type: "board.delete", payload: { id: lighthouse, confirm: true } },
   ]);
+  return { variables: [doomed], components: [ghost] };
 }

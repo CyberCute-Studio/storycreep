@@ -27,14 +27,15 @@ import {
   Project,
   UsageError,
 } from "@storycreep/shared/expr/compile";
-import type { ComponentEntry, Doc } from "../document/doc";
+import { boardPart, type ComponentEntry, type Doc } from "../document/doc";
 import { compareChildren } from "../project/orderkey";
 
-/** What the analysis reads of the document: what the projection reads, and the document's seq. */
+/** What the analysis reads of the document: what the projection reads, the document's seq, and the parts that it holds. */
 export type AnalysisSources = Pick<
   Doc,
   | "seq"
   | "project"
+  | "parts"
   | "boards"
   | "nodes"
   | "connections"
@@ -47,9 +48,9 @@ export type AnalysisSources = Pick<
 export class AnalysisError extends Error {
   constructor(
     /**
-     * Why: the project, or a component whole, not read yet ("unread"), or
-     * the document holding what no project does, as two components of one
-     * key, for a moment ("inconsistent").
+     * Why: the project, a board's content, or a component whole, not read
+     * yet ("unread"), or the document holding what no project does, as two
+     * components of one key, for a moment ("inconsistent").
      */
     readonly reason: "unread" | "inconsistent",
     message: string,
@@ -170,9 +171,14 @@ function byId(a: { id: string }, b: { id: string }): number {
  * Returns the draft of view, the project's document as the page shows it,
  * whose every board's content and every component whole the caller has
  * read, as play mode reads them (play/session.ts). It throws an
- * AnalysisError where view has not read the project, or a component
- * whole, whose description is one of the draft's texts, or holds what no
- * project does.
+ * AnalysisError where view has not read the project, a board's content,
+ * or a component whole, whose description is one of the draft's texts, or
+ * holds what no project does. The content of a board outside the trash
+ * that view holds no part of (Doc.parts), as a board's that came back from
+ * the trash, whose content the document took out with it, is content that
+ * it has not read, whose nodes would else be taken for deleted; a part
+ * that view is reading still is one that it holds, so the caller waits for
+ * its reads first.
  */
 export function readDraft(view: AnalysisSources): Draft {
   const project = view.project;
@@ -184,6 +190,13 @@ export function readDraft(view: AnalysisSources): Draft {
   ) => [...m.values()].filter((e) => e.deleted_at === undefined).sort(byId);
 
   const boards = new Map(live(view.boards).map((b) => [b.id, b]));
+  const unread = [...boards.keys()].find((b) => !view.parts.has(boardPart(b)));
+  if (unread !== undefined) {
+    throw new AnalysisError(
+      "unread",
+      `the content of the board ${unread} has not been read`,
+    );
+  }
   const nodes = new Map(
     live(view.nodes)
       .filter((n) => boards.has(n.board_id))

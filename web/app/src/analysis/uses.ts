@@ -272,15 +272,20 @@ export type ComponentUse = "speaker" | "mention" | "read" | "write";
 /**
  * Returns the sites of the draft that read the variable, or that write it,
  * as access says (FR-DEP-01 AC2), each as the server's usages list it, in
- * the order of usageOrder; an empty list for a variable that the draft
- * does not hold.
+ * the order of usageOrder; or undefined for a variable that the draft does
+ * not hold, whose usages the server answers with 404, though a text of the
+ * draft may show it still, as one does a variable that a forced deletion
+ * took.
  */
 export function variableUsages(
   draft: Draft,
   index: Index,
   variable: string,
   access: Access,
-): Usage[] {
+): Usage[] | undefined {
+  if (!draft.variables.has(variable)) {
+    return undefined;
+  }
   return usagesOf(
     draft,
     index,
@@ -294,14 +299,20 @@ export function variableUsages(
  * (FR-COMP-04): the nodes whose speaker it is, the texts that mention it,
  * or the sites that read its attributes, or write them, each of them once
  * for each attribute that it reads or writes, as the server's usages list
- * them, in the order of usageOrder.
+ * them, in the order of usageOrder; or undefined for a component that the
+ * draft does not hold, whose usages the server answers with 404, though a
+ * node of the draft may have it as its speaker still, and a text mention
+ * it, as they do a component that a forced deletion took.
  */
 export function componentUsages(
   draft: Draft,
   index: Index,
   component: string,
   use: ComponentUse,
-): Usage[] {
+): Usage[] | undefined {
+  if (!draft.components.has(component)) {
+    return undefined;
+  }
   if (use === "speaker") {
     const out: Usage[] = [];
     for (const n of draft.nodes.values()) {

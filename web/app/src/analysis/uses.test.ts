@@ -179,9 +179,9 @@ describe("the index", () => {
         node_title: "",
       },
     ]);
-    expect(variableUsages(draft, index, v, "read").map((u) => u.site)).toEqual([
-      "node_text",
-    ]);
+    expect(variableUsages(draft, index, v, "read")?.map((u) => u.site)).toEqual(
+      ["node_text"],
+    );
     expect(componentUsages(draft, index, c, "speaker")).toEqual([
       {
         site: "node_speaker",
@@ -192,14 +192,40 @@ describe("the index", () => {
       },
     ]);
     expect(
-      componentUsages(draft, index, c, "mention").map((u) => u.site),
+      componentUsages(draft, index, c, "mention")?.map((u) => u.site),
     ).toEqual(["node_text"]);
     expect(
-      componentUsages(draft, index, c, "write").map((u) => u.attribute_id),
+      componentUsages(draft, index, c, "write")?.map((u) => u.attribute_id),
     ).toEqual([trustDef]);
     expect(
-      componentUsages(draft, index, c, "read").map((u) => u.attribute_id),
+      componentUsages(draft, index, c, "read")?.map((u) => u.attribute_id),
     ).toEqual([moodDef]);
+  });
+
+  test("answers none of a variable or a component that the draft does not hold", () => {
+    const w = new World();
+    const gone = "2026-11-02T10:00:00Z";
+    const cast = w.componentType("cast", [
+      { key: "trust", type: "int", runtime: true },
+    ]);
+    const c = w.component(cast.id, "ghost", richText(), { deleted_at: gone });
+    // end's text shows v, and start's text mentions c, whose speaker it
+    // is, as they do once a forced deletion has taken each to the trash.
+    const v = w.variable(true, false, { deleted_at: gone });
+    const start = w.nodeOf(w.start);
+    start.kind = "dialogue";
+    start.speaker_component_id = c;
+    start.text = withInline(start.text, { type: "mention", attrs: { id: c } });
+    const { draft, index } = w.analyse();
+    expect(index.sites.flatMap((s) => s.uses.map((u) => u.target))).toEqual(
+      expect.arrayContaining([v, c]),
+    );
+    for (const access of ["read", "write"] as const) {
+      expect(variableUsages(draft, index, v, access)).toBeUndefined();
+    }
+    for (const use of ["speaker", "mention", "read", "write"] as const) {
+      expect(componentUsages(draft, index, c, use)).toBeUndefined();
+    }
   });
 
   test("orders usages by their boards, nodes, sites, and attributes", () => {
