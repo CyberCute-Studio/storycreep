@@ -167,8 +167,10 @@ function serve() {
   return calls;
 }
 
-function setup(options: { secure?: boolean } = {}) {
+function setup(options: { secure?: boolean; retryDelay?: number } = {}) {
   const log = createErrorLog();
+  // The other tabs' channel, which a test speaks on as another tab would.
+  const heard = new Set<() => void>();
   const queryClient = createQueryClient(log);
   queryClient.setQueryData(instanceQuery.queryKey, testInstance);
   queryClient.setQueryData(sessionQuery.queryKey, testSession);
@@ -197,13 +199,21 @@ function setup(options: { secure?: boolean } = {}) {
       return () => listeners.delete(listener);
     },
     lock: (write) => void write(),
+    broadcast: {
+      post: () => {},
+      listen: (listener) => {
+        heard.add(listener);
+        return () => heard.delete(listener);
+      },
+    },
     storage: { persist },
     writeDelay: 0,
-    retryDelay: 20,
+    retryDelay: options.retryDelay ?? 20,
   });
   keeper.start();
   onTestFinished(async () => {
     keeper.stop();
+    await keeper.idle();
     documents.close();
     await db.close();
   });
@@ -220,7 +230,30 @@ function setup(options: { secure?: boolean } = {}) {
         listener(online);
       }
     },
+    /** Tells the keeper that another tab changed the pins. */
+    hear() {
+      for (const listener of heard) {
+        listener();
+      }
+    },
   };
+}
+
+/** Has the device refuse each entity that a copy writes while full says so, as for its quota. */
+function quota(full: () => boolean) {
+  const put = IDBObjectStore.prototype.put;
+  vi.spyOn(IDBObjectStore.prototype, "put").mockImplementation(function (
+    this: IDBObjectStore,
+    ...args: Parameters<IDBObjectStore["put"]>
+  ) {
+    if (full() && this.name === "entities") {
+      throw new DOMException(
+        "The quota has been exceeded.",
+        "QuotaExceededError",
+      );
+    }
+    return put.apply(this, args);
+  });
 }
 
 /** Waits until the keeper's pin of projectId has status. */
@@ -368,6 +401,24 @@ describe("the last opened project", () => {
     });
     expect(await db.readCopy(testSession.user_id, lighthouse.id)).toBeDefined();
   });
+
+  it("stays while the browser has no connection, keeping the copy before, and moves once it has one", async () => {
+    serve();
+    const { keeper, db, setOnline } = setup();
+    keeper.opened(testProject.id, testProject.name);
+    await statusOf(keeper, testProject.id, "ready");
+    setOnline(false);
+    keeper.opened(lighthouse.id, lighthouse.name);
+    await keeper.idle();
+    expect(keeper.store.getState().pins.has(lighthouse.id)).toBe(false);
+    expect(keeper.store.getState().pins.get(testProject.id)?.auto).toBe(true);
+    expect(
+      await db.readCopy(testSession.user_id, testProject.id),
+    ).toBeDefined();
+    setOnline(true);
+    await statusOf(keeper, lighthouse.id, "ready");
+    expect(keeper.store.getState().pins.has(testProject.id)).toBe(false);
+  });
 });
 
 describe("a project that the account can no longer read", () => {
@@ -461,6 +512,41 @@ describe("a copy that the browser's quota refuses", () => {
     keeper.opened(lighthouse.id, lighthouse.name);
     await statusOf(keeper, lighthouse.id, "ready");
     await keeper.unpin(lighthouse.id);
+    await statusOf(keeper, testProject.id, "ready");
+  });
+
+  it("is tried again once another project's copy has gone in another tab", async () => {
+    serve();
+    // Nothing is tried again of itself within the test.
+    const { keeper, db, hear } = setup({ retryDelay: 60_000 });
+    let full = false;
+    quota(() => full);
+    await keeper.pin(lighthouse.id, lighthouse.name);
+    await statusOf(keeper, lighthouse.id, "ready");
+    full = true;
+    await keeper.pin(testProject.id, testProject.name);
+    await statusOf(keeper, testProject.id, "failed");
+    full = false;
+    await db.changePin(testSession.user_id, lighthouse.id, () => undefined);
+    hear();
+    await statusOf(keeper, testProject.id, "ready");
+  });
+
+  it("is not shown of a project unpinned meanwhile, which pinned again downloads", async () => {
+    serve();
+    const { keeper } = setup();
+    await keeper.pin(testProject.id, testProject.name);
+    await statusOf(keeper, testProject.id, "ready");
+    await keeper.unpin(testProject.id);
+    // The write that the quota refused as the project was unpinned.
+    await keeper.failed(testSession.user_id, testProject.id, "quota");
+    await keeper.pin(testProject.id, testProject.name);
+    expect(keeper.store.getState().pins.get(testProject.id)).toMatchObject({
+      status: "downloading",
+    });
+    expect(
+      keeper.store.getState().pins.get(testProject.id)?.failure,
+    ).toBeUndefined();
     await statusOf(keeper, testProject.id, "ready");
   });
 });

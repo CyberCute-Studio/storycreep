@@ -179,6 +179,32 @@ describe("a document that starts from the device's copy", () => {
     expect(calls).toContain("listBoardNodes");
   });
 
+  it("waits for the channel once, rather than at each reading anew, where it is never live", async () => {
+    vi.useFakeTimers();
+    const { calls } = serve(3);
+    const { doc } = open(copyOf(3));
+    await vi.advanceTimersByTimeAsync(0);
+    await doc.ready;
+    let first = false;
+    void doc.refresh("tree").then(() => {
+      first = true;
+    });
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(first).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(first).toBe(true);
+    expect(calls).toContain("listBoards");
+    // As behind a proxy that refuses the socket: the next reads at once.
+    const before = calls.length;
+    let second = false;
+    void doc.refresh("tree").then(() => {
+      second = true;
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(second).toBe(true);
+    expect(calls.length).toBeGreaterThan(before);
+  });
+
   it("passes over a copy of a seq past the server's, as of a database restored from an older backup", async () => {
     const { calls } = serve(2);
     const { doc } = open(copyOf(3));

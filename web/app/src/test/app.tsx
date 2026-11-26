@@ -184,8 +184,11 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
       keepReads(queryClient, offline.reads);
     }
     offline.start();
+    // The keeper's change under way is let finish, and none after it begins,
+    // before the database is closed, which a change would else open again.
     onTestFinished(async () => {
       offline.stop();
+      await offline.idle();
       await offlineDb?.close();
     });
   }

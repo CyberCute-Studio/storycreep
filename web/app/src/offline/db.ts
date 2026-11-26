@@ -131,15 +131,44 @@ function newVersion(): string {
 }
 
 /**
+ * How long, in milliseconds, a project's document waits at most for the
+ * device's database to open, before it reads the project from the server
+ * alone (copySource): a browser's open of a database may never settle, as
+ * one that another tab blocks, which would else keep every project's pages
+ * from showing, though the server answers.
+ */
+export const openWait = 3_000;
+
+/** Resolves to whether db opens within wait milliseconds, leaving no timer behind. */
+function opensWithin(db: OfflineDatabase, wait: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), wait);
+    const done = (opened: boolean) => {
+      clearTimeout(timer);
+      resolve(opened);
+    };
+    db.open().then(
+      () => done(true),
+      () => done(false),
+    );
+  });
+}
+
+/**
  * Returns where a project's document finds the copy that db keeps of it
  * (DocumentOptions.copies): none on a page that is not a secure context,
  * which keeps no project offline (PRD FR-OFF-01), nor where the database
- * cannot be read.
+ * cannot be read, nor where it does not open within wait milliseconds
+ * (openWait).
  */
-export function copySource(db: OfflineDatabase, secure: boolean): CopySource {
+export function copySource(
+  db: OfflineDatabase,
+  secure: boolean,
+  wait = openWait,
+): CopySource {
   return {
     readCopy: async (userId, projectId) => {
-      if (!secure) {
+      if (!secure || !(await opensWithin(db, wait))) {
         return undefined;
       }
       const copy = await db.readCopy(userId, projectId).catch(() => undefined);
@@ -176,6 +205,14 @@ export class OfflineDatabase {
                 db.createObjectStore("entities", {
                   keyPath: ["user_id", "project_id", "id"],
                 });
+              },
+              // A connection that the browser closed itself, as once the
+              // site's data was cleared while the page was open, is opened
+              // again at the next use, rather than fail every use after.
+              terminated: () => {
+                if (this.opening === opening) {
+                  this.opening = undefined;
+                }
               },
             }).then((db) => {
               // A newer version of the app, in another tab, that needs the
@@ -397,7 +434,8 @@ export class OfflineDatabase {
             }
           }
         }
-        bytes -= stored === undefined ? 0 : sizeOf(stored);
+        // The copy's record as it was sized, before its bytes were set.
+        bytes -= stored === undefined ? 0 : sizeOf({ ...stored, bytes: 0 });
       } else {
         bytes = 0;
         writes.push(entities.delete(under(record.user_id, record.project_id)));

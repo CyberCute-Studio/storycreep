@@ -9,6 +9,7 @@
 import {
   ApiError,
   type GrantBody,
+  NetworkError,
   type Node,
   type PageTrashItemBody,
   type ProjectBody,
@@ -114,7 +115,11 @@ export async function loadParts(
  * board deleted since, which the page would otherwise open, until the
  * channel had brought its deletion (PRD FR-OFF-02); the board's own page
  * shows the copy at once, and says that the board is gone once the channel
- * has brought that.
+ * has brought that. While the browser has no connection, the document
+ * reads nothing anew, and a board that it does not have may be one made
+ * since its copy was written, which the device cannot tell from one that is
+ * gone: it rejects with a NetworkError then, as a read that got no answer,
+ * rather than say that there is none.
  */
 export async function readBoard(
   context: ProjectReads,
@@ -135,7 +140,15 @@ export async function readBoard(
   if (!has()) {
     await doc.refresh();
   }
-  return has() ? doc : undefined;
+  if (has()) {
+    return doc;
+  }
+  if (!doc.isOnline()) {
+    throw new NetworkError(
+      new Error("The device's copy of the project does not have the board."),
+    );
+  }
+  return undefined;
 }
 
 /**

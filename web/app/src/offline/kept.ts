@@ -35,6 +35,33 @@ export function keepReads(client: QueryClient, reads: KeptReads): void {
   kept.set(client, reads);
 }
 
+/** How often, in milliseconds, a page that holds the session that the device keeps asks the server for its own (askForOwnSession). */
+export const ownSessionWait = 5_000;
+
+/**
+ * Has a page that holds the session that the device keeps (held), which
+ * has no CSRF token, ask the server for its own (check) every `every`
+ * milliseconds while the browser says that it has a connection, until what
+ * it returns is called. A page that started from it offline asks once the
+ * browser is online again (main.tsx); one that started from it while the
+ * browser said that it was online, as once the server did not answer as it
+ * restarted, hears no "online" event, and would else send what it changes
+ * without the token, which the server refuses.
+ */
+export function askForOwnSession(
+  held: () => boolean,
+  check: () => void,
+  online: () => boolean,
+  every = ownSessionWait,
+): () => void {
+  const timer = setInterval(() => {
+    if (online() && held()) {
+      check();
+    }
+  }, every);
+  return () => clearInterval(timer);
+}
+
 /**
  * Returns what read answers, or, where it rejects with a NetworkError, as
  * once the browser has no connection, what from finds that the device keeps

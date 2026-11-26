@@ -1,12 +1,14 @@
 import "fake-indexeddb/auto";
 import type { Board, Node } from "@storycreep/shared/api";
-import { IDBFactory } from "fake-indexeddb";
+import { forceCloseDatabase, IDBFactory } from "fake-indexeddb";
+import { unwrap } from "idb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boardPart, type Doc, emptyDoc } from "../document/doc";
 import { testProject, testWorkspace } from "../test/fake";
 import type { Workspace } from "../workspace/queries";
 import {
   type CopyRecord,
+  copySource,
   OfflineDatabase,
   overQuota,
   type PinRecord,
@@ -161,6 +163,9 @@ describe("the device's copies", () => {
       "nd_3",
     ]);
     expect(copy?.record.bytes).toBe(two?.bytes);
+    // What changed alone counts the bytes as the whole document's write does.
+    const whole = await db.writeCopy(recordOf(2), second, undefined);
+    expect(whole?.bytes).toBe(two?.bytes);
 
     // A write made on a write that the device no longer has, as of another
     // tab that wrote since, writes the whole document, without what the
@@ -330,5 +335,41 @@ describe("the device's records of each account", () => {
     expect(await db.pins("usr_jo")).toEqual([]);
     const tx = (await db.open()).transaction("entities");
     expect(await tx.store.count()).toBe(0);
+  });
+});
+
+describe("the device's database", () => {
+  it("is opened again once the browser has closed it, as once the site's data was cleared", async () => {
+    await pin();
+    const first = await db.open();
+    const closed = new Promise((resolve) =>
+      first.addEventListener("close", resolve),
+    );
+    // fake-indexeddb types the connection that it closes as its class.
+    forceCloseDatabase(
+      unwrap(first) as unknown as Parameters<typeof forceCloseDatabase>[0],
+    );
+    await closed;
+    expect(await db.pins(user)).toHaveLength(1);
+    expect(await db.open()).not.toBe(first);
+  });
+});
+
+describe("where a project's document finds the device's copy", () => {
+  it("finds it on the device, and none where the database does not open in a while", async () => {
+    await pin();
+    await db.writeCopy(recordOf(1), docOf(1, [board("bd_a")], []), undefined);
+    const copy = await copySource(db, true).readCopy(user, testProject.id);
+    expect(copy?.doc.boards.has("bd_a")).toBe(true);
+    expect(
+      await copySource(db, false).readCopy(user, testProject.id),
+    ).toBeUndefined();
+    // A browser whose open of the database never settles, which would else
+    // keep the project's document from starting, though the server answers.
+    const stuck = new OfflineDatabase();
+    vi.spyOn(stuck, "open").mockReturnValue(new Promise(() => {}));
+    expect(
+      await copySource(stuck, true, 10).readCopy(user, testProject.id),
+    ).toBeUndefined();
   });
 });

@@ -149,10 +149,14 @@ export class OfflineKeeper {
   private followed: string | null | undefined;
   /** The project whose pages the page last opened, which opened has pinned already. */
   private lastOpened: string | undefined;
+  /** The project whose pages the page opened while the browser had no connection, which opened pins once it has one. */
+  private openedOffline: { projectId: string; name: string } | undefined;
   /** The changes of the records under way, one at a time, in order. */
   private queue: Promise<void> = Promise.resolve();
   private readonly stops: (() => void)[] = [];
   private stopWriting: (() => void) | undefined;
+  /** Whether the keeper has stopped, after which it changes no record. */
+  private stopped = false;
 
   constructor(options: KeeperOptions) {
     this.options = options;
@@ -212,6 +216,11 @@ export class OfflineKeeper {
     this.stops.push(
       this.options.onConnection((online) => {
         if (online) {
+          const opened = this.openedOffline;
+          this.openedOffline = undefined;
+          if (opened !== undefined) {
+            this.moveAuto(opened.projectId, opened.name);
+          }
           for (const kept of this.kept.values()) {
             kept.schedule(0);
           }
@@ -230,6 +239,7 @@ export class OfflineKeeper {
 
   /** Stops keeping the copies, and following the session, as once the page goes. */
   stop(): void {
+    this.stopped = true;
     for (const stop of this.stops.splice(0)) {
       stop();
     }
@@ -239,6 +249,11 @@ export class OfflineKeeper {
     this.kept.clear();
     this.writer = false;
     this.stopWriting?.();
+  }
+
+  /** Resolves once the change of the records under way is done, after which a keeper that has stopped changes none, as before its database is closed. */
+  idle(): Promise<void> {
+    return this.queue;
   }
 
   /** Reports whether the page can keep projects offline, as far as it knows yet. */
@@ -279,13 +294,27 @@ export class OfflineKeeper {
   /**
    * Pins the project of projectId, named name, as the project that the
    * account last opened on the device, in place of the one before, whose
-   * copy goes unless the user made it available offline.
+   * copy goes unless the user made it available offline. While the browser
+   * has no connection, the pin moves once it has one: the copy of the one
+   * before, which the device could not download again until then, stays
+   * meanwhile, as for a user on a flight who goes from one project that the
+   * device keeps to another, and back.
    */
   opened(projectId: string, name: string): void {
     if (!this.options.secure || this.lastOpened === `${projectId}:${name}`) {
       return;
     }
     this.lastOpened = `${projectId}:${name}`;
+    if (!this.options.online()) {
+      this.openedOffline = { projectId, name };
+      return;
+    }
+    this.openedOffline = undefined;
+    this.moveAuto(projectId, name);
+  }
+
+  /** Moves the pin of the project that the account last opened to projectId, named name, as opened says. */
+  private moveAuto(projectId: string, name: string): void {
     // The session's account is known once the changes before it are done,
     // as the page's first, which follows the session (follow).
     this.enqueue(async () => {
@@ -310,24 +339,40 @@ export class OfflineKeeper {
   }
 
   /**
-   * Records that the copy of projectId could not be written, and why, which
-   * the page shows: in the tab, and on the device for the other tabs, where
-   * it can, as a device whose storage is full may refuse even that.
+   * Records that the copy of userId's projectId could not be written, and
+   * why, which the page shows: in the tab, and on the device for the other
+   * tabs, where it can, as a device whose storage is full may refuse even
+   * that; once the changes before it are done, and while the device still
+   * pins the project for the page's account, so that a write that failed as
+   * the project was unpinned, here or in another tab, or as the session
+   * became another account's, is not shown once it is pinned again.
    */
-  async failed(projectId: string, failure: PinFailure): Promise<void> {
-    const userId = this.store.getState().userId;
-    if (userId === undefined) {
-      return;
-    }
-    this.failures.set(projectId, failure);
-    await this.db
-      .setStatus(userId, projectId, "failed", failure)
-      .catch(() => undefined);
-    await this.changed();
+  failed(
+    userId: string,
+    projectId: string,
+    failure: PinFailure,
+  ): Promise<void> {
+    return this.enqueue(async () => {
+      if (this.store.getState().userId !== userId || !(await this.ready())) {
+        return;
+      }
+      const pins = await this.db.pins(userId);
+      if (!pins.some((pin) => pin.project_id === projectId)) {
+        return;
+      }
+      this.failures.set(projectId, failure);
+      await this.db
+        .setStatus(userId, projectId, "failed", failure)
+        .catch(() => undefined);
+      await this.changed();
+    });
   }
 
   /** Records that the copy of projectId has been written, which the page shows. */
   async wrote(projectId: string): Promise<void> {
+    if (this.stopped) {
+      return;
+    }
     this.failures.delete(projectId);
     await this.saveSession();
     await this.changed();
@@ -368,20 +413,17 @@ export class OfflineKeeper {
       if (pin === undefined) {
         this.failures.delete(projectId);
       }
-      // A copy that the browser's quota refused is tried again once another
-      // project's copy has gone, which may have made room for it.
-      if (pin === undefined) {
-        for (const kept of this.kept.values()) {
-          kept.retry();
-        }
-      }
       await this.changed();
     });
   }
 
-  /** Runs task once the changes before it are done, and resolves or rejects as it does; a failure does not stop the next. */
+  /**
+   * Runs task once the changes before it are done, and resolves or rejects
+   * as it does; a failure does not stop the next. Once the keeper has
+   * stopped, a task that has not begun does nothing.
+   */
   private enqueue(task: () => Promise<void>): Promise<void> {
-    const run = this.queue.then(task);
+    const run = this.queue.then(() => (this.stopped ? undefined : task()));
     this.queue = run.catch((error: unknown) => {
       this.options.log.record("error", error);
     });
@@ -402,6 +444,7 @@ export class OfflineKeeper {
     }
     this.followed = userId;
     this.lastOpened = undefined;
+    this.openedOffline = undefined;
     this.enqueue(async () => {
       for (const kept of this.kept.values()) {
         kept.stop();
@@ -486,10 +529,12 @@ export class OfflineKeeper {
     if (!this.writer || userId === undefined) {
       return;
     }
+    let removed = false;
     for (const [projectId, kept] of this.kept) {
       if (!pins.has(projectId)) {
         kept.stop();
         this.kept.delete(projectId);
+        removed = true;
       }
     }
     for (const projectId of pins.keys()) {
@@ -497,6 +542,14 @@ export class OfflineKeeper {
         const kept = new Kept(this, userId, projectId);
         this.kept.set(projectId, kept);
         kept.start();
+      }
+    }
+    // A copy that the browser's quota refused is tried again once another
+    // project's copy has gone, in this tab or another, which may have made
+    // room for it.
+    if (removed) {
+      for (const kept of this.kept.values()) {
+        kept.retry();
       }
     }
   }
@@ -679,7 +732,7 @@ class Kept {
         // The document recorded what failed, as it records a page's reads.
         if (this.keeper.options.online()) {
           this.failedNow();
-          await this.keeper.failed(this.projectId, "error");
+          await this.keeper.failed(this.userId, this.projectId, "error");
         }
         return;
       }
@@ -748,7 +801,11 @@ class Kept {
         this.keeper.options.log.record("error", error);
       }
       this.failedNow(quota);
-      await this.keeper.failed(this.projectId, quota ? "quota" : "error");
+      await this.keeper.failed(
+        this.userId,
+        this.projectId,
+        quota ? "quota" : "error",
+      );
       return;
     }
     if (written === undefined) {

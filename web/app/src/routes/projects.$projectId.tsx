@@ -8,7 +8,7 @@ import {
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { requireSession } from "../auth/session";
 import { useCommandHandlers } from "../commands/registry";
@@ -128,15 +128,33 @@ function ProjectPages({ projectId }: { projectId: string }) {
   const offlinePage = useChildMatches({
     select: (matches) => matches.some((m) => offlinePages.has(m.routeId)),
   });
-  // A page of the server's that loaded offline, which read nothing, reads
-  // once the browser is online again.
-  const wasConnected = useRef(connected);
+  // A page of the server's that loaded offline, whose loader read nothing,
+  // reads once the browser is online again, and is shown once it has read,
+  // rather than before, as its loader's checks would not have run yet: the
+  // page says that it needs a connection meanwhile.
+  const [readOffline, setReadOffline] = useState(!connected);
+  if (!connected && !readOffline) {
+    setReadOffline(true);
+  }
   useEffect(() => {
-    if (connected && !wasConnected.current && !offlinePage) {
-      void router.invalidate();
+    if (!connected || !readOffline) {
+      return;
     }
-    wasConnected.current = connected;
-  }, [connected, offlinePage, router]);
+    if (offlinePage) {
+      setReadOffline(false);
+      return;
+    }
+    let current = true;
+    const done = () => {
+      if (current) {
+        setReadOffline(false);
+      }
+    };
+    void router.invalidate().then(done, done);
+    return () => {
+      current = false;
+    };
+  }, [connected, readOffline, offlinePage, router]);
   // The focus that the search's command asked for its page is forgotten
   // once a page that is not the search's has been shown in its place, as
   // one whose navigation overtook the search's, or once the project's
@@ -340,7 +358,11 @@ function ProjectPages({ projectId }: { projectId: string }) {
         )}
         {!connected && <OfflineNotice projectId={projectId} />}
       </div>
-      {connected || offlinePage ? <Outlet /> : <NeedsConnection />}
+      {offlinePage || (connected && !readOffline) ? (
+        <Outlet />
+      ) : (
+        <NeedsConnection />
+      )}
     </div>
   );
 }

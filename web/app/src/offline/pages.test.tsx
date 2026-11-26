@@ -146,6 +146,33 @@ describe("a project's pages while the browser has no connection", () => {
     await user.click(screen.getByRole("link", { name: "Boards" }));
     expect(await screen.findByRole("link", { name: "Quay" })).toBeDefined();
   });
+
+  it("say that a board that the device's copy does not have needs a connection, rather than that there is none", async () => {
+    serve();
+    const { offline, router } = renderApp(`/projects/${testProject.id}`, {
+      session: testSession,
+      offline: { online: () => navigator.onLine },
+    });
+    await waitFor(() =>
+      expect(offline?.store.getState().pins.get(testProject.id)?.status).toBe(
+        "ready",
+      ),
+    );
+    goOffline();
+    // As one that another session made since the copy was written.
+    await act(() =>
+      router.navigate({
+        to: "/projects/$projectId/boards/$boardId",
+        params: { projectId: testProject.id, boardId: "bd_later" },
+      }),
+    );
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "This page needs a connection",
+      }),
+    ).toBeDefined();
+  });
 });
 
 describe("the storage panel", () => {

@@ -12,7 +12,7 @@ import { testAccount, testInstance, testSession } from "../test/app";
 import { fakeApi, refused, testProject, testWorkspace } from "../test/fake";
 import { workspaceQuery } from "../workspace/queries";
 import type { KeptSession } from "./db";
-import { type KeptReads, keepReads } from "./kept";
+import { askForOwnSession, type KeptReads, keepReads } from "./kept";
 
 // The page's reads of what the device keeps once the server does not answer
 // (PRD FR-OFF-02, plan note N97): a request that got no answer at all reads
@@ -21,6 +21,7 @@ import { type KeptReads, keepReads } from "./kept";
 // refusal too, is the server's.
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -109,5 +110,34 @@ describe("a page that the server does not answer", () => {
     await expect(client(false).fetchQuery(sessionQuery)).rejects.toThrow(
       NetworkError,
     );
+  });
+});
+
+describe("a page that holds the session that the device keeps", () => {
+  it("asks the server for its own while the browser says that it is online, until it has it", () => {
+    vi.useFakeTimers();
+    let held = true;
+    let connected = false;
+    const check = vi.fn();
+    const stop = askForOwnSession(
+      () => held,
+      check,
+      () => connected,
+      1_000,
+    );
+    vi.advanceTimersByTime(1_000);
+    expect(check).not.toHaveBeenCalled();
+    // As once the server answers again after a restart, which no "online"
+    // event tells of.
+    connected = true;
+    vi.advanceTimersByTime(1_000);
+    expect(check).toHaveBeenCalledOnce();
+    held = false;
+    vi.advanceTimersByTime(3_000);
+    expect(check).toHaveBeenCalledOnce();
+    held = true;
+    stop();
+    vi.advanceTimersByTime(3_000);
+    expect(check).toHaveBeenCalledOnce();
   });
 });

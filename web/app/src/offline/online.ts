@@ -35,10 +35,13 @@ export function onConnection(
   };
 }
 
+/** Subscribes changed to the browser's connection, as useSyncExternalStore does, once for each component, rather than again at each render. */
+const subscribe = (changed: () => void) => onConnection(changed);
+
+/** Reads whether the browser has a connection, as useSyncExternalStore does. */
+const snapshot = () => online();
+
 /** Returns whether the browser says that it has a connection, as it changes. */
 export function useOnline(): boolean {
-  return useSyncExternalStore(
-    (changed) => onConnection(changed),
-    () => online(),
-  );
+  return useSyncExternalStore(subscribe, snapshot);
 }

@@ -27,7 +27,7 @@ import { createAppI18n } from "./i18n";
 import { cspNonce } from "./nonce";
 import { copySource, OfflineDatabase } from "./offline/db";
 import { OfflineKeeper, tabsBroadcast, writerLock } from "./offline/keeper";
-import { keepReads } from "./offline/kept";
+import { askForOwnSession, keepReads } from "./offline/kept";
 import { onConnection, online } from "./offline/online";
 import { startShell } from "./pwa/worker";
 import { createAppRouter } from "./router";
@@ -143,6 +143,15 @@ onConnection((connected) => {
     void session.check();
   }
 });
+// A page that started from the device's session while the browser said
+// that it was online, as once the server did not answer as it restarted,
+// hears no "online" event: it asks for its own every few seconds, until it
+// has it (askForOwnSession).
+askForOwnSession(
+  () => queryClient.getQueryData(sessionQuery.queryKey)?.csrf_token === "",
+  () => void session.check(),
+  () => online(),
+);
 offline.start();
 /**
  * Returns the tab's session storage, which keeps the undo histories over a

@@ -796,6 +796,13 @@ export class ProjectDocument {
   private startedFrom: StartingCopy | undefined;
   /** Whether the real-time channel has been live since the document subscribed. */
   private wasLive = false;
+  /**
+   * Settles once the channel of a document that started from the device's
+   * copy is live, or a while after the document subscribed, whichever comes
+   * first (start), which the document's readings anew wait for, once, as
+   * the channel brings what changed since the copy's seq (refresh).
+   */
+  private liveWait: Promise<void> | undefined;
 
   constructor(projectId: string, options: DocumentOptions) {
     this.projectId = projectId;
@@ -1070,20 +1077,24 @@ export class ProjectDocument {
     // channel, once it is live; where it is not live a while after, as
     // behind a proxy that refuses the socket, or does not bring them, the
     // project is read anew, rather than shown as the copy has it.
-    if (this.startedFrom !== undefined && body.seq > this.confirmed.seq) {
-      const behind = body.seq;
-      void this.whenLive(confirmWait)
-        .then(() => this.whenConfirmed(behind, confirmWait))
-        .then(() => {
-          if (
-            !this.disposed &&
-            this.confirmed.seq < behind &&
-            !this.store.getState().live &&
-            this.buffer === undefined
-          ) {
-            void this.resync(behind);
-          }
-        });
+    if (this.startedFrom !== undefined) {
+      const liveWait = this.whenLive(confirmWait);
+      this.liveWait = liveWait;
+      if (body.seq > this.confirmed.seq) {
+        const behind = body.seq;
+        void liveWait
+          .then(() => this.whenConfirmed(behind, confirmWait))
+          .then(() => {
+            if (
+              !this.disposed &&
+              this.confirmed.seq < behind &&
+              !this.store.getState().live &&
+              this.buffer === undefined
+            ) {
+              void this.resync(behind);
+            }
+          });
+      }
     }
   }
 
@@ -1237,9 +1248,12 @@ export class ProjectDocument {
    * once: what the document holds, as the device's copy of the project, is
    * what there is to show, and the channel brings what changed once the
    * browser is online again (PRD FR-OFF-02). A document that started from
-   * the copy waits a while for the channel first, which brings what changed
-   * since the copy's seq, rather than read the part anew because the
-   * socket is still being opened, as while the page loads.
+   * the copy waits for the channel first, which brings what changed since
+   * the copy's seq, rather than read the part anew because the socket is
+   * still being opened, as while the page loads: until it is live, or a
+   * while after the document subscribed, once (liveWait), so that a channel
+   * that never is, as behind a proxy that refuses the socket, does not
+   * hold up every reading anew after.
    */
   async refresh(part?: Part): Promise<void> {
     if (!this.isOnline()) {
@@ -1247,11 +1261,8 @@ export class ProjectDocument {
     }
     this.refreshes++;
     try {
-      if (
-        this.startedFrom !== undefined &&
-        this.options.realtime !== undefined
-      ) {
-        await this.whenLive(confirmWait);
+      if (this.liveWait !== undefined && this.options.realtime !== undefined) {
+        await this.liveWait;
       }
       if (this.store.getState().live && this.buffer === undefined) {
         await this.whenConfirmed(this.subscribedTo, confirmWait);
@@ -2309,8 +2320,8 @@ export class ProjectDocument {
     }
   }
 
-  /** Reports whether the browser says that it has a connection (DocumentOptions.online). */
-  private isOnline(): boolean {
+  /** Reports whether the browser says that it has a connection (DocumentOptions.online), without which the document reads nothing anew (refresh). */
+  isOnline(): boolean {
     return this.options.online?.() ?? true;
   }
 
