@@ -12,7 +12,7 @@
 // serializer's draft export (item 76). The engine runs in Node, not in a
 // page, so the desktop's run alone makes the cross-check.
 
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -127,7 +127,10 @@ async function signedIn(request: APIRequestContext): Promise<ApiSession> {
  * Loads the fixture of size into a project of its own, with cmd/fixturegen
  * and an API token of the account, and returns the project's ID. Its seed
  * is the test's attempt's own, since a fixture's IDs, which the seed
- * makes, are taken once it applies.
+ * makes, are taken once it applies. fixturegen runs beside the test, which
+ * can time out meanwhile, and is stopped once two thirds of the test's time
+ * have gone, so that a load that stalls fails the test with fixturegen's
+ * own failure, while the test has the time to report it.
  */
 async function loadFixture(
   request: APIRequestContext,
@@ -153,23 +156,33 @@ async function loadFixture(
   writeFileSync(tokenFile, `${token.secret}\n`, { mode: 0o600 });
   try {
     const started = Date.now();
-    const run = spawnSync(
-      binary("fixturegen"),
-      [
-        "-size",
-        size,
-        "-seed",
-        String(seed),
-        "-server",
-        baseURL,
-        "-project",
-        projectId,
-        "-token-file",
-        tokenFile,
-      ],
-      { stdio: "inherit", timeout: 10 * 60_000 },
-    );
-    expect(run.status, `fixturegen -size ${size}`).toBe(0);
+    const exit = await new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolve, reject) => {
+      const run = spawn(
+        binary("fixturegen"),
+        [
+          "-size",
+          size,
+          "-seed",
+          String(seed),
+          "-server",
+          baseURL,
+          "-project",
+          projectId,
+          "-token-file",
+          tokenFile,
+        ],
+        { stdio: "inherit", timeout: Math.floor((info.timeout * 2) / 3) },
+      );
+      run.once("error", reject);
+      run.once("exit", (code, signal) => resolve({ code, signal }));
+    });
+    expect(
+      exit.code,
+      `fixturegen -size ${size}${exit.signal === null ? "" : `, stopped by ${exit.signal}`}`,
+    ).toBe(0);
     console.log(
       `The ${size} fixture loaded in ${Math.round((Date.now() - started) / 1000)} s.`,
     );
@@ -440,8 +453,10 @@ function paragraph(text: string): RichTextDoc {
  * something in, as the server's own test of the report does
  * (TestValidationReport), and that has an edge of each kind between its
  * boards, a text of each kind of owner that names a variable, an attribute,
- * and a component, and choices of one label whose conditions the prover of
- * duplicate choices proves exclusive, and does not.
+ * and a component, choices of one label whose conditions the prover of
+ * duplicate choices proves exclusive, and does not, and owners of
+ * expressions and texts in the trash whose UUIDs are those of entities of
+ * other kinds outside it.
  */
 async function buildEveryRule(
   request: APIRequestContext,
@@ -484,6 +499,11 @@ async function buildEveryRule(
   ];
   const [c1, c2] = [c(), c()];
   const [o1, o2] = [newId("branch_output"), newId("branch_output")];
+  // A connection whose UUID a client chose to be island's, and a node whose
+  // UUID it chose to be Elara's, both deleted below.
+  const twin = (prefix: "cn" | "nd", id: string) =>
+    `${prefix}_${id.slice(id.indexOf("_") + 1)}`;
+  const [islandTwin, elaraTwin] = [twin("cn", island), twin("nd", elara)];
   const position = { x: 0, y: 0 };
   const element = (
     id: string,
@@ -671,6 +691,14 @@ async function buildEveryRule(
     }),
     connect(c(), start, talk2, paragraph("Talk2")),
     element(island, harbour, paragraph("Island"), { is_ending: true }),
+    // Island's twin, whose condition does not compile, and whose label
+    // shows spent, which nothing else reads, and Elara's, whose text shows
+    // doomed, deleted below: in the trash, neither is a site of the rules,
+    // though island and Elara are outside it.
+    connect(islandTwin, island, end, richText(value(spent)), {
+      condition: "nope",
+    }),
+    element(elaraTwin, harbour, richText(value(doomed)), { is_ending: true }),
     // A branch whose output o2 no connection leaves, and one without
     // outputs.
     typed(br, harbour, "branch"),
@@ -725,6 +753,8 @@ async function buildEveryRule(
     },
   ]);
   await apply(request, session, projectId, [
+    { type: "connection.delete", payload: { id: islandTwin } },
+    { type: "node.delete", payload: { id: elaraTwin } },
     { type: "variable.delete", payload: { id: doomed, force: true } },
     { type: "component.delete", payload: { id: ghost, force: true } },
     { type: "node.delete", payload: { id: nookStart } },

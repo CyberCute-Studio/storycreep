@@ -568,6 +568,63 @@ func TestValidationDanglingText(t *testing.T) {
 	}
 }
 
+// TestValidationSharedUUIDs checks that the owner of an expression or of a
+// text is outside the trash by its own kind alone: a node, a connection, and
+// a component may share a UUID, since a client chooses their IDs, so that a
+// connection in the trash whose UUID is a node's that is not, and a node in
+// the trash whose UUID is a component's that is not, are no sites of the
+// validation all the same. The index of what the texts name tells the node's
+// text and the component's description apart too, though one batch adds
+// both (FR-DEP-01 AC1).
+func TestValidationSharedUUIDs(t *testing.T) {
+	t.Parallel()
+	s, d, owner, ws := inviteServer(t, "open", nil)
+	h := s.main
+	p := createProject(t, h, owner, ws, "Harbour").ID
+	var types api.Page[component.ComponentType]
+	if res := call(h, http.MethodGet, componentTypesPath(p), nil, owner.header(false)); res.status != http.StatusOK ||
+		json.Unmarshal(res.body, &types) != nil || len(types.Items) == 0 {
+		t.Fatalf("list the types: %d %s", res.status, res.body)
+	}
+	board, start, gone, coins, tide := newBoardID(), newNodeID(), newNodeID(), newVariableID(), newVariableID()
+	// The connection's UUID is that of start, the node that it leaves and
+	// enters, and the component's is that of gone, whose text shows coins,
+	// as the component's description shows tide, which start writes.
+	loop, elara := ids.Encode(ids.Connection, uuidOf(t, start)), ids.Encode(ids.Component, uuidOf(t, gone))
+	names := map[string]string{start: "start", gone: "gone", coins: "coins", tide: "tide", loop: "loop",
+		elara: "elara"}
+	pos := map[string]int{"x": 0, "y": 0}
+	sendBatch(t, h, owner, p,
+		cmd("board.create", map[string]any{"id": board, "name": "Harbour"}),
+		cmd("variable.create", map[string]any{"id": coins, "key": "coins", "type": "int", "scope": "global"}),
+		cmd("variable.create", map[string]any{"id": tide, "key": "tide", "type": "int", "scope": "global"}),
+		cmd("node.create", map[string]any{"id": start, "board_id": board, "type": "element", "kind": "narration",
+			"text": paragraph("Hello"), "is_ending": true, "on_enter": "tide = 1", "position": pos}),
+		cmd("board.set_entry_node", map[string]any{"id": board, "node_id": start}),
+		cmd("node.create", map[string]any{"id": gone, "board_id": board, "type": "element", "kind": "narration",
+			"text": richText(textInline("Coins: "), valueInline(coins)), "is_ending": true, "position": pos}),
+		cmd("component.create", map[string]any{"id": elara, "component_type_id": types.Items[0].ID,
+			"name": "Elara", "description": richText(textInline("Tide: "), valueInline(tide))}),
+		cmd("connection.create", map[string]any{"id": loop, "from_node_id": start, "to_node_id": start,
+			"condition": "nope"}),
+	)
+	wantDrift(t, d.Admin(t), p)
+	got := findingLines(validationReport(t, h, owner, p).Findings, names)
+	for _, want := range []string{"expr_invalid connection:loop.condition", "var_read_never_written variable:coins"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("before loop and gone are in the trash, the findings are %q, want %q among them", got, want)
+		}
+	}
+	sendBatch(t, h, owner, p,
+		cmd("connection.delete", map[string]any{"id": loop}),
+		cmd("node.delete", map[string]any{"id": gone}),
+	)
+	if r := validationReport(t, h, owner, p); len(r.Findings) != 0 || len(r.Muted) != 0 {
+		t.Errorf("once loop and gone are in the trash, the findings are %q, want none",
+			findingLines(slices.Concat(r.Findings, r.Muted), names))
+	}
+}
+
 // TestValidationForcedDeletion checks that a variable's forced deletion
 // produces one validation error per site that used it: each expression that
 // named it, which no longer compiles, and each text that shows it, whose

@@ -66,9 +66,13 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 	if err != nil {
 		return nil, fmt.Errorf("validation: read the nodes: %w", err)
 	}
-	live := map[ids.UUID]bool{}
+	// The owners of expressions and texts that are not in the trash, by
+	// their kinds and their UUIDs, since a node, an output, a connection,
+	// and a component may share a UUID, as a client chooses their IDs, and
+	// each is in the trash or not by its own kind alone.
+	live := map[ref]bool{}
 	for _, n := range nodes {
-		live[n.ID.Bytes] = true
+		live[ref{ids.Node, n.ID.Bytes}] = true
 		m.nodes = append(m.nodes, node{id: n.ID.Bytes, board: n.BoardID.Bytes, title: n.Title, typ: n.Type, kind: n.Kind,
 			speaker: n.SpeakerComponentID.Bytes, ending: n.IsEnding, textEmpty: n.TextEmpty,
 			targetNode: n.TargetNodeID.Bytes})
@@ -78,7 +82,7 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 		return nil, fmt.Errorf("validation: read the outputs: %w", err)
 	}
 	for _, o := range outputs {
-		live[o.ID.Bytes] = true
+		live[ref{ids.BranchOutput, o.ID.Bytes}] = true
 		m.outputs = append(m.outputs, output{id: o.ID.Bytes, node: o.NodeID.Bytes, board: o.BoardID.Bytes})
 	}
 	connections, err := q.ValidationConnections(ctx, queries.ValidationConnectionsParams{WorkspaceID: w,
@@ -87,7 +91,7 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 		return nil, fmt.Errorf("validation: read the connections: %w", err)
 	}
 	for _, c := range connections {
-		live[c.ID.Bytes] = true
+		live[ref{ids.Connection, c.ID.Bytes}] = true
 		m.connections = append(m.connections, connection{id: c.ID.Bytes, board: c.BoardID.Bytes,
 			from: c.FromNodeID.Bytes, output: c.FromOutputID.Bytes, to: c.ToNodeID.Bytes, label: string(c.Label)})
 	}
@@ -101,7 +105,7 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 	}
 	for _, c := range components {
 		m.components[c.ID.Bytes] = c.ComponentTypeID.Bytes
-		live[c.ID.Bytes] = true
+		live[ref{ids.Component, c.ID.Bytes}] = true
 	}
 	attributes, err := q.ValidationAttributeDefs(ctx, queries.ValidationAttributeDefsParams{WorkspaceID: w,
 		ProjectID: p})
@@ -148,12 +152,13 @@ func compared(nodes []node, connections []connection) map[ids.UUID]bool {
 }
 
 // loadExpressions reads the expressions of the owners that live holds, the
-// nodes, the connections, and the outputs that are not in the trash, the AST
-// of the condition of each connection that compared holds, and the
-// variables, each with whether such an expression reads it, or writes it. It
-// returns the places of the variables among the model's, by their IDs.
+// nodes, the connections, and the outputs that are not in the trash, by
+// their kinds and their UUIDs, the AST of the condition of each connection
+// that compared holds, and the variables, each with whether such an
+// expression reads it, or writes it. It returns the places of the variables
+// among the model's, by their IDs.
 func (d *draft) loadExpressions(ctx context.Context, q *queries.Queries, w, p pgtype.UUID,
-	live, compared map[ids.UUID]bool) (map[ids.UUID]int, error) {
+	live map[ref]bool, compared map[ids.UUID]bool) (map[ids.UUID]int, error) {
 	m := d.model
 	rows, err := q.ValidationExpressions(ctx, queries.ValidationExpressionsParams{WorkspaceID: w, ProjectID: p})
 	if err != nil {
@@ -172,7 +177,7 @@ func (d *draft) loadExpressions(ctx context.Context, q *queries.Queries, w, p pg
 		default:
 			owner = ref{ids.BranchOutput, r.BranchOutputID.Bytes}
 		}
-		if !live[owner.id] {
+		if !live[owner] {
 			continue
 		}
 		sites[r.ID.Bytes] = true
@@ -213,9 +218,10 @@ func (d *draft) loadExpressions(ctx context.Context, q *queries.Queries, w, p pg
 }
 
 // loadTexts reads what the texts of the nodes, the connections, and the
-// components that live holds refer to, each of which reads the variables
-// that its value references show, whose places among the model's at holds.
-func (d *draft) loadTexts(ctx context.Context, q *queries.Queries, w, p pgtype.UUID, live map[ids.UUID]bool,
+// components that live holds, by their kinds and their UUIDs, refer to, each
+// of which reads the variables that its value references show, whose places
+// among the model's at holds.
+func (d *draft) loadTexts(ctx context.Context, q *queries.Queries, w, p pgtype.UUID, live map[ref]bool,
 	at map[ids.UUID]int) error {
 	m := d.model
 	rows, err := q.ValidationTextReferences(ctx, queries.ValidationTextReferencesParams{WorkspaceID: w,
@@ -233,7 +239,7 @@ func (d *draft) loadTexts(ctx context.Context, q *queries.Queries, w, p pgtype.U
 		default:
 			owner = ref{ids.Component, r.ComponentID.Bytes}
 		}
-		if !live[owner.id] {
+		if !live[owner] {
 			continue
 		}
 		u, err := dependency.InlineUse(r.Inline)

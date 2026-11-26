@@ -238,8 +238,12 @@ const ruleCases: Record<Code, RuleCase> = {
 };
 
 test("the rules are the server's, in its order", () => {
-  // The API's codes and severities of a finding, in the order of the
-  // server's rules, which the OpenAPI document writes of them.
+  // The API's codes of a finding, in the order of the server's rules, and
+  // their severities, which the OpenAPI document writes of them: a
+  // warning's code is one that a publication acknowledges, an info's one
+  // that a mute silences and no publication acknowledges, and an error's
+  // one that neither names.
+  type Codes = { properties: { code: { enum: string[] } } };
   const api = JSON.parse(
     readFileSync(
       join(import.meta.dirname, "../../../../schema/api/v1/openapi.json"),
@@ -247,11 +251,22 @@ test("the rules are the server's, in its order", () => {
     ),
   ) as {
     components: {
-      schemas: { Finding: { properties: { code: { enum: string[] } } } };
+      schemas: {
+        Finding: Codes;
+        Acknowledgement: Codes;
+        ValidationMutePayload: Codes;
+      };
     };
   };
-  expect(rules.map((r) => r.code)).toEqual(
-    api.components.schemas.Finding.properties.code.enum,
+  const { Finding, Acknowledgement, ValidationMutePayload } =
+    api.components.schemas;
+  const warnings = new Set(Acknowledgement.properties.code.enum);
+  const mutable = new Set(ValidationMutePayload.properties.code.enum);
+  expect(rules.map((r) => [r.code, r.severity])).toEqual(
+    Finding.properties.code.enum.map((code) => [
+      code,
+      warnings.has(code) ? "warning" : mutable.has(code) ? "info" : "error",
+    ]),
   );
 });
 
