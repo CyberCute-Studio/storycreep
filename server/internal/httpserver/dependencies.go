@@ -89,11 +89,12 @@ const graphDoc = " An edge of the kind variable or attribute leaves a board that
 
 // usageKey is the key of a list of usages that its pages' cursors hold
 // (dependency.Key), each UUID in its text form, the zero UUID where a usage
-// has none.
+// has none, and the type of its site.
 type usageKey struct {
 	Board     string `json:"board"`
 	Node      string `json:"node"`
 	Site      string `json:"site"`
+	SiteType  string `json:"site_type"`
 	Attribute string `json:"attribute"`
 }
 
@@ -332,7 +333,7 @@ func contributionCursor(cursor string) (dependency.ContributionKey, error) {
 func usagePage(p api.PageParams, list []dependency.Usage) (*usagesOutput, error) {
 	page, err := api.NewPage(p, list, func(u dependency.Usage) usageKey {
 		k := u.Key()
-		return usageKey{Board: k.Board.String(), Node: k.Node.String(), Site: k.Site.String(),
+		return usageKey{Board: k.Board.String(), Node: k.Node.String(), Site: k.Site.String(), SiteType: k.SiteType,
 			Attribute: k.Attribute.String()}
 	})
 	if err != nil {
@@ -344,7 +345,8 @@ func usagePage(p api.PageParams, list []dependency.Usage) (*usagesOutput, error)
 // usageCursor returns the key that cursor, a next_cursor of a list of
 // usages, holds, or the zero key, before every usage, for the empty cursor of
 // the first page. A cursor that holds no key, or not in the form that the
-// server writes, is answered with invalid_cursor.
+// server writes, its site's type one of a usage's (dependency.Usage.Site), is
+// answered with invalid_cursor.
 func usageCursor(cursor string) (dependency.Key, error) {
 	if cursor == "" {
 		return dependency.Key{}, nil
@@ -358,6 +360,10 @@ func usageCursor(cursor string) (dependency.Key, error) {
 		cursorUUID{key.Site, &out.Site}, cursorUUID{key.Attribute, &out.Attribute}); err != nil {
 		return dependency.Key{}, err
 	}
+	if !dependency.IsUsageSite(key.SiteType) {
+		return dependency.Key{}, api.NewError(api.CodeInvalidCursor)
+	}
+	out.SiteType = key.SiteType
 	return out, nil
 }
 
