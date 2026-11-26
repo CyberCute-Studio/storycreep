@@ -40,10 +40,33 @@ func (q *Queries) AccountProfile(ctx context.Context, id pgtype.UUID) (AccountPr
 	return i, err
 }
 
+const changePasswordHash = `-- name: ChangePasswordHash :execrows
+UPDATE "user" SET password_hash = $1, password_changed_at = now(), updated_at = now()
+WHERE id = $2 AND password_hash = $3
+`
+
+type ChangePasswordHashParams struct {
+	NewHash pgtype.Text
+	ID      pgtype.UUID
+	OldHash pgtype.Text
+}
+
+// ChangePasswordHash replaces the hash of an account's password with that of a
+// new password, as UpdatePasswordHash does, and records when the password was
+// set, which the personal-data export holds (PRD §9.6).
+func (q *Queries) ChangePasswordHash(ctx context.Context, arg ChangePasswordHashParams) (int64, error) {
+	result, err := q.db.Exec(ctx, changePasswordHash, arg.NewHash, arg.ID, arg.OldHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertUser = `-- name: InsertUser :execrows
-INSERT INTO "user" (id, email, password_hash, display_name, is_instance_admin, personal_workspace_created_at)
+INSERT INTO "user" (id, email, password_hash, display_name, is_instance_admin, personal_workspace_created_at,
+    password_changed_at)
 VALUES ($1, $2, $3, $4, $5,
-    CASE WHEN $6::boolean THEN now() END)
+    CASE WHEN $6::boolean THEN now() END, CASE WHEN $3::text IS NOT NULL THEN now() END)
 ON CONFLICT (email) DO NOTHING
 `
 
@@ -62,7 +85,8 @@ type InsertUserParams struct {
 // account leaves the account as it was (PRD FR-AUTH-01 AC1). An account that
 // first-run setup adds is an instance admin, and its personal workspace is
 // the one that setup creates, which personal_workspace marks as given
-// (FR-ADMIN-02).
+// (FR-ADMIN-02). An account with a password records when it was set, which
+// the personal-data export holds (PRD §9.6).
 func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (int64, error) {
 	result, err := q.db.Exec(ctx, insertUser,
 		arg.ID,
@@ -183,8 +207,7 @@ type UpdatePasswordHashParams struct {
 // new_hash, if the hash is still old_hash, which the caller checked a
 // password against, so that a password that changed in the meantime is not
 // changed back. Signing in uses it to hash the same password again with the
-// current parameters (PRD NFR-SEC-03), and changing the password to store
-// the new one.
+// current parameters (PRD NFR-SEC-03), which leaves the password as it was.
 func (q *Queries) UpdatePasswordHash(ctx context.Context, arg UpdatePasswordHashParams) (int64, error) {
 	result, err := q.db.Exec(ctx, updatePasswordHash, arg.NewHash, arg.ID, arg.OldHash)
 	if err != nil {

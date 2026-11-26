@@ -575,7 +575,7 @@ func (s *Service) changePassword(ctx context.Context, current Session, password,
 	}
 	var issued Issued
 	err = s.db.InTx(ctx, database.Scope{UserID: current.UserID}, func(tx pgx.Tx) error {
-		n, err := queries.New(tx).UpdatePasswordHash(ctx, queries.UpdatePasswordHashParams{
+		n, err := queries.New(tx).ChangePasswordHash(ctx, queries.ChangePasswordHashParams{
 			NewHash: pgtype.Text{String: replaced, Valid: true}, ID: nullUUID(current.UserID), OldHash: old})
 		if err != nil {
 			return fmt.Errorf("account: replace the password's hash: %w", err)

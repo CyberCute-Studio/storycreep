@@ -1,0 +1,1442 @@
+{
+  "$defs": {
+    "GeneratorInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "What wrote the snapshot, storycreep for the server.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "version": {
+          "description": "Its version.",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "type": "object"
+    },
+    "ItemsPersonalActedEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "description": "The section's items.",
+          "items": {
+            "$ref": "#/$defs/PersonalActedEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ItemsPersonalActedOnEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "description": "The section's items.",
+          "items": {
+            "$ref": "#/$defs/PersonalActedOnEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ItemsPersonalComment": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "description": "The section's items.",
+          "items": {
+            "$ref": "#/$defs/PersonalComment"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ItemsPersonalEmailLink": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "description": "The section's items.",
+          "items": {
+            "$ref": "#/$defs/PersonalEmailLink"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ItemsPersonalIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "description": "The section's items.",
+          "items": {
+            "$ref": "#/$defs/PersonalIdentity"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ItemsPersonalInvite": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "description": "The section's items.",
+          "items": {
+            "$ref": "#/$defs/PersonalInvite"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ItemsPersonalMembership": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "description": "The section's items.",
+          "items": {
+            "$ref": "#/$defs/PersonalMembership"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ItemsPersonalNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "description": "The section's items.",
+          "items": {
+            "$ref": "#/$defs/PersonalNotification"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ItemsPersonalReference": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "description": "The section's items.",
+          "items": {
+            "$ref": "#/$defs/PersonalReference"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ItemsPersonalSession": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "description": "The section's items.",
+          "items": {
+            "$ref": "#/$defs/PersonalSession"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ItemsPersonalToken": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "description": "The section's items.",
+          "items": {
+            "$ref": "#/$defs/PersonalToken"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ManifestSection": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "description": "How many items it holds.",
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "description": "The section's name.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The path of its file.",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "The SHA-256 of its file.",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "path",
+        "items",
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "MemberGrant": {
+      "additionalProperties": false,
+      "properties": {
+        "projectId": {
+          "description": "The project's ID.",
+          "type": "string"
+        },
+        "role": {
+          "description": "The member's role on the project.",
+          "enum": [
+            "admin",
+            "editor",
+            "commenter",
+            "viewer"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "projectId",
+        "role"
+      ],
+      "type": "object"
+    },
+    "PersonalAccount": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "description": "When the account was created.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "credentials": {
+          "$ref": "#/$defs/PersonalCredentials",
+          "description": "What the account's credentials are, never a hash or a secret of one."
+        },
+        "displayName": {
+          "description": "The account's display name.",
+          "type": "string"
+        },
+        "email": {
+          "description": "The account's email address.",
+          "type": "string"
+        },
+        "emailVerifiedAt": {
+          "description": "When the email address was verified, if it was.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "description": "The account's ID.",
+          "type": "string"
+        },
+        "instanceAdmin": {
+          "description": "Whether the account is an instance admin.",
+          "type": "boolean"
+        },
+        "locale": {
+          "description": "The locale that the user prefers, as a BCP 47 tag, if they chose one.",
+          "type": "string"
+        },
+        "status": {
+          "description": "The account's status: an archive is only made of an active account.",
+          "enum": [
+            "active"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "email",
+        "displayName",
+        "status",
+        "instanceAdmin",
+        "createdAt",
+        "credentials"
+      ],
+      "type": "object"
+    },
+    "PersonalActedEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "description": "What was done, such as auth.login.",
+          "type": "string"
+        },
+        "actorTokenId": {
+          "description": "The user's API token that they did it with, if they used one.",
+          "type": "string"
+        },
+        "actorUserId": {
+          "description": "Who did it: the user.",
+          "type": "string"
+        },
+        "createdAt": {
+          "description": "When it was done.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "description": "The entry's ID, a UUID.",
+          "type": "string"
+        },
+        "ip": {
+          "description": "The IP address that it was asked from.",
+          "type": "string"
+        },
+        "metadata": {
+          "description": "What else the entry says, by its action, which never holds a name or an email address."
+        },
+        "requestId": {
+          "description": "The ID of the request that did it.",
+          "type": "string"
+        },
+        "result": {
+          "description": "How it ended, such as success or denied.",
+          "type": "string"
+        },
+        "subjectId": {
+          "description": "The ID of what it was done to, of its kind, or a UUID of a kind that has no prefix.",
+          "type": "string"
+        },
+        "subjectKind": {
+          "description": "The kind of what it was done to, such as project.",
+          "type": "string"
+        },
+        "userAgent": {
+          "description": "The user agent that asked for it.",
+          "type": "string"
+        },
+        "workspaceId": {
+          "description": "The workspace that it was done in, for an action that belongs to one.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "action",
+        "actorUserId",
+        "result",
+        "metadata",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "PersonalActedOnEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "description": "What was done, such as membership.remove.",
+          "type": "string"
+        },
+        "actor": {
+          "description": "Who did it, as the role that the action needs: a workspace admin, an owner or an admin of the workspace, or an instance administrator, an instance admin or the instance's operator. Without it, nobody is known to have done it, as for a failed sign-in with the user's address, which anyone may have tried.",
+          "enum": [
+            "a workspace admin",
+            "an instance administrator"
+          ],
+          "type": "string"
+        },
+        "createdAt": {
+          "description": "When it was done.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "result": {
+          "description": "How it ended, such as success.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "result",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "PersonalComment": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/RichTextDoc",
+          "description": "The comment's text, a rich-text document."
+        },
+        "createdAt": {
+          "description": "When it was posted.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "deletedAt": {
+          "description": "When the user deleted it, if they did: it is in its project's trash until it is purged.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "editedAt": {
+          "description": "When its text last changed after it was posted, if it did.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "description": "The comment's ID.",
+          "type": "string"
+        },
+        "parentId": {
+          "description": "The first comment of the thread, for a reply.",
+          "type": "string"
+        },
+        "projectId": {
+          "description": "Its project.",
+          "type": "string"
+        },
+        "resolvedAt": {
+          "description": "When its thread was resolved, for a thread's first comment, if it is.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/PersonalTarget",
+          "description": "What the thread is about."
+        },
+        "threadId": {
+          "description": "Its thread's ID, the ID of the thread's first comment.",
+          "type": "string"
+        },
+        "workspaceId": {
+          "description": "Its workspace.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "workspaceId",
+        "projectId",
+        "threadId",
+        "target",
+        "body",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "PersonalCredentials": {
+      "additionalProperties": false,
+      "properties": {
+        "passwordChangedAt": {
+          "description": "When the password was last set, if it is.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "passwordSet": {
+          "description": "Whether the account has a password.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "passwordSet"
+      ],
+      "type": "object"
+    },
+    "PersonalEmailLink": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "description": "When it was asked for.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "expiresAt": {
+          "description": "When it expires.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "kind": {
+          "description": "What the link does.",
+          "enum": [
+            "email_verification",
+            "password_reset"
+          ],
+          "type": "string"
+        },
+        "sentAt": {
+          "description": "When it was last emailed, if it was.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "usedAt": {
+          "description": "When it was used, if it was.",
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "createdAt",
+        "expiresAt"
+      ],
+      "type": "object"
+    },
+    "PersonalIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "description": "When the import made it.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "displayName": {
+          "description": "The display name that the archive gave the user.",
+          "type": "string"
+        },
+        "workspaceId": {
+          "description": "The workspace that the archive was imported into.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "displayName",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "PersonalInvite": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptedAt": {
+          "description": "When it was accepted, if it was.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "createdAt": {
+          "description": "When it was made.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "expiresAt": {
+          "description": "When its link expires.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "description": "The invitation's ID.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "email for an invitation to the user's address, or link for one to whoever held its link, which the user accepted.",
+          "enum": [
+            "email",
+            "link"
+          ],
+          "type": "string"
+        },
+        "revokedAt": {
+          "description": "When it was revoked, if it was.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "role": {
+          "description": "The role that it gives.",
+          "enum": [
+            "owner",
+            "admin",
+            "editor",
+            "commenter",
+            "viewer",
+            "guest"
+          ],
+          "type": "string"
+        },
+        "status": {
+          "description": "Where it was as the invitations were read, after the archive's reading began.",
+          "enum": [
+            "open",
+            "accepted",
+            "revoked",
+            "expired"
+          ],
+          "type": "string"
+        },
+        "workspaceId": {
+          "description": "The workspace that it invites to.",
+          "type": "string"
+        },
+        "workspaceName": {
+          "description": "The workspace's name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "workspaceId",
+        "workspaceName",
+        "kind",
+        "role",
+        "status",
+        "createdAt",
+        "expiresAt"
+      ],
+      "type": "object"
+    },
+    "PersonalManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "exportedAt": {
+          "description": "When the archive's reading began, by the database's clock. The account, its email links, and its sessions are read as of it; the memberships, the API tokens, the invitations, and the imported identities after it, as of one moment; and the audit log, the comments, the notifications, and the attribution a page at a time, each page as of a moment of its own, the audit log's entries up to it.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "format": {
+          "description": "The format's name.",
+          "enum": [
+            "storycreep.personal-data"
+          ],
+          "type": "string"
+        },
+        "formatVersion": {
+          "description": "The version of the format.",
+          "enum": [
+            1
+          ],
+          "format": "int64",
+          "type": "integer"
+        },
+        "generator": {
+          "$ref": "#/$defs/GeneratorInfo",
+          "description": "What wrote the archive."
+        },
+        "personalData": {
+          "description": "Whether the archive holds personal data, which it always does: all of it is about the user, and the audit log's entries of what the user did name, by their IDs, what and whom they did it to.",
+          "enum": [
+            true
+          ],
+          "type": "boolean"
+        },
+        "sections": {
+          "description": "The archive's JSON files beside this one, each with how many items it holds and its SHA-256.",
+          "items": {
+            "$ref": "#/$defs/ManifestSection"
+          },
+          "type": "array"
+        },
+        "userId": {
+          "description": "The ID of the account that the archive is of, whose user asked for it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "format",
+        "formatVersion",
+        "generator",
+        "exportedAt",
+        "userId",
+        "personalData",
+        "sections"
+      ],
+      "type": "object"
+    },
+    "PersonalMembership": {
+      "additionalProperties": false,
+      "properties": {
+        "grants": {
+          "description": "The user's grants on the workspace's projects, each of which replaces their role on its project, in the order of the projects' IDs.",
+          "items": {
+            "$ref": "#/$defs/MemberGrant"
+          },
+          "type": "array"
+        },
+        "joinedAt": {
+          "description": "When the user joined the workspace.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "membershipId": {
+          "description": "The membership's ID.",
+          "type": "string"
+        },
+        "role": {
+          "description": "The user's role in the workspace.",
+          "enum": [
+            "owner",
+            "admin",
+            "editor",
+            "commenter",
+            "viewer",
+            "guest"
+          ],
+          "type": "string"
+        },
+        "workspaceId": {
+          "description": "The workspace's ID.",
+          "type": "string"
+        },
+        "workspaceName": {
+          "description": "The workspace's name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "membershipId",
+        "workspaceId",
+        "workspaceName",
+        "role",
+        "joinedAt",
+        "grants"
+      ],
+      "type": "object"
+    },
+    "PersonalNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "commentId": {
+          "description": "The comment that it tells of.",
+          "type": "string"
+        },
+        "createdAt": {
+          "description": "When the comment mentioned the user.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "description": "The notification's ID.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "What it tells of: that the comment mentions the user.",
+          "enum": [
+            "mention"
+          ],
+          "type": "string"
+        },
+        "projectId": {
+          "description": "Its comment's project.",
+          "type": "string"
+        },
+        "readAt": {
+          "description": "When the user read it, if they did.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "workspaceId": {
+          "description": "Its workspace.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "workspaceId",
+        "projectId",
+        "commentId",
+        "kind",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "PersonalReference": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "description": "When the user did.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "entity": {
+          "description": "The kind of the entity, as the table of its rows is named, such as node.",
+          "enum": [
+            "project",
+            "folder",
+            "board",
+            "variable",
+            "component_type",
+            "attribute_def",
+            "component",
+            "node",
+            "branch_output",
+            "connection",
+            "validation_mute",
+            "play_state",
+            "asset",
+            "snapshot",
+            "comment"
+          ],
+          "type": "string"
+        },
+        "id": {
+          "description": "Its ID, of its kind, or a UUID of a kind that has no prefix.",
+          "type": "string"
+        },
+        "projectId": {
+          "description": "Its project, which a workspace's own asset has none of.",
+          "type": "string"
+        },
+        "relation": {
+          "description": "What the user did to it: created it, changed it last (updated), uploaded it, published it, or resolved it, a comment's thread.",
+          "enum": [
+            "created",
+            "updated",
+            "uploaded",
+            "published",
+            "resolved"
+          ],
+          "type": "string"
+        },
+        "workspaceId": {
+          "description": "Its workspace.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity",
+        "id",
+        "workspaceId",
+        "relation",
+        "at"
+      ],
+      "type": "object"
+    },
+    "PersonalSession": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "description": "When it was started, by signing in.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "expiresAt": {
+          "description": "When it expires, at the latest.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "description": "The session's ID.",
+          "type": "string"
+        },
+        "ip": {
+          "description": "The IP address that it was started from.",
+          "type": "string"
+        },
+        "lastSeenAt": {
+          "description": "When it was last used, to a minute.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "revokedAt": {
+          "description": "When it was ended before its time, if it was.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "userAgent": {
+          "description": "The user agent that started it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "createdAt",
+        "lastSeenAt",
+        "expiresAt"
+      ],
+      "type": "object"
+    },
+    "PersonalTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Its ID.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "The kind of what the thread is about.",
+          "enum": [
+            "node",
+            "connection",
+            "board",
+            "variable"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id"
+      ],
+      "type": "object"
+    },
+    "PersonalToken": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "description": "When it was created.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "expiresAt": {
+          "description": "When it expires, if it does.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "description": "The token's ID.",
+          "type": "string"
+        },
+        "lastUsedAt": {
+          "description": "When it was last used, if it was.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "name": {
+          "description": "The token's name, which its user, or the operator who made it, gave it.",
+          "type": "string"
+        },
+        "projectId": {
+          "description": "The one project that the token is narrowed to, if any.",
+          "type": "string"
+        },
+        "revokedAt": {
+          "description": "When it was revoked, if it was.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "scopes": {
+          "description": "The token's scopes.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "workspaceId": {
+          "description": "The token's workspace.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "workspaceId",
+        "scopes",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "RichTextAttributeId": {
+      "description": "A component type's attribute definition's ID.",
+      "pattern": "^[Aa][Tt][Rr]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
+      "type": "string"
+    },
+    "RichTextBlock": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RichTextParagraph"
+        },
+        {
+          "$ref": "#/$defs/RichTextList"
+        }
+      ]
+    },
+    "RichTextBold": {
+      "additionalProperties": false,
+      "description": "Bold.",
+      "properties": {
+        "type": {
+          "const": "bold"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextCode": {
+      "additionalProperties": false,
+      "description": "Inline code.",
+      "properties": {
+        "type": {
+          "const": "code"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextComponentId": {
+      "description": "A component's ID.",
+      "pattern": "^[Cc][Mm][Pp]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
+      "type": "string"
+    },
+    "RichTextDecimals": {
+      "description": "The number of digits after the point that a number is shown with, rounded half away from zero. A value that is not a number is shown as it is.",
+      "maximum": 6,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "RichTextDoc": {
+      "additionalProperties": false,
+      "description": "A document: its blocks, at least one. The editor's empty document is one empty paragraph.",
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/RichTextBlock"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "type": {
+          "const": "doc"
+        }
+      },
+      "required": [
+        "content",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextHardBreak": {
+      "additionalProperties": false,
+      "description": "A line break within a paragraph.",
+      "properties": {
+        "marks": {
+          "$ref": "#/$defs/RichTextMarks"
+        },
+        "type": {
+          "const": "hardBreak"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextInline": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RichTextText"
+        },
+        {
+          "$ref": "#/$defs/RichTextHardBreak"
+        },
+        {
+          "$ref": "#/$defs/RichTextMention"
+        },
+        {
+          "$ref": "#/$defs/RichTextMemberMention"
+        },
+        {
+          "$ref": "#/$defs/RichTextValueRef"
+        }
+      ]
+    },
+    "RichTextItalic": {
+      "additionalProperties": false,
+      "description": "Italic.",
+      "properties": {
+        "type": {
+          "const": "italic"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextLink": {
+      "additionalProperties": false,
+      "description": "A link to an absolute http or https URL with a host, without white space, or a mailto URL of one address and nothing else.",
+      "properties": {
+        "attrs": {
+          "additionalProperties": false,
+          "properties": {
+            "href": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "pattern": "^(?:[Hh][Tt][Tt][Pp][Ss]?://[^\\x00-\\x20\\x7f-\\x9f/?#][^\\x00-\\x20\\x7f-\\x9f]*|[Mm][Aa][Ii][Ll][Tt][Oo]:[A-Za-z0-9_+-]+(?:\\.[A-Za-z0-9_+-]+)*@(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\\.)*(?:[0-9]*[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?|[0-9]+-[A-Za-z0-9-]*[A-Za-z0-9]))$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "href"
+          ],
+          "type": "object"
+        },
+        "type": {
+          "const": "link"
+        }
+      },
+      "required": [
+        "attrs",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextList": {
+      "additionalProperties": false,
+      "description": "A list, bulleted (bulletList) or numbered (orderedList), of at least one item. Lists nest at most 5 deep, which the server checks beyond this schema.",
+      "properties": {
+        "attrs": {
+          "additionalProperties": false,
+          "description": "An orderedList's attributes. A bulletList has none, which the server checks beyond this schema.",
+          "properties": {
+            "start": {
+              "description": "The number of the first item, 1 when it is not given.",
+              "maximum": 999999,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "content": {
+          "items": {
+            "$ref": "#/$defs/RichTextListItem"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "bulletList",
+            "orderedList"
+          ]
+        }
+      },
+      "required": [
+        "content",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextListItem": {
+      "additionalProperties": false,
+      "description": "A list item: a paragraph, then any paragraphs and lists. That it starts with a paragraph is checked by the server, beyond this schema.",
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/RichTextBlock"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "type": {
+          "const": "listItem"
+        }
+      },
+      "required": [
+        "content",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextMarks": {
+      "description": "The marks of an inline node, each at most once, which the server checks beyond this schema. The code mark is not combined with another.",
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/RichTextBold"
+          },
+          {
+            "$ref": "#/$defs/RichTextCode"
+          },
+          {
+            "$ref": "#/$defs/RichTextItalic"
+          },
+          {
+            "$ref": "#/$defs/RichTextLink"
+          },
+          {
+            "$ref": "#/$defs/RichTextStrike"
+          }
+        ]
+      },
+      "maxItems": 5,
+      "type": "array"
+    },
+    "RichTextMemberMention": {
+      "additionalProperties": false,
+      "description": "A mention of a member of the project, a user who reads it, which a client shows as @ and the member's display name, and which tells the member of the comment. Only a comment's body holds one, which the server checks beyond this schema, and nothing is derived of it: it is no word of the text.",
+      "properties": {
+        "attrs": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/RichTextUserId"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
+        "marks": {
+          "$ref": "#/$defs/RichTextMarks"
+        },
+        "type": {
+          "const": "memberMention"
+        }
+      },
+      "required": [
+        "attrs",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextMention": {
+      "additionalProperties": false,
+      "description": "A mention of a component, which the text shows by the component's name.",
+      "properties": {
+        "attrs": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/RichTextComponentId"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
+        "marks": {
+          "$ref": "#/$defs/RichTextMarks"
+        },
+        "type": {
+          "const": "mention"
+        }
+      },
+      "required": [
+        "attrs",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextParagraph": {
+      "additionalProperties": false,
+      "description": "A paragraph, which may be empty.",
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/RichTextInline"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "paragraph"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextStrike": {
+      "additionalProperties": false,
+      "description": "Strikethrough.",
+      "properties": {
+        "type": {
+          "const": "strike"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextText": {
+      "additionalProperties": false,
+      "description": "Text, without control characters but tabs, or line and paragraph separators: a line break is a hardBreak, and a paragraph a paragraph. Nor does it hold bidirectional controls, as U+202E, which the server checks beyond this schema. A document's texts hold at most 100,000 characters together.",
+      "properties": {
+        "marks": {
+          "$ref": "#/$defs/RichTextMarks"
+        },
+        "text": {
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x08\\x0a-\\x1f\\x7f-\\x9f\u2028\u2029]+$",
+          "type": "string"
+        },
+        "type": {
+          "const": "text"
+        }
+      },
+      "required": [
+        "text",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextUserId": {
+      "description": "A user's ID.",
+      "pattern": "^[Uu][Ss][Rr]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
+      "type": "string"
+    },
+    "RichTextValueRef": {
+      "additionalProperties": false,
+      "description": "A reference to a value, which the text shows as the runtime renders it: a variable's, or a runtime attribute's of a component.",
+      "properties": {
+        "attrs": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "decimals": {
+                  "$ref": "#/$defs/RichTextDecimals"
+                },
+                "ref": {
+                  "$ref": "#/$defs/RichTextVariableId"
+                }
+              },
+              "required": [
+                "ref"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "attribute": {
+                  "$ref": "#/$defs/RichTextAttributeId"
+                },
+                "decimals": {
+                  "$ref": "#/$defs/RichTextDecimals"
+                },
+                "ref": {
+                  "$ref": "#/$defs/RichTextComponentId"
+                }
+              },
+              "required": [
+                "attribute",
+                "ref"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "marks": {
+          "$ref": "#/$defs/RichTextMarks"
+        },
+        "type": {
+          "const": "valueRef"
+        }
+      },
+      "required": [
+        "attrs",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextVariableId": {
+      "description": "A variable's ID.",
+      "pattern": "^[Vv][Aa][Rr]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
+      "type": "string"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/CyberCute-Studio/storycreep/main/schema/personal-data/v1/archive.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The JSON files of an export of what a Storycreep instance holds of one account (PRD FR-GDPR-01, §9.6), by their paths in its zip. schema/personal-data/README.md describes the format.",
+  "properties": {
+    "account.json": {
+      "$ref": "#/$defs/PersonalAccount"
+    },
+    "api-tokens.json": {
+      "$ref": "#/$defs/ItemsPersonalToken"
+    },
+    "attribution.json": {
+      "$ref": "#/$defs/ItemsPersonalReference"
+    },
+    "audit-log/acted-on.json": {
+      "$ref": "#/$defs/ItemsPersonalActedOnEntry"
+    },
+    "audit-log/acted.json": {
+      "$ref": "#/$defs/ItemsPersonalActedEntry"
+    },
+    "comments.json": {
+      "$ref": "#/$defs/ItemsPersonalComment"
+    },
+    "email-links.json": {
+      "$ref": "#/$defs/ItemsPersonalEmailLink"
+    },
+    "imported-identities.json": {
+      "$ref": "#/$defs/ItemsPersonalIdentity"
+    },
+    "invites.json": {
+      "$ref": "#/$defs/ItemsPersonalInvite"
+    },
+    "memberships.json": {
+      "$ref": "#/$defs/ItemsPersonalMembership"
+    },
+    "notifications.json": {
+      "$ref": "#/$defs/ItemsPersonalNotification"
+    },
+    "personal-data.json": {
+      "$ref": "#/$defs/PersonalManifest"
+    },
+    "sessions.json": {
+      "$ref": "#/$defs/ItemsPersonalSession"
+    }
+  },
+  "required": [
+    "account.json",
+    "api-tokens.json",
+    "attribution.json",
+    "audit-log/acted-on.json",
+    "audit-log/acted.json",
+    "comments.json",
+    "email-links.json",
+    "imported-identities.json",
+    "invites.json",
+    "memberships.json",
+    "notifications.json",
+    "personal-data.json",
+    "sessions.json"
+  ],
+  "title": "Storycreep personal-data export, version 1",
+  "type": "object"
+}

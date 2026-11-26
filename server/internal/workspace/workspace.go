@@ -392,7 +392,8 @@ func (s *Service) insert(ctx context.Context, tx pgx.Tx, w Workspace, userID ids
 	if w.Slug == "" {
 		return Workspace{}, ErrSlugTaken
 	}
-	if _, err := s.addMembership(ctx, tx, w.ID, userID, role.Owner, ids.UUID{}); err != nil {
+	mid, err := s.addMembership(ctx, tx, w.ID, userID, role.Owner, ids.UUID{})
+	if err != nil {
 		return Workspace{}, fmt.Errorf("workspace: add the owner's membership: %w", err)
 	}
 	row, err := q.Workspace(ctx, nullUUID(w.ID))
@@ -401,7 +402,8 @@ func (s *Service) insert(ctx context.Context, tx pgx.Tx, w Workspace, userID ids
 	}
 	if err := audit.Record(ctx, tx, audit.Entry{Action: audit.ActionWorkspaceCreate, WorkspaceID: w.ID,
 		ActorUserID: userID, SubjectID: w.ID, Result: audit.ResultSuccess, IP: client.IP,
-		UserAgent: client.UserAgent, Metadata: map[string]any{"personal": personal}}); err != nil {
+		UserAgent: client.UserAgent, Metadata: map[string]any{"personal": personal,
+			"membership_id": mid.String()}}); err != nil {
 		return Workspace{}, err
 	}
 	return s.workspace(row.ID, row.Name, row.Slug, row.Settings, row.CreatedAt, row.UpdatedAt), nil
@@ -722,7 +724,8 @@ func (s *Service) Grant(ctx context.Context, id, userID ids.UUID, r role.Role) (
 				return err
 			}
 			return audit.Record(ctx, tx, audit.Entry{Action: audit.ActionMembershipCreate, WorkspaceID: id,
-				SubjectID: mid, Result: audit.ResultSuccess, Metadata: map[string]any{"role": r}})
+				SubjectID: mid, Result: audit.ResultSuccess, Metadata: map[string]any{"role": r,
+					"user_id": userID.String()}})
 		case err != nil:
 			return fmt.Errorf("workspace: read the membership: %w", err)
 		}

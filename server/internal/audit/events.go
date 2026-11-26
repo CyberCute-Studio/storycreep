@@ -51,8 +51,10 @@ const (
 	// creator becomes its owner: by a user, or by the first sign-in of an
 	// account, which gives it its personal workspace, as its metadata's
 	// personal says. It belongs to the workspace that it creates, which is
-	// its subject. The workspace that first-run setup creates is its owner's
-	// personal workspace (FR-ADMIN-02).
+	// its subject, and its metadata's membership_id names the owner's
+	// membership, which the owner's personal-data export finds the entries
+	// about by, once the workspace is gone (FR-GDPR-01). The workspace that
+	// first-run setup creates is its owner's personal workspace (FR-ADMIN-02).
 	ActionWorkspaceCreate Action = "workspace.create"
 	// ActionMembershipCreate is a user's becoming a member of a workspace,
 	// as the operator's storycreep grant-role makes them (FR-ADMIN-06), or
@@ -60,7 +62,9 @@ const (
 	// (FR-TEN-02), with the role that its metadata's role names. It belongs
 	// to that workspace, and its subject is the membership. Its actor is the
 	// user who accepted the invitation, and an entry without an actor is the
-	// operator's, who acts through the command line.
+	// operator's, who acts through the command line, whose metadata's user_id
+	// names the member, as the member's personal-data export finds the
+	// entries about the membership by, once it is gone (FR-GDPR-01).
 	ActionMembershipCreate Action = "membership.create"
 	// ActionMembershipRoleChange is a change of a membership's role, from
 	// its metadata's previous_role to its role, by an owner or admin of the
@@ -223,6 +227,11 @@ const (
 	// account.
 	ActionInstanceAdminGrant  Action = "instance.admin_grant"
 	ActionInstanceAdminRevoke Action = "instance.admin_revoke"
+	// ActionPersonalDataExport is a user's request for an export of their own
+	// personal data (FR-GDPR-01), which holds their rows of every workspace,
+	// by its actor, the user. It belongs to no workspace, its subject is the
+	// account, and its metadata's export_id names the export.
+	ActionPersonalDataExport Action = "account.data_export"
 )
 
 // Result is how an event ended.
@@ -272,9 +281,9 @@ var events = []eventSpec{
 	{action: ActionEmailVerify, subject: "user", results: []Result{ResultSuccess}},
 	{action: ActionLinkIssue, subject: "user", results: []Result{ResultSuccess}, metadata: []string{"kind"}},
 	{action: ActionWorkspaceCreate, inWorkspace: true, subject: "workspace", results: []Result{ResultSuccess},
-		metadata: []string{"personal"}},
+		metadata: []string{"personal", "membership_id"}},
 	{action: ActionMembershipCreate, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},
-		metadata: []string{"role", "invite_id"}},
+		metadata: []string{"role", "invite_id", "user_id"}},
 	{action: ActionMembershipRoleChange, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},
 		metadata: []string{"role", "previous_role"}},
 	{action: ActionMembershipRemove, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},
@@ -317,6 +326,19 @@ var events = []eventSpec{
 		metadata: []string{"reason", "scope"}},
 	{action: ActionInstanceAdminGrant, subject: "user", results: []Result{ResultSuccess}},
 	{action: ActionInstanceAdminRevoke, subject: "user", results: []Result{ResultSuccess}},
+	{action: ActionPersonalDataExport, subject: "user", results: []Result{ResultSuccess},
+		metadata: []string{"export_id"}},
+}
+
+// Actions returns every registered action, in the order of the registry, as
+// the personal-data export's labels of their actors are held to (package
+// personaldata).
+func Actions() []Action {
+	out := make([]Action, len(events))
+	for i, s := range events {
+		out[i] = s.action
+	}
+	return out
 }
 
 // lookup returns the registration of a, and false if a is not registered.

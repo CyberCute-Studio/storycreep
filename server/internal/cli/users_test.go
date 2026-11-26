@@ -52,16 +52,20 @@ func accountsOf(t *testing.T, d *dbtest.Database) []string {
 }
 
 // auditOf describes the audit entries of d, each with the email address of
-// its subject, or of its subject membership's account.
+// its subject, or of its subject membership's account, and with the email
+// address of the account that its metadata's user_id names in its place.
 func auditOf(t *testing.T, d *dbtest.Database) []string {
 	t.Helper()
 	return query(t, d, `
-		SELECT format('%s %s %s %s actor=%s', a.action, coalesce(u.email, mu.email), a.result, a.metadata,
+		SELECT format('%s %s %s %s actor=%s', a.action, coalesce(u.email, mu.email), a.result,
+			CASE WHEN a.metadata ? 'user_id' THEN jsonb_set(a.metadata, '{user_id}', to_jsonb(nu.email::text))
+				ELSE a.metadata END,
 			a.actor_user_id)
 		FROM audit_entry a
 		LEFT JOIN "user" u ON u.id = a.subject_id
 		LEFT JOIN membership m ON m.id = a.subject_id
 		LEFT JOIN "user" mu ON mu.id = m.user_id
+		LEFT JOIN "user" nu ON nu.id::text = a.metadata ->> 'user_id'
 		WHERE a.action <> 'workspace.create'
 		ORDER BY a.id`)
 }
@@ -331,8 +335,8 @@ func TestGrantRole(t *testing.T) {
 		t.Errorf("the members are %q, want %q", members, want)
 	}
 	want := []string{
-		`membership.create owner@example.com success {"role": "owner"} actor=`,
-		`membership.create jo@example.com success {"role": "viewer"} actor=`,
+		`membership.create owner@example.com success {"role": "owner", "user_id": "owner@example.com"} actor=`,
+		`membership.create jo@example.com success {"role": "viewer", "user_id": "jo@example.com"} actor=`,
 		`membership.role_change jo@example.com success {"role": "editor", "previous_role": "viewer"} actor=`,
 		`membership.role_change jo@example.com success {"role": "owner", "previous_role": "editor"} actor=`,
 		`membership.role_change owner@example.com success {"role": "admin", "previous_role": "owner"} actor=`,

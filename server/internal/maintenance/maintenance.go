@@ -6,6 +6,9 @@
 //   - the audit retention job (FR-TEN-07, FR-TEN-05 AC2);
 //   - workspace and account hard deletion (FR-TEN-05, FR-GDPR-02);
 //   - the import ID-collision check, which returns one boolean (§5.2);
+//   - the personal-data export's build (FR-GDPR-01), which reads one user's
+//     own rows of every workspace, as the inventory of §9.6 says, and only
+//     for that user's archive (personal.go);
 //   - the instance-wide aggregates of the instance admin screens, which
 //     return counts, never content (FR-ADMIN-03).
 //

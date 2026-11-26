@@ -304,10 +304,10 @@ func (s *Service) writeProject(ctx context.Context, zw *zip.Writer, store blob.S
 // to w, as the items of a section's file, one entry to a line, reading a page
 // of them at a time, and returns how many it wrote.
 func (s *Service) writeAudit(ctx context.Context, w io.Writer, ws pgtype.UUID, until time.Time) (int, error) {
-	if _, err := io.WriteString(w, "{\n  \"items\": ["); err != nil {
+	iw, err := newItemsWriter(w)
+	if err != nil {
 		return 0, fmt.Errorf("authoring: write the audit log: %w", err)
 	}
-	n := 0
 	// From before the first entry, which no entry precedes.
 	after := queries.WorkspaceExportAuditEntriesParams{WorkspaceID: ws,
 		Until:   pgtype.Timestamptz{Time: until, Valid: true},
@@ -321,24 +321,12 @@ func (s *Service) writeAudit(ctx context.Context, w io.Writer, ws pgtype.UUID, u
 			return err
 		})
 		if err != nil {
-			return n, fmt.Errorf("authoring: read the audit log: %w", err)
+			return iw.n, fmt.Errorf("authoring: read the audit log: %w", err)
 		}
 		for _, e := range rows {
-			data, err := marshalLine(auditEntry(e))
-			if err != nil {
-				return n, fmt.Errorf("authoring: write an entry of the audit log: %w", err)
+			if err := iw.add(auditEntry(e)); err != nil {
+				return iw.n, fmt.Errorf("authoring: write an entry of the audit log: %w", err)
 			}
-			sep := ",\n    "
-			if n == 0 {
-				sep = "\n    "
-			}
-			if _, err := io.WriteString(w, sep); err != nil {
-				return n, fmt.Errorf("authoring: write the audit log: %w", err)
-			}
-			if _, err := w.Write(data); err != nil {
-				return n, fmt.Errorf("authoring: write the audit log: %w", err)
-			}
-			n++
 		}
 		if len(rows) < auditPage {
 			break
@@ -346,14 +334,10 @@ func (s *Service) writeAudit(ctx context.Context, w io.Writer, ws pgtype.UUID, u
 		last := rows[len(rows)-1]
 		after.AfterAt, after.AfterID = last.CreatedAt, last.ID
 	}
-	end := "]\n}\n"
-	if n > 0 {
-		end = "\n  ]\n}\n"
+	if err := iw.close(); err != nil {
+		return iw.n, fmt.Errorf("authoring: write the audit log: %w", err)
 	}
-	if _, err := io.WriteString(w, end); err != nil {
-		return n, fmt.Errorf("authoring: write the audit log: %w", err)
-	}
-	return n, nil
+	return iw.n, nil
 }
 
 // marshalLine writes v as JSON on one line, without escaping what HTML would

@@ -5,10 +5,12 @@
 -- account leaves the account as it was (PRD FR-AUTH-01 AC1). An account that
 -- first-run setup adds is an instance admin, and its personal workspace is
 -- the one that setup creates, which personal_workspace marks as given
--- (FR-ADMIN-02).
-INSERT INTO "user" (id, email, password_hash, display_name, is_instance_admin, personal_workspace_created_at)
+-- (FR-ADMIN-02). An account with a password records when it was set, which
+-- the personal-data export holds (PRD §9.6).
+INSERT INTO "user" (id, email, password_hash, display_name, is_instance_admin, personal_workspace_created_at,
+    password_changed_at)
 VALUES (@id, @email, @password_hash, @display_name, @is_instance_admin,
-    CASE WHEN @personal_workspace::boolean THEN now() END)
+    CASE WHEN @personal_workspace::boolean THEN now() END, CASE WHEN @password_hash::text IS NOT NULL THEN now() END)
 ON CONFLICT (email) DO NOTHING;
 
 -- name: UserByEmail :one
@@ -34,9 +36,15 @@ SELECT id, password_hash, status FROM "user" WHERE email = @email;
 -- new_hash, if the hash is still old_hash, which the caller checked a
 -- password against, so that a password that changed in the meantime is not
 -- changed back. Signing in uses it to hash the same password again with the
--- current parameters (PRD NFR-SEC-03), and changing the password to store
--- the new one.
+-- current parameters (PRD NFR-SEC-03), which leaves the password as it was.
 UPDATE "user" SET password_hash = @new_hash, updated_at = now()
+WHERE id = @id AND password_hash = @old_hash;
+
+-- name: ChangePasswordHash :execrows
+-- ChangePasswordHash replaces the hash of an account's password with that of a
+-- new password, as UpdatePasswordHash does, and records when the password was
+-- set, which the personal-data export holds (PRD §9.6).
+UPDATE "user" SET password_hash = @new_hash, password_changed_at = now(), updated_at = now()
 WHERE id = @id AND password_hash = @old_hash;
 
 -- name: UserPasswordHash :one

@@ -412,6 +412,18 @@ type Node struct {
 	UpdatedAt          pgtype.Timestamptz
 }
 
+type PersonalDataExport struct {
+	ID         pgtype.UUID
+	UserID     pgtype.UUID
+	Status     string
+	StorageKey string
+	SizeBytes  pgtype.Int8
+	FileName   pgtype.Text
+	CreatedAt  pgtype.Timestamptz
+	FinishedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+}
+
 type PlayState struct {
 	ID          pgtype.UUID
 	WorkspaceID pgtype.UUID

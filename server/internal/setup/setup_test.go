@@ -140,8 +140,9 @@ func TestComplete(t *testing.T) {
 	var admin, personal, actor bool
 	err = d.Admin(t).QueryRow(ctx, `
 		SELECT u.email::text, u.display_name, u.status, u.is_instance_admin,
-			u.personal_workspace_created_at IS NOT NULL, m.role, i.signup_policy, a.metadata::text, host(a.ip),
-			a.actor_user_id = u.id AND a.subject_id = m.workspace_id AND a.workspace_id = m.workspace_id
+			u.personal_workspace_created_at IS NOT NULL, m.role, i.signup_policy, (a.metadata - 'membership_id')::text,
+			host(a.ip), a.actor_user_id = u.id AND a.subject_id = m.workspace_id AND a.workspace_id = m.workspace_id
+				AND a.metadata ->> 'membership_id' = m.id::text
 		FROM "user" u
 		JOIN membership m ON m.user_id = u.id
 		JOIN audit_entry a ON a.action = 'workspace.create'
@@ -159,8 +160,8 @@ func TestComplete(t *testing.T) {
 		t.Errorf("the owner's role is %s, and the signup policy %s", role, signup)
 	}
 	if metadata != `{"personal": true}` || ip != "192.0.2.7" || !actor {
-		t.Errorf("the audit entry has the metadata %s, the IP address %s, and its owner as actor %v", metadata, ip,
-			actor)
+		t.Errorf("the audit entry has the metadata %s, the IP address %s, and its owner as actor, and the "+
+			"owner's membership, %v", metadata, ip, actor)
 	}
 	if st, err := s.Status(ctx); err != nil || !st.Completed {
 		t.Errorf("Status after setup = %+v, %v", st, err)
