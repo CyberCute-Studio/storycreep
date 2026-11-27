@@ -1529,6 +1529,7 @@
   "releases.publish.open_validation": "Open the project's validation",
   "releases.publish.report": "Validation report",
   "releases.publish.report_outdated": "The report could not be read again, so it may be out of date. {reason}",
+  "releases.publish.review": "Some of your changes made offline were refused by the server, and wait for your review, which the sync status lists. You can publish once they are sent.",
   "releases.publish.saving": "Your latest edits are still being saved. You can publish once they are.",
   "releases.publish.submit": "Publish",
   "releases.publish.title": "Publish a release",
