@@ -88,6 +88,7 @@ import {
 } from "./doc";
 import { Follower } from "./follow";
 import {
+  madeOnTop,
   nextOrder,
   type QueuedBatch,
   type QueueStore,
@@ -187,7 +188,11 @@ export interface DocumentState {
   historyVersion: number;
   /** Whether an undo or a redo is under way. */
   stepping: boolean;
-  /** How many of the page's batches the device's queue keeps, to be sent, or needing review (PRD FR-OFF-03). */
+  /**
+   * How many of the page's batches the device's queue keeps, to be sent, or
+   * needing review (PRD FR-OFF-03), once it has written them, which a
+   * reload, as for a new version of the app, no longer cuts off (whenSent).
+   */
   queued: number;
   /** How many of those the server refused for what they do, which wait for the user's decision, with every batch after them (plan item 92). */
   review: number;
@@ -378,6 +383,16 @@ interface Entry {
   step: boolean;
   /** Whether its undo joins the history once it applies (SendOptions.history), as it does not of a step's. */
   history: boolean;
+  /** The document that made the batch (QueuedBatch.maker). */
+  maker: string;
+  /** The makers of the other batches that the page showed as the batch was made (QueuedBatch.atop). */
+  atop: readonly string[];
+  /**
+   * Where the batch is in the queue, by when it was made (QueuedBatch.order),
+   * as of the page's batches that the queue keeps once one made after them
+   * is kept, as those that no answer came to, which come before it still.
+   */
+  order: number;
   sent: boolean;
   /**
    * The batch as the device's queue keeps it, once it does (PRD FR-OFF-03):
@@ -387,6 +402,12 @@ interface Entry {
   held?: QueuedBatch;
   /** Whether what the queue keeps of it is behind the batch, as once the answer to a batch before it moved what it expects (persist). */
   dirty?: boolean;
+  /**
+   * Whether the device's queue has written the batch, after which it is
+   * the queue's, which a reload keeps, rather than the page's, which a read
+   * that waits for the page's batches waits for (DocumentState.queued).
+   */
+  stored?: boolean;
   /** Tells the caller that the device's queue keeps the batch, once it does. */
   queued?: () => void;
   answer?: CommandResultBody;
@@ -947,12 +968,20 @@ export class ProjectDocument {
    * or to undefined where the page keeps none, or the lock was not given.
    */
   private readonly ownerLock: Promise<(() => void) | undefined>;
-  /** The queue's order of the latest batch that the document kept (nextOrder). */
+  /** The queue's order of the latest batch that the document made, or took (nextOrder). */
   private lastOrder = 0;
   /** The writes of the device's queue under way, one at a time, in order. */
   private saving: Promise<void> = Promise.resolve();
   /** How many writes of the device's queue are under way (busy). */
   private saves = 0;
+  /**
+   * Whether the document, dropped, has let go of its lock, after which
+   * another tab's document may hold its batches, and it refuses to write
+   * any (persist).
+   */
+  private letGo = false;
+  /** What waits for the document to have no try of a batch, nor a write of the queue, under way, each until it reports so (whenIdle). */
+  private idleWaits: (() => boolean)[] = [];
   /** The taking of the project's batches that the device's queue keeps, once begun (adoptQueue). */
   private adopting: Promise<void> | undefined;
   /** Stops taking the batches of the documents of other tabs that close (QueueStore.adopt). */
@@ -963,24 +992,32 @@ export class ProjectDocument {
    * by the page alone, as a reload begins anew. Each has how many steps the
    * history could redo as undo took it out (depth): a step of the history
    * undone since is the latest undone, which redo sends first (putsBack).
+   * Each has the entry that it was too, which the device may yet refuse to
+   * have kept, as its write was under way, after which redo puts nothing
+   * back of it, as its caller was told that it failed (unwithdraw).
    */
   private withdrawn: {
     commands: Command[];
     history: boolean;
     depth: number;
+    entry: Entry;
   }[] = [];
   /** The timer of the queue's next try, while the server gives no answer, or refuses for when it was asked. */
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   /**
-   * Why the queue waits for its next try (retryTimer): no answer came, as
-   * the page cannot reach the server, or the server refused for when or by
-   * whom the batch was sent, as it answers all the same (holdReason).
+   * Why the queue waits for its next try (retryTimer), or tries again: no
+   * answer came, as the page cannot reach the server, which it holds to
+   * until a try is answered, through the try itself, or the server refused
+   * for when or by whom the batch was sent, as it answers all the same
+   * (holdReason); undefined once the server has answered since.
    */
-  private retryReason: "unanswered" | "refused" = "unanswered";
+  private retryReason: "unanswered" | "refused" | undefined;
   /** How many tries in a row the server gave no answer to, which spaces the next (backoff). */
   private retryFailures = 0;
-  /** Counts the changes of what the sync panel lists (DocumentState.queueVersion). */
+  /** Counts the changes of what the sync panel lists (DocumentState.queueVersion), and of what undo and redo would take out of the queue, or put back. */
   private queueChanges = 0;
+  /** Counts the queue's batches put on their way, which the sync panel lists as being sent, and which change nothing that undo or redo would do (DocumentState.queueVersion). */
+  private queueSends = 0;
   /** Stops following the browser's connection and the page's session, which the queue waits for. */
   private readonly stopFollowing: (() => void)[] = [];
 
@@ -1352,8 +1389,14 @@ export class ProjectDocument {
         }
         this.store.setState({ live });
         // The server answers again: the device's queue is sent at once,
-        // rather than once its next try is due.
-        if (live && this.retryTimer !== undefined) {
+        // rather than once its next try is due, and the page reaches it.
+        if (
+          live &&
+          (this.retryTimer !== undefined || this.retryReason === "unanswered")
+        ) {
+          if (this.retryReason === "unanswered") {
+            this.retryReason = undefined;
+          }
           this.tryAgainNow();
         }
         // The answers to the page's batches past what the document has, as
@@ -1440,7 +1483,12 @@ export class ProjectDocument {
     this.queueChanged();
   }
 
-  /** Takes batches of another tab's document that closed, after the document's own, and sends them. */
+  /**
+   * Takes batches of another tab's document that closed, after the
+   * document's own, which none of them was made on top of (moveQueued), and
+   * sends them, undo taking each out of the queue in the order that they
+   * were made, among the document's own (withdrawable).
+   */
   private adoptMore(batches: QueuedBatch[]): void {
     if (this.disposed) {
       return;
@@ -1477,9 +1525,13 @@ export class ProjectDocument {
           : { latest: batch.known, restores: this.restores },
       step: false,
       history: batch.history,
+      maker: batch.maker,
+      atop: batch.atop,
+      order: batch.order,
       // A batch that needs review is not sent until the user decides.
       sent: false,
       held: batch,
+      stored: true,
       resolve: () => {},
       reject: () => {},
     };
@@ -1511,6 +1563,38 @@ export class ProjectDocument {
   }
 
   /**
+   * Resolves once the document has no try of a batch under way, nor a write
+   * of the device's queue, nor a batch of the page's that it has yet to send,
+   * or keep, nor a step of the history (idleChanged).
+   */
+  private whenIdle(): Promise<void> {
+    return new Promise((resolve) => {
+      const idle = () => {
+        if (
+          this.inflight ||
+          this.saves > 0 ||
+          this.sends.size > 0 ||
+          this.stepUnderWay !== undefined
+        ) {
+          return false;
+        }
+        resolve();
+        return true;
+      };
+      if (!idle()) {
+        this.idleWaits.push(idle);
+      }
+    });
+  }
+
+  /** Lets what waits for the document to be idle go on, once it is (whenIdle). */
+  private idleChanged(): void {
+    if (this.idleWaits.length > 0) {
+      this.idleWaits = this.idleWaits.filter((idle) => !idle());
+    }
+  }
+
+  /**
    * Stops following the project, and keeping the history in the tab's
    * storage, so that the answer to a batch that comes after, as once the
    * page has signed out, does not write it there again, over what signing
@@ -1526,9 +1610,19 @@ export class ProjectDocument {
       stop();
     }
     this.stopAdopting?.();
-    // The lock goes once the writes under way are done, so that another
-    // tab's document takes the batches as they are written.
-    void this.saving.then(() => this.ownerLock).then((release) => release?.());
+    // The lock goes once the try under way, which may have reached the
+    // server, has been answered, and the page's batches that the document
+    // has yet to send, or keep, as those that wait for a step of the
+    // history, have been, with the writes that follow, so that another
+    // tab's document takes the batches as they are written, rather than
+    // send one while this one does, and none is written after, which no
+    // document would take before the project's next.
+    void this.whenIdle()
+      .then(() => this.ownerLock)
+      .then((release) => {
+        this.letGo = true;
+        release?.();
+      });
     for (const follower of this.followers) {
       follower.dispose();
     }
@@ -2271,8 +2365,14 @@ export class ProjectDocument {
     let review = 0;
     for (const entry of this.entries) {
       // A batch that the server has answered is the queue's no longer, though
-      // the page shows it until the document has its operation (settle).
-      if (entry.held !== undefined && entry.answer === undefined) {
+      // the page shows it until the document has its operation (settle), and
+      // one is the queue's only once the device has written it, which a
+      // reload would cut off before (whenSent).
+      if (
+        entry.held !== undefined &&
+        entry.stored === true &&
+        entry.answer === undefined
+      ) {
         queued++;
         if (entry.held.state === "review") {
           review++;
@@ -2295,7 +2395,7 @@ export class ProjectDocument {
       holding: this.unreachable() !== undefined,
       undoLocal: local > 0,
       redoLocal: this.putsBack(),
-      queueVersion: this.queueChanges,
+      queueVersion: this.queueChanges + this.queueSends,
     });
   }
 
@@ -2995,6 +3095,7 @@ export class ProjectDocument {
     this.sends.add(sending);
     const settled = () => {
       this.sends.delete(sending);
+      this.idleChanged();
     };
     sending.then(settled, settled);
     return sending;
@@ -3208,11 +3309,26 @@ export class ProjectDocument {
    * no connection (AC4): the page's latest batch, once the queue keeps it,
    * a change of the user's, as long as it never reached the server, as one
    * that the page has not sent, nor sent and got no answer to, which may
-   * have applied, and the server has not refused for what it does.
+   * have applied, and the server has not refused for what it does. The
+   * latest is the one made last (latestFirst), as of another tab's batches
+   * that the document took after its own as that tab closed, which may have
+   * been made before them, and which none was made on top of.
    */
   private withdrawable(): Entry | undefined {
-    const last = this.entries.at(-1);
-    return last !== undefined && this.withdraws(last) ? last : undefined;
+    const latest = this.latestFirst()[0];
+    return latest !== undefined && this.withdraws(latest) ? latest : undefined;
+  }
+
+  /** Returns the page's batches, the one made last first, by the queue's order (Entry.order). */
+  private latestFirst(): Entry[] {
+    return [...this.entries].reverse().sort((a, b) => {
+      if (a.order !== b.order) {
+        return b.order - a.order;
+      }
+      // As two made at once in two tabs (inQueueOrder).
+      const ids = [a.held?.id ?? "", b.held?.id ?? ""] as const;
+      return ids[0] === ids[1] ? 0 : ids[0] < ids[1] ? 1 : -1;
+    });
   }
 
   /** Reports whether undo would take entry out of the device's queue, were it the latest (withdrawable). */
@@ -3228,11 +3344,11 @@ export class ProjectDocument {
     );
   }
 
-  /** How many of the page's latest batches undo would take out of the device's queue in turn. */
+  /** How many of the page's latest batches undo would take out of the device's queue in turn (withdrawable). */
   private withdrawableCount(): number {
     let count = 0;
-    for (let i = this.entries.length - 1; i >= 0; i--) {
-      if (!this.withdraws(this.entries[i] as Entry)) {
+    for (const entry of this.latestFirst()) {
+      if (!this.withdraws(entry)) {
         break;
       }
       count++;
@@ -3255,6 +3371,7 @@ export class ProjectDocument {
       ),
       history: entry.history,
       depth: this.history.redoable,
+      entry,
     };
     this.withdrawn.push(undone);
     this.queueChanged();
@@ -3331,6 +3448,7 @@ export class ProjectDocument {
         if (this.stepUnderWay?.done === done) {
           this.stepUnderWay = undefined;
           this.show();
+          this.idleChanged();
         }
       });
       this.stepUnderWay = { which, done };
@@ -3351,6 +3469,7 @@ export class ProjectDocument {
     const done = this.stepped(which, newest, before).finally(() => {
       if (this.stepUnderWay?.done === done) {
         this.stepUnderWay = undefined;
+        this.idleChanged();
       }
     });
     this.stepUnderWay = { which, done };
@@ -3662,6 +3781,9 @@ export class ProjectDocument {
         known: again?.known,
         step,
         history: history && !step,
+        maker: this.owner,
+        atop: this.makersShown(),
+        order: this.nextOrder(draft.time),
         sent: false,
         resolve: (answer, restores) =>
           resolve({
@@ -3677,6 +3799,27 @@ export class ProjectDocument {
       this.show();
       void this.pump();
     });
+  }
+
+  /** Returns the queue's order of a batch made at time, now (nextOrder). */
+  private nextOrder(time: string): number {
+    this.lastOrder = nextOrder(time, this.lastOrder);
+    return this.lastOrder;
+  }
+
+  /**
+   * Returns the makers of the batches that the page shows now but the
+   * document's own, as of other tabs that closed, on top of which a batch
+   * made now is made (QueuedBatch.atop).
+   */
+  private makersShown(): string[] {
+    const makers = new Set<string>();
+    for (const entry of this.entries) {
+      if (entry.maker !== this.owner) {
+        makers.add(entry.maker);
+      }
+    }
+    return [...makers];
   }
 
   /**
@@ -3725,9 +3868,11 @@ export class ProjectDocument {
    * Returns why the page cannot reach the server now, where it keeps a
    * queue, or undefined where it can, as far as it knows: a browser that has
    * no connection; a try that no answer came to, until the next
-   * (retryTimer); or a page that holds the session that the device kept,
-   * without its CSRF token, which no change can be sent with, until the page
-   * has its own (PRD FR-OFF-02).
+   * (retryTimer), and through the next, until it is answered, so that what
+   * needs the server is not offered at each try only to be taken back as it
+   * fails; or a page that holds the session that the device kept, without
+   * its CSRF token, which no change can be sent with, until the page has its
+   * own (PRD FR-OFF-02).
    */
   private unreachable(): "offline" | "unanswered" | "session" | undefined {
     if (this.queue === undefined) {
@@ -3736,7 +3881,10 @@ export class ProjectDocument {
     if (!this.isOnline()) {
       return "offline";
     }
-    if (this.retryTimer !== undefined && this.retryReason === "unanswered") {
+    if (
+      this.retryReason === "unanswered" &&
+      (this.retryTimer !== undefined || this.inflight)
+    ) {
       return "unanswered";
     }
     const session = this.options.queryClient.getQueryData(
@@ -3790,8 +3938,9 @@ export class ProjectDocument {
             entry.queued = undefined;
           } else {
             // Kept no longer, or taken out by an undo meanwhile, after which
-            // the device keeps nothing of it either.
+            // the device keeps nothing of it either, nor redo puts it back.
             this.entries = this.entries.filter((e) => e !== entry);
+            this.unwithdraw(entry);
             entry.reject(error ?? failure);
           }
         }
@@ -3801,12 +3950,23 @@ export class ProjectDocument {
   }
 
   /**
+   * Forgets what undo took of entry out of the queue, if it did, as once
+   * the device refused to have kept entry, which its caller was told
+   * failed, so that redo does not put it back.
+   */
+  private unwithdraw(entry: Entry): void {
+    this.withdrawn = this.withdrawn.filter((w) => w.entry !== entry);
+  }
+
+  /**
    * Writes to the device's queue, after the writes before, in one
    * transaction, each batch that it keeps of which it keeps what is behind
    * (Entry.dirty), and the removal of those of the IDs of remove, resolving
    * once it has, or rejecting where the device refused. A batch that the
    * server has answered, which the page shows until the document has its
-   * operation (settle), is the queue's no longer, and not written again.
+   * operation (settle), is the queue's no longer, and not written again. A
+   * document dropped that has let go of its lock refuses to write, as
+   * another tab's may hold its batches since (letGo).
    */
   private persist(remove: readonly string[] = []): Promise<void> {
     const queue = this.queue;
@@ -3816,6 +3976,7 @@ export class ProjectDocument {
     }
     const removed = new Set(remove);
     const put: QueuedBatch[] = [];
+    const writing: Entry[] = [];
     for (const entry of this.entries) {
       if (
         entry.held !== undefined &&
@@ -3826,18 +3987,33 @@ export class ProjectDocument {
         entry.dirty = false;
         entry.held = this.batchOf(entry);
         put.push(entry.held);
+        writing.push(entry);
       }
     }
     if (put.length === 0 && remove.length === 0) {
       return this.saving;
     }
+    if (this.letGo) {
+      return Promise.reject(
+        new Error("The document has let go of the device's queue."),
+      );
+    }
     this.saves++;
     const write = this.saving.then(async () => {
       await this.ownerLock;
       await queue.save(userId, this.projectId, put, remove);
+      // Each is the queue's from now on, which a reload keeps.
+      const fresh = writing.filter((e) => e.stored !== true);
+      for (const entry of fresh) {
+        entry.stored = true;
+      }
+      if (fresh.length > 0) {
+        this.show();
+      }
     });
     const done = () => {
       this.saves--;
+      this.idleChanged();
     };
     write.then(done, done);
     this.saving = write.catch(() => undefined);
@@ -3864,14 +4040,13 @@ export class ProjectDocument {
     changes: Partial<Pick<QueuedBatch, "state" | "refusal" | "sent">> = {},
   ): QueuedBatch {
     const held = entry.held;
-    if (held === undefined) {
-      this.lastOrder = nextOrder(entry.time, this.lastOrder);
-    }
     const refusal = changes.refusal ?? held?.refusal;
     return {
       id: held?.id ?? formatUuid(newUuid()),
       owner: this.owner,
-      order: held?.order ?? this.lastOrder,
+      maker: entry.maker,
+      atop: [...entry.atop],
+      order: entry.order,
       format: queueFormat,
       time: entry.time,
       commands: entry.commands,
@@ -3920,8 +4095,7 @@ export class ProjectDocument {
     this.retryFailures++;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = undefined;
-      void this.pump();
-      this.show();
+      this.tryNow();
     }, delay);
     this.show();
   }
@@ -3932,8 +4106,34 @@ export class ProjectDocument {
       clearTimeout(this.retryTimer);
       this.retryTimer = undefined;
     }
-    this.show();
+    this.tryNow();
+  }
+
+  /**
+   * Tries the queue now, which the page reaches the server through, as
+   * far as it knows, where no answer came before, until it is answered
+   * (unreachable), and as of then where it tries nothing, as of a queue
+   * that undo emptied meanwhile.
+   */
+  private tryNow(): void {
     void this.pump();
+    if (!this.inflight && this.retryReason === "unanswered") {
+      this.retryReason = undefined;
+    }
+    this.show();
+  }
+
+  /**
+   * Records that the server answered a try, after which the page reaches it:
+   * the wait for want of an answer is over, the queue being sent next, while
+   * one after a refusal for when a batch was sent goes on.
+   */
+  private reached(): void {
+    if (this.retryReason === "unanswered") {
+      this.retryReason = undefined;
+      clearTimeout(this.retryTimer);
+      this.retryTimer = undefined;
+    }
   }
 
   /**
@@ -3965,9 +4165,8 @@ export class ProjectDocument {
    * project's next, takes.
    */
   private async pump(): Promise<void> {
-    if (this.inflight) {
-      return;
-    }
+    // A batch made while a try that no answer may come to is under way is
+    // kept at once, as one made before it (unreachable).
     const reason = this.holdReason();
     if (reason !== undefined && !this.disposed) {
       this.keep(
@@ -3975,6 +4174,9 @@ export class ProjectDocument {
           ? new NetworkError(new TypeError("The server cannot be reached."))
           : undefined,
       );
+    }
+    if (this.inflight) {
+      return;
     }
     const entry = this.entries.find(
       (e) =>
@@ -3987,6 +4189,11 @@ export class ProjectDocument {
     }
     this.inflight = true;
     entry.sent = true;
+    if (entry.held !== undefined) {
+      // The sync panel lists it as being sent.
+      this.queueSends++;
+      this.show();
+    }
     // What the server is known to have had as the batch's commands were
     // first sent, past which they commit, if they apply, and past which the
     // server's answer to them sent again gives the seq that applied them.
@@ -4002,6 +4209,13 @@ export class ProjectDocument {
     let sentBefore = entry.held?.sent ?? false;
     try {
       await this.whenReady();
+      // A document dropped meanwhile sends none of the queue's, which
+      // another tab's, or the project's next, takes once it lets go of its
+      // lock (dispose).
+      if (this.disposed && entry.held !== undefined) {
+        entry.sent = false;
+        return;
+      }
       const session = this.ownSession();
       // A batch of the device's queue is recorded as sent before it is, as
       // it may apply once it is, whatever becomes of the page meanwhile, as
@@ -4017,6 +4231,10 @@ export class ProjectDocument {
             this.options.log.record("error", failure);
           }
         });
+        if (this.disposed) {
+          entry.sent = false;
+          return;
+        }
       }
       // The restores that the document had found as the batch was sent,
       // after which its answer is of what the server has (Sent.restores).
@@ -4024,6 +4242,7 @@ export class ProjectDocument {
       posted = true;
       const answer = await this.post(entry.commands, session);
       this.retryFailures = 0;
+      this.reached();
       // A batch that applied at a seq that the server had had before its
       // commands were first sent tells that its seq went back, as of a
       // database restored from an older backup, which the channel may tell
@@ -4092,6 +4311,14 @@ export class ProjectDocument {
       this.catchUp();
       entry.resolve(answer, restores);
     } catch (error) {
+      // A refusal of the server's own, not a proxy's page for it, is an
+      // answer, which the page reached the server for.
+      if (
+        error instanceof ApiError &&
+        (answered(error) || error.status < 500)
+      ) {
+        this.reached();
+      }
       if (conflictOf(error)) {
         // The page shows what changed elsewhere at once, whatever becomes
         // of the batch, as the channel would bring it later.
@@ -4113,6 +4340,7 @@ export class ProjectDocument {
     } finally {
       this.inflight = false;
       void this.pump();
+      this.idleChanged();
     }
   }
 
@@ -4169,9 +4397,13 @@ export class ProjectDocument {
    * for what it does, as for what changed since, needs review, with every
    * batch after it (plan item 92). One that the queue does not keep yet,
    * refused, or that met a fault of the page's own, is refused to its
-   * caller, as it would be without a queue. A refusal leaves the batch as
-   * the queue kept it before the try (sentBefore), but where a failure of
-   * the server's own may have come after it committed.
+   * caller, as it would be without a queue, and so is one of a document
+   * dropped as the page signed out, which leaves nothing of the account's
+   * on the device that signing out did not ask of (plan note N98), while
+   * one dropped as another account signed in keeps it for its own. A
+   * refusal leaves the batch as the queue kept it before the try
+   * (sentBefore), but where a failure of the server's own may have come
+   * after it committed.
    */
   private queueKept(
     entry: Entry,
@@ -4182,7 +4414,10 @@ export class ProjectDocument {
     const held = entry.held;
     const answer = error instanceof ApiError ? error : undefined;
     const unanswered = unansweredBy(error);
-    if (held === undefined && (!unanswered || !this.keepable(entry))) {
+    if (
+      held === undefined &&
+      (!unanswered || !this.keepable(entry) || this.signedOutOf())
+    ) {
       return false;
     }
     entry.sent = false;
@@ -4218,6 +4453,8 @@ export class ProjectDocument {
               this.refuse(entry, error, known);
               this.queueChanged();
             } else {
+              this.unwithdraw(entry);
+              this.queueChanged();
               entry.reject(error);
             }
           },
@@ -4278,11 +4515,24 @@ export class ProjectDocument {
   }
 
   /**
+   * Reports whether the document was dropped as the page signed out, or
+   * found its session ended, after which it keeps no batch in the device's
+   * queue that it does not already (queueKept).
+   */
+  private signedOutOf(): boolean {
+    return (
+      this.disposed &&
+      this.options.queryClient.getQueryData(sessionQuery.queryKey) === null
+    );
+  }
+
+  /**
    * Returns the page's session, which a batch is sent with: the document is
    * its account's (Documents), and a batch queued while the page signed in
    * to another account, or out, whose cookie and CSRF token the request
    * would carry, is never sent as that account's, but kept for its own
-   * (OtherAccountError).
+   * (OtherAccountError), as the device's queue keeps it, unless the page
+   * signed out (signedOutOf).
    */
   private ownSession(): SignedInBody | null | undefined {
     const session = this.options.queryClient.getQueryData(
@@ -4316,7 +4566,8 @@ export class ProjectDocument {
    * Moves what the queued batches after entry expect of each entity that
    * entry changed, from the revision that the page showed before entry,
    * which they were made on top of, to the one that its answer gives, but
-   * for the steps of the history, which were not (Entry.step).
+   * for the steps of the history, which were not (Entry.step), nor those
+   * that a page made that did not show entry (madeOnTop).
    */
   private moveQueued(entry: Entry, answer: CommandResultBody): void {
     for (const r of answer.revisions ?? []) {
@@ -4326,7 +4577,16 @@ export class ProjectDocument {
         continue;
       }
       for (const queued of this.entries) {
-        if (queued.sent || queued === entry) {
+        // A batch that a page made without showing entry, as another tab's
+        // that the document took as that tab closed, was not made on top of
+        // it (madeOnTop): what it expects is left, so that it is refused for
+        // what entry changed, and compared with it, rather than written over
+        // it unasked.
+        if (
+          queued.sent ||
+          queued === entry ||
+          !madeOnTop(queued, entry.maker)
+        ) {
           continue;
         }
         if (!queued.step) {

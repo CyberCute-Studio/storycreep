@@ -10,7 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderApp, testSession } from "../test/app";
-import { fakeApi, startPage, testProject } from "../test/fake";
+import { fakeApi, refused, startPage, testProject } from "../test/fake";
 import type { QueueRecord } from "./db";
 import { syncStateOf } from "./pending";
 
@@ -45,8 +45,12 @@ const quay: Board = {
 
 const page = <T,>(items: T[]) => ({ items, next_cursor: null });
 
-/** Serves the test project, of one board, while the browser has a connection, and answers each batch once release is called; returns the batches sent. */
-function serve() {
+/**
+ * Serves the test project, of one board, while the browser has a
+ * connection, and answers each batch once release is called, or with what
+ * apply answers, which may throw, if given; returns the batches sent.
+ */
+function serve(apply?: (commands: CommandBody[]) => unknown) {
   const batches: CommandBody[][] = [];
   let release = () => {};
   let held = new Promise<void>((resolve) => {
@@ -69,9 +73,12 @@ function serve() {
       case "logout":
         return undefined;
       case "applyCommands": {
-        batches.push(
-          (input as { body: { commands: CommandBody[] } }).body.commands,
-        );
+        const commands = (input as { body: { commands: CommandBody[] } }).body
+          .commands;
+        batches.push(commands);
+        if (apply !== undefined) {
+          return apply(commands);
+        }
         await held;
         return {
           status: "applied",
@@ -215,6 +222,20 @@ describe("the sync panel", () => {
     });
   });
 
+  it("lists a change of the device's as being sent once it is on its way", async () => {
+    const server = serve();
+    const user = userEvent.setup();
+    const { doc } = await openProject();
+    setOnline(false);
+    await act(() => doc.send([renameQuay("Pier")]));
+    await user.click(await indicator("Offline, 1 change on this device"));
+    const panel = await screen.findByRole("dialog", { name: "Sync status" });
+    await within(panel).findByText(/On this device, waiting for the server\.$/);
+    setOnline(true);
+    await within(panel).findByText(/Being sent\.$/, {}, { timeout: 1_000 });
+    server.release();
+  });
+
   // Verifies: FR-OFF-03/AC3
   it("lists what needs the server, with why, while the page cannot reach it", async () => {
     serve();
@@ -246,6 +267,44 @@ describe("the sync panel", () => {
         within(panel).queryByRole("region", { name: "Not available offline" }),
       ).toBeNull(),
     );
+  });
+});
+
+describe("the history's controls", () => {
+  it("say that undoing a change that the server has waits for the user's decision, while it refused a change of the device's", async () => {
+    let refuse = false;
+    serve(() => {
+      if (refuse) {
+        throw refused(422, { code: "validation_failed" });
+      }
+      return {
+        status: "applied",
+        seq: 2,
+        revisions: [{ id: "bd_quay", rev: 2 }],
+        not_reconnected: [],
+        undo: [
+          {
+            type: "board.rename",
+            payload: { id: "bd_quay", name: "Quay" },
+            expected_rev: { bd_quay: 2 },
+          },
+        ],
+      };
+    });
+    const { doc } = await openProject();
+    await act(() => doc.send([renameQuay("Pier")]));
+    setOnline(false);
+    await act(() =>
+      doc.send([{ ...renameQuay("Dock"), expected_rev: { bd_quay: 2 } }]),
+    );
+    refuse = true;
+    setOnline(true);
+    await indicator("1 change needs review");
+    expect(
+      await screen.findByText(
+        "Undoing or redoing a change that the server already has waits until you decide what becomes of the changes that the server refused.",
+      ),
+    ).toBeDefined();
   });
 });
 

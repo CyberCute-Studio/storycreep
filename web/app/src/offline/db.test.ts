@@ -530,6 +530,8 @@ describe("the device's queue of changes", () => {
     return {
       id,
       owner,
+      maker: owner,
+      atop: [],
       order,
       format: 1,
       time: "2026-11-27T10:00:00Z",

@@ -47,6 +47,15 @@ export interface QueuedBatch {
    * it at once.
    */
   owner: string;
+  /**
+   * The document that made it, which stays as other documents take it: it
+   * was made on top of its maker's batches before it, and of those of the
+   * makers of atop, but not of another's, as of a tab that closed, whose
+   * batches a document took after its own (madeOnTop).
+   */
+  maker: string;
+  /** The makers of the other batches that the page showed as it was made, on top of which it was made too. */
+  atop: string[];
   /** Where it is in the queue, by when it was made, then by its owner's count. */
   order: number;
   /** The format of the record (queueFormat). */
@@ -133,6 +142,20 @@ export interface QueueStore {
    * made since.
    */
   discard(userId: string): Promise<void>;
+}
+
+/**
+ * Reports whether batch, queued after a batch that the document of other
+ * made, was made on top of it: as the same document made both, or the one
+ * that made batch showed other's, as it had taken them before, so that
+ * what the answer to that one moves of what batch expects is the page's
+ * own change, and not what another tab changed, which it did not show.
+ */
+export function madeOnTop(
+  batch: { maker: string; atop: readonly string[] },
+  other: string,
+): boolean {
+  return batch.maker === other || batch.atop.includes(other);
 }
 
 /** Returns the queue's order of a batch made at time, the next after last, as a millisecond past it where the clock is not. */

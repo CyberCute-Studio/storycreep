@@ -6,12 +6,13 @@
 // a document whose lock no tab holds, as of a tab that closed, or a browser
 // that restarted, at once, and those of an open tab's once its lock is let
 // go, as the tab closes, which it hears of from the other tabs
-// (BroadcastChannel) as they keep batches. A browser without Web Locks
-// takes every other document's batches as it starts, which the server
-// answers once, by their commands' IDs, however many tabs send them.
-// Signing out takes the account's batches off the device (discard), after
-// which no tab writes one of them there again, as of an answer to it that
-// comes after.
+// (BroadcastChannel) as they keep batches. A browser without Web Locks,
+// none of those that the app supports, keeps no queue, as it could not
+// tell an open tab's batches from a closed one's, and two tabs that sent
+// one batch, each with IDs of its own once a refusal had them sent again,
+// would apply it twice. Signing out takes the account's batches off the
+// device (discard), after which no tab writes one of them there again, as
+// of an answer to it that comes after.
 
 import type { QueuedBatch, QueueStore } from "../document/queue";
 import { type OfflineDatabase, opensWithin, openWait } from "./db";
@@ -123,6 +124,7 @@ function lockOf(owner: string): string {
 export interface DeviceQueueOptions {
   /** Whether the page is a secure context, without which the device keeps nothing (PRD FR-OFF-01). */
   secure: boolean;
+  /** The browser's Web Locks, without which the device keeps nothing either. */
   locks?: QueueLocks;
   broadcast?: QueueBroadcast;
   /** How long, in milliseconds, a document waits at most for the database to open (openWait). */
@@ -132,16 +134,21 @@ export interface DeviceQueueOptions {
 /**
  * Returns where the documents of the page keep their batches (QueueStore):
  * none on a page that is not a secure context, which edits online alone
- * (PRD FR-OFF-01), nor where the device's database cannot be opened.
+ * (PRD FR-OFF-01), nor in a browser without Web Locks, nor where the
+ * device's database cannot be opened.
  */
 export function deviceQueue(
   db: OfflineDatabase,
   options: DeviceQueueOptions,
 ): QueueStore | undefined {
-  if (!options.secure || typeof indexedDB === "undefined") {
+  const { locks, broadcast } = options;
+  if (
+    !options.secure ||
+    typeof indexedDB === "undefined" ||
+    locks === undefined
+  ) {
     return undefined;
   }
-  const { locks, broadcast } = options;
   const wait = options.wait ?? openWait;
   // The IDs of the batches that signing out took off the device, by
   // account, in this tab or another, which no write puts there again, as
@@ -163,17 +170,10 @@ export function deviceQueue(
     }
   });
   return {
-    hold: async (owner) =>
-      locks === undefined ? () => {} : locks.hold(lockOf(owner)),
+    hold: (owner) => locks.hold(lockOf(owner)),
     adopt: async (userId, projectId, owner, found) => {
       if (!(await opensWithin(db, wait))) {
         return { batches: [], stop: () => {} };
-      }
-      if (locks === undefined) {
-        const batches = await db
-          .takeQueued(userId, projectId, owner, () => true)
-          .catch(() => [] as QueuedBatch[]);
-        return { batches, stop: () => {} };
       }
       // A document takes batches under a lock of the project's, so that two
       // that start at once do not both take those of a tab that closed, and
@@ -197,7 +197,8 @@ export function deviceQueue(
         })
         .catch(() => [] as QueuedBatch[]);
       // The batches of an open tab's document are taken once its lock is let
-      // go, as the tab closes, or the document is dropped.
+      // go, as the tab closes, or the document is dropped; and those that
+      // it wrote since, if any, as the next news of it tells.
       const stopped = new AbortController();
       const waiting = new Set<string>();
       const watch = (other: string) => {
@@ -208,6 +209,7 @@ export function deviceQueue(
         locks.hold(lockOf(other), stopped.signal).then(
           async (release) => {
             release();
+            waiting.delete(other);
             if (stopped.signal.aborted) {
               return;
             }

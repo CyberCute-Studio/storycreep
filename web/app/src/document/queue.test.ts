@@ -4,6 +4,7 @@ import {
   type CommandBody,
   type CommandResultBody,
   NetworkError,
+  type SignedInBody,
   type UndoCommandBody,
 } from "@storycreep/shared/api";
 import { IDBFactory } from "fake-indexeddb";
@@ -28,7 +29,9 @@ import {
 } from "../offline/queue";
 import { testSession } from "../test/app";
 import { fakeApi, refused, testProject } from "../test/fake";
+import { fakeLocks } from "../test/locks";
 import type { QueueStore } from "./queue";
+import { whenSent } from "./sent";
 import type { Command } from "./store";
 import { ProjectDocument } from "./store";
 
@@ -50,10 +53,13 @@ const time = "2026-11-27T10:00:00Z";
 const user = testSession.user_id;
 
 let factory: IDBFactory;
+/** The time that the documents read, as their batches are made. */
+let clock = time;
 
 beforeEach(() => {
   factory = new IDBFactory();
   globalThis.indexedDB = factory;
+  clock = time;
 });
 
 afterEach(() => {
@@ -87,53 +93,6 @@ function fakeBroadcast() {
         },
       };
     },
-  };
-}
-
-/** A fake of the browser's Web Locks, each exclusive, granted in the order asked for. */
-function fakeLocks(): QueueLocks {
-  const held = new Set<string>();
-  const waiting = new Map<string, (() => void)[]>();
-  const hold = (name: string, signal?: AbortSignal) =>
-    new Promise<() => void>((resolve, reject) => {
-      const grant = () => {
-        held.add(name);
-        let released = false;
-        resolve(() => {
-          if (released) {
-            return;
-          }
-          released = true;
-          held.delete(name);
-          waiting.get(name)?.shift()?.();
-        });
-      };
-      if (!held.has(name)) {
-        grant();
-        return;
-      }
-      const queue = waiting.get(name) ?? [];
-      waiting.set(name, queue);
-      queue.push(grant);
-      signal?.addEventListener("abort", () => {
-        const at = queue.indexOf(grant);
-        if (at >= 0) {
-          queue.splice(at, 1);
-          reject(new DOMException("Aborted.", "AbortError"));
-        }
-      });
-    });
-  return {
-    hold,
-    run: async (name, task) => {
-      const release = await hold(name);
-      try {
-        return await task();
-      } finally {
-        release();
-      }
-    },
-    held: async () => new Set(held),
   };
 }
 
@@ -245,7 +204,7 @@ async function open(
   const doc = new ProjectDocument(testProject.id, {
     queryClient,
     log,
-    now: () => time,
+    now: () => clock,
     online: () => net.online,
     onConnection: (listener) => net.listen(listener),
     queue,
@@ -270,6 +229,42 @@ function until(
 /** The name that the first command of commands, a rename, gives. */
 function nameOf(commands: readonly CommandBody[]): string | undefined {
   return (commands[0]?.payload as { name?: string } | undefined)?.name;
+}
+
+/**
+ * Serves the board bd_a as the server keeps it, from its third revision: a
+ * batch of a rename of it that expects the revision that it has applies,
+ * and one that expects another is refused for it, with the board as it is
+ * now; returns the batches that the documents sent, each as sent.
+ */
+function serveBoard() {
+  let state = board("bd_a", "Harbour");
+  let seq = testProject.seq;
+  return serve((commands) => {
+    const expected = commands[0]?.expected_rev?.bd_a;
+    if (expected !== state.rev) {
+      throw refused(409, {
+        code: "revision_conflict",
+        details: {
+          conflicts: [
+            {
+              command: 0,
+              command_id: commands[0]?.command_id,
+              type: "board.rename",
+              id: "bd_a",
+              expected_rev: expected,
+              exists: true,
+              current_rev: state.rev,
+            },
+          ],
+          states: { bd_a: state },
+        },
+      });
+    }
+    seq++;
+    state = { ...state, name: nameOf(commands) ?? "", rev: state.rev + 1 };
+    return applied(seq, [{ id: "bd_a", rev: state.rev }]);
+  });
 }
 
 /** The name of the board bd_a, as the page shows it. */
@@ -861,5 +856,316 @@ describe("the device's queue of the page's batches", () => {
     other.doc.dispose();
     await db.close();
     await db2.close();
+  });
+
+  it("sends another tab's batch, taken as that tab closed, as it was made, and keeps it for review where this one's changed what it changes, rather than write over it", async () => {
+    const batches = serveBoard();
+    const net = connection(false);
+    const locks = fakeLocks();
+    const db = new OfflineDatabase();
+    const other = await open(db, locks, net);
+    await other.doc.send([rename("bd_a", "Dock", 3)]);
+    const db2 = new OfflineDatabase();
+    const mine = await open(db2, locks, net);
+    await mine.doc.send([rename("bd_a", "Quay", 3)]);
+    other.doc.dispose();
+    await until(mine.doc, (s) => s.queued === 2);
+    net.set(true);
+    await until(mine.doc, (s) => s.review === 1);
+    // The other tab's was made on what the server had, without this one's.
+    expect(batches.map((b) => [nameOf(b), b[0]?.expected_rev])).toEqual([
+      ["Quay", { bd_a: 3 }],
+      ["Dock", { bd_a: 3 }],
+    ]);
+    await db.close();
+    await db2.close();
+  });
+
+  it("moves a batch made on top of another tab's, taken as that tab closed, past it once it applies, as the next page does after this one closed too", async () => {
+    const batches = serveBoard();
+    const net = connection(false);
+    const locks = fakeLocks();
+    const db = new OfflineDatabase();
+    const other = await open(db, locks, net);
+    await other.doc.send([rename("bd_a", "Dock", 3)]);
+    const db2 = new OfflineDatabase();
+    const mine = await open(db2, locks, net);
+    other.doc.dispose();
+    await until(mine.doc, (s) => s.queued === 1);
+    expect(shownName(mine.doc)).toBe("Dock");
+    await mine.doc.send([rename("bd_a", "Pier", 3)]);
+    mine.doc.dispose();
+    const db3 = new OfflineDatabase();
+    const next = await open(db3, locks, net);
+    await until(next.doc, (s) => s.queued === 2);
+    net.set(true);
+    await until(next.doc, (s) => s.queued === 0);
+    expect(batches.map((b) => [nameOf(b), b[0]?.expected_rev])).toEqual([
+      ["Dock", { bd_a: 3 }],
+      ["Pier", { bd_a: 4 }],
+    ]);
+    expect(shownName(next.doc)).toBe("Pier");
+    await db.close();
+    await db2.close();
+    await db3.close();
+  });
+
+  it("undoes the latest change that the queue keeps offline, by when it was made, as of another tab's that it took after its own as that tab closed", async () => {
+    serve(() => applied(2, [{ id: "bd_a", rev: 4 }]));
+    const net = connection(false);
+    const locks = fakeLocks();
+    const db = new OfflineDatabase();
+    const other = await open(db, locks, net);
+    await other.doc.send([rename("bd_a", "Dock", 3)]);
+    const db2 = new OfflineDatabase();
+    const mine = await open(db2, locks, net);
+    clock = "2026-11-27T10:05:00Z";
+    await mine.doc.send([rename("bd_a", "Quay", 3)]);
+    other.doc.dispose();
+    await until(mine.doc, (s) => s.queued === 2);
+    expect(shownName(mine.doc)).toBe("Dock");
+    expect(mine.doc.store.getState()).toMatchObject({
+      undoable: 2,
+      undoLocal: true,
+    });
+    const names = async () =>
+      (await db2.queued(user, testProject.id)).map((b) => nameOf(b.commands));
+    // This page's, made after the other tab's.
+    await expect(mine.doc.undo()).resolves.toBe(true);
+    expect(await names()).toEqual(["Dock"]);
+    expect(shownName(mine.doc)).toBe("Dock");
+    await expect(mine.doc.undo()).resolves.toBe(true);
+    expect(await names()).toEqual([]);
+    expect(shownName(mine.doc)).toBe("Harbour");
+    await expect(mine.doc.redo()).resolves.toBe(true);
+    await expect(mine.doc.redo()).resolves.toBe(true);
+    await vi.waitFor(async () =>
+      expect(await names()).toEqual(["Dock", "Quay"]),
+    );
+    expect(shownName(mine.doc)).toBe("Quay");
+    await db.close();
+    await db2.close();
+  });
+
+  it("keeps a batch that no answer came to before one made after it that the queue kept first, in the order that they were made", async () => {
+    let fail: (error: unknown) => void = () => {};
+    serve(
+      () =>
+        new Promise<CommandResultBody>((_, reject) => {
+          fail = reject;
+        }),
+    );
+    const net = connection(true);
+    const db = new OfflineDatabase();
+    const { doc } = await open(db, fakeLocks(), net);
+    const first = doc.send([rename("bd_a", "Quay", 3)]);
+    await vi.waitFor(() => expect(doc.store.getState().sending).toBe(1));
+    // The browser goes offline as the first is on its way.
+    net.set(false);
+    clock = "2026-11-27T10:05:00Z";
+    await doc.send([rename("bd_a", "Pier", 3)]);
+    fail(new NetworkError(new TypeError("Failed to fetch")));
+    await expect(first).resolves.toEqual({ status: "queued" });
+    expect(
+      (await db.queued(user, testProject.id)).map((b) => nameOf(b.commands)),
+    ).toEqual(["Quay", "Pier"]);
+    await db.close();
+  });
+
+  it("keeps its lock once dropped until the try under way is answered, so that another tab's document sends none of its batches meanwhile", async () => {
+    let answer: (value: CommandResultBody) => void = () => {};
+    const batches = serve(
+      () =>
+        new Promise<CommandResultBody>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const net = connection(false);
+    const locks = fakeLocks();
+    const db = new OfflineDatabase();
+    const other = await open(db, locks, net);
+    await other.doc.send([rename("bd_a", "Quay", 3)]);
+    const db2 = new OfflineDatabase();
+    const mine = await open(db2, locks, net);
+    net.set(true);
+    await vi.waitFor(() => expect(batches).toHaveLength(1));
+    other.doc.dispose();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(mine.doc.store.getState().queued).toBe(0);
+    answer(applied(2, [{ id: "bd_a", rev: 4 }]));
+    await vi.waitFor(async () => {
+      expect(await db.queued(user, testProject.id)).toEqual([]);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(batches).toHaveLength(1);
+    expect(mine.doc.store.getState().queued).toBe(0);
+    await db.close();
+    await db2.close();
+  });
+
+  it("counts a batch as the queue's once the device has written it, which what waits for the page's batches waits for, as a reload", async () => {
+    serve(() => applied(2, [{ id: "bd_a", rev: 4 }]));
+    const db = new OfflineDatabase();
+    const { doc } = await open(db, fakeLocks(), connection(false));
+    const save = db.saveQueued.bind(db);
+    let write = () => {};
+    vi.spyOn(db, "saveQueued").mockImplementation(async (...args) => {
+      await new Promise<void>((resolve) => {
+        write = resolve;
+      });
+      return save(...args);
+    });
+    const sending = doc.send([rename("bd_a", "Quay", 3)]);
+    let sent = false;
+    void whenSent(doc, new AbortController().signal).then(() => {
+      sent = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sent).toBe(false);
+    expect(doc.store.getState()).toMatchObject({ sending: 1, queued: 0 });
+    write();
+    await expect(sending).resolves.toEqual({ status: "queued" });
+    await vi.waitFor(() => expect(sent).toBe(true));
+    expect(doc.store.getState().queued).toBe(1);
+    await db.close();
+  });
+
+  it("puts nothing back by redo of a change that undo took out of the queue as the device refused to keep it", async () => {
+    const batches = serve(() => applied(2, [{ id: "bd_a", rev: 4 }]));
+    const db = new OfflineDatabase();
+    const { doc } = await open(db, fakeLocks(), connection(false));
+    let refuse = () => {};
+    const saves = vi.spyOn(db, "saveQueued").mockImplementationOnce(
+      () =>
+        new Promise<void>((_, reject) => {
+          refuse = () =>
+            reject(new DOMException("Full.", "QuotaExceededError"));
+        }),
+    );
+    const sending = doc.send([rename("bd_a", "Quay", 3)]);
+    await vi.waitFor(() => expect(saves).toHaveBeenCalledOnce());
+    const undoing = doc.undo();
+    refuse();
+    await expect(sending).rejects.toBeInstanceOf(NetworkError);
+    await expect(undoing).resolves.toBe(true);
+    expect(doc.store.getState()).toMatchObject({
+      redoable: 0,
+      redoLocal: false,
+    });
+    await expect(doc.redo()).resolves.toBe(false);
+    expect(shownName(doc)).toBe("Harbour");
+    expect(batches).toEqual([]);
+    await db.close();
+  });
+
+  it("does not reach the server, as it says, through the try after one that no answer came to, until it is answered, and keeps the batches made meanwhile", async () => {
+    let failures = 1;
+    let answer: (value: CommandResultBody) => void = () => {};
+    const batches = serve(() => {
+      if (failures-- > 0) {
+        throw new NetworkError(new TypeError("Failed to fetch"));
+      }
+      return new Promise<CommandResultBody>((resolve) => {
+        answer = resolve;
+      });
+    });
+    const db = new OfflineDatabase();
+    const { doc } = await open(db, fakeLocks(), connection(true));
+    await expect(doc.send([rename("bd_a", "Quay", 3)])).resolves.toEqual({
+      status: "queued",
+    });
+    await vi.waitFor(() => expect(batches).toHaveLength(2));
+    expect(doc.store.getState().holding).toBe(true);
+    await expect(doc.send([rename("bd_a", "Pier", 3)])).resolves.toEqual({
+      status: "queued",
+    });
+    answer(applied(2, [{ id: "bd_a", rev: 4 }]));
+    await vi.waitFor(() => expect(batches).toHaveLength(3));
+    expect(doc.store.getState().holding).toBe(false);
+    answer(applied(3, [{ id: "bd_a", rev: 5 }]));
+    await until(doc, (s) => s.queued === 0);
+    await db.close();
+  });
+
+  it("keeps none of the batches on their way as the page signs out, but those that another account's signing in leaves", async () => {
+    for (const after of [null, { ...testSession, user_id: "usr_other" }]) {
+      let answer: (value: CommandResultBody) => void = () => {};
+      const batches = serve(
+        () =>
+          new Promise<CommandResultBody>((resolve) => {
+            answer = resolve;
+          }),
+      );
+      const db = new OfflineDatabase();
+      const { doc, queryClient } = await open(
+        db,
+        fakeLocks(),
+        connection(true),
+      );
+      const first = doc.send([rename("bd_a", "Quay", 3)]);
+      const second = doc.send([rename("bd_a", "Pier", 3)]);
+      await vi.waitFor(() => expect(batches).toHaveLength(1));
+      queryClient.setQueryData(sessionQuery.queryKey, after);
+      doc.dispose();
+      answer(applied(2, [{ id: "bd_a", rev: 4 }]));
+      await first;
+      if (after === null) {
+        await expect(second).rejects.toThrow();
+        expect(await db.queued(user)).toEqual([]);
+      } else {
+        await expect(second).resolves.toEqual({ status: "queued" });
+        expect((await db.queued(user)).map((b) => nameOf(b.commands))).toEqual([
+          "Pier",
+        ]);
+        await db.deleteQueued(user);
+      }
+      expect(batches).toHaveLength(1);
+      await db.close();
+    }
+  });
+
+  it("keeps its lock once dropped until a batch that waits for a step of the history has been kept, as the account's once another signed in", async () => {
+    let answer: (value: CommandResultBody) => void = () => {};
+    let calls = 0;
+    let seq = 1;
+    serve(
+      () => {
+        calls++;
+        if (calls === 1) {
+          seq = 2;
+          return applied(
+            2,
+            [{ id: "bd_a", rev: 4 }],
+            [renameBack("bd_a", "Harbour", 4)],
+          );
+        }
+        return new Promise<CommandResultBody>((resolve) => {
+          answer = resolve;
+        });
+      },
+      () => seq,
+    );
+    const db = new OfflineDatabase();
+    const { doc, queryClient } = await open(db, fakeLocks(), connection(true));
+    await doc.send([rename("bd_a", "Quay", 3)]);
+    const undoing = doc.undo();
+    await vi.waitFor(() => expect(calls).toBe(2));
+    const after = doc.send([rename("bd_a", "Pier", 4)]);
+    const other: SignedInBody = { ...testSession, user_id: "usr_other" };
+    queryClient.setQueryData(sessionQuery.queryKey, other);
+    doc.dispose();
+    answer(applied(3, [{ id: "bd_a", rev: 5 }]));
+    await undoing;
+    await expect(after).resolves.toEqual({ status: "queued" });
+    expect((await db.queued(user)).map((b) => nameOf(b.commands))).toEqual([
+      "Pier",
+    ]);
+    await db.close();
+  });
+
+  it("keeps no queue in a browser without Web Locks, which could not tell an open tab's batches from a closed one's", () => {
+    expect(deviceQueue(new OfflineDatabase(), { secure: true })).toBe(
+      undefined,
+    );
   });
 });

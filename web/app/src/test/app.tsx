@@ -42,6 +42,7 @@ import { deviceQueue } from "../offline/queue";
 import type { AppShell } from "../pwa/worker";
 import { parseSearch } from "../router";
 import { routeTree } from "../routeTree.gen";
+import { fakeLocks } from "./locks";
 
 /** An instance whose setup has completed, which anyone may register on. */
 export const testInstance: InstanceBody = {
@@ -165,7 +166,9 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
     online: connected,
     onConnection: (listener) => onConnection(listener),
     queue:
-      offlineDb === undefined ? undefined : deviceQueue(offlineDb, { secure }),
+      offlineDb === undefined
+        ? undefined
+        : deviceQueue(offlineDb, { secure, locks: fakeLocks() }),
   });
   const offline =
     offlineDb === undefined

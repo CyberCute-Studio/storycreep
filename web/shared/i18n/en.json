@@ -844,6 +844,7 @@
   "history.undo_failed": "Couldn't undo: {reason}",
   "history.undone": "Undone.",
   "history.waits_for_queue": "Undoing or redoing a change that the server already has waits until the changes on this device have been sent.",
+  "history.waits_for_review": "Undoing or redoing a change that the server already has waits until you decide what becomes of the changes that the server refused.",
   "inspector.actions": "Actions",
   "inspector.add": "Add",
   "inspector.add_else": "Add the else",
