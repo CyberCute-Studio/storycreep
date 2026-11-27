@@ -25,7 +25,7 @@ import { sessionQuery } from "../api";
 import { type Refusal, refusalOf } from "../auth/refusal";
 import { collator } from "../content/textNames";
 import type { ProjectDocument } from "../document/store";
-import { useOnline } from "../offline/online";
+import { useServerReachable } from "../offline/pending";
 import { payloadField, useExpected } from "../project/dialogs";
 import { focusIsNowhere, showInPage } from "../shell/focus";
 import { Button } from "../ui/Button";
@@ -110,7 +110,12 @@ export const SavedStates = memo(function SavedStates({
 }) {
   const { t, i18n } = useTranslation();
   const list = useQuery(playStatesQuery(doc));
-  const online = useOnline();
+  // The saved states are the server's, no part of the project's copy, nor
+  // of the changes that the device keeps (PRD FR-OFF-03): while the page
+  // cannot reach the server, as offline, the section says that they need a
+  // connection, in place of a list and controls that would fail, even of a
+  // list read before.
+  const online = useServerReachable(doc);
   const userId = useQuery(sessionQuery).data?.user_id;
   const headingRef = useRef<HTMLHeadingElement>(null);
   // The prefix of the IDs of the states' lines of when each last changed,
@@ -337,7 +342,7 @@ export const SavedStates = memo(function SavedStates({
       >
         {t("play.saved.title")}
       </h3>
-      {editable && (
+      {editable && online && (
         <SaveForm
           disabled={busy}
           onSave={(name) =>
@@ -372,7 +377,7 @@ export const SavedStates = memo(function SavedStates({
           form's name, which says it there (refusalOf), and says the rest,
           as of a state too large refused with the name. */}
       <Alert message={refusal?.alert ?? refusal?.refusal?.message} />
-      {list.isPending ? (
+      {list.isPending || !online ? (
         // Offline, the list waits for the browser to be online again, which
         // the device's copy of the project does not hold (PRD FR-OFF-02).
         <p className="text-fg-muted">

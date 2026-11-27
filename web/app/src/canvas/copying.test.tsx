@@ -966,3 +966,41 @@ describe("the canvas's clipboard", () => {
     expect(documents.clipboard.getState()).toBeUndefined();
   });
 });
+
+describe("the canvas's clipboard offline", () => {
+  // Verifies: FR-OFF-03/AC3
+  it("is not offered while the browser has no connection, as it reads the server, and says why", async () => {
+    const { nodes, connections } = quayAndDock();
+    const calls = clipboardPage({ nodes, connections });
+    const { canvas } = await openHarbour();
+    await selectAll(canvas, 2);
+    expect(clipboardButton("Copy")).toHaveProperty("disabled", false);
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    try {
+      for (const name of ["Copy", "Cut", "Paste"]) {
+        expect(clipboardButton(name)).toHaveProperty("disabled", true);
+      }
+      expect(
+        within(screen.getByRole("group", { name: "Edit the board" })).getByRole(
+          "button",
+          { name: "Duplicate" },
+        ),
+      ).toHaveProperty("disabled", true);
+      expect(
+        screen.getByText("Copy, cut, paste, and duplicate need a connection."),
+      ).toBeDefined();
+      // Nor do the keys copy.
+      await userEvent.keyboard("{Control>}c{/Control}");
+      expect(bodiesOf(calls, "copyNodes")).toEqual([]);
+    } finally {
+      vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+      act(() => {
+        window.dispatchEvent(new Event("online"));
+      });
+    }
+    expect(clipboardButton("Copy")).toHaveProperty("disabled", false);
+  });
+});

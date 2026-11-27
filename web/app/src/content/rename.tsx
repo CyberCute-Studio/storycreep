@@ -19,6 +19,8 @@ import { type FormEvent, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, pagedQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
+import { useProjectDocument } from "../document/react";
+import { useServerReachable } from "../offline/pending";
 import { payloadField, useExpected } from "../project/dialogs";
 import { useCommands } from "../project/queries";
 import { Button, MoreButton } from "../ui/Button";
@@ -186,6 +188,11 @@ export function RenameKeyDialog({
   const [previewed, setPreviewed] = useState<string>();
   const commands = useCommands(projectId);
   const rev = useExpected(renamed.rev, commands.error);
+  // The preview is the server's, which the page may not reach now, as
+  // offline: the dialog renames without it then, a change that the device
+  // keeps, and the server rewrites what names the key once it is sent (PRD
+  // FR-OFF-03), as the dialog says.
+  const reachable = useServerReachable(useProjectDocument(projectId));
   const renamedQuery = renamePreviewQuery(
     projectId,
     renamed,
@@ -257,12 +264,12 @@ export function RenameKeyDialog({
       onClose();
       return;
     }
-    if (previewed !== key) {
+    if (previewed !== key && reachable) {
       commands.reset();
       setPreviewed(key);
       return;
     }
-    if (failed) {
+    if (failed && reachable) {
       for (const list of lists) {
         if (list.isError) {
           void list.refetch();
@@ -270,7 +277,7 @@ export function RenameKeyDialog({
       }
       return;
     }
-    if (!ready) {
+    if (!ready && reachable) {
       return;
     }
     commands.mutate(
@@ -317,7 +324,10 @@ export function RenameKeyDialog({
             }}
             error={refusal?.fields.key}
           />
-          {previewed === key && !unchanged && (
+          {!reachable && !unchanged && (
+            <p className="text-fg-muted">{t("rename.preview_offline")}</p>
+          )}
+          {reachable && previewed === key && !unchanged && (
             <div className="space-y-4">
               <PreviewList
                 query={renamedQuery}
@@ -345,10 +355,14 @@ export function RenameKeyDialog({
               variant="primary"
               disabled={
                 commands.isPending ||
-                (previewed === key && !unchanged && !ready && !failed)
+                (reachable &&
+                  previewed === key &&
+                  !unchanged &&
+                  !ready &&
+                  !failed)
               }
             >
-              {(previewed === key && !failed) || unchanged
+              {(previewed === key && !failed) || unchanged || !reachable
                 ? t("rename.submit")
                 : t("rename.preview")}
             </Button>

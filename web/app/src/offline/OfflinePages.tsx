@@ -16,6 +16,7 @@
 import { formatDateTime } from "@storycreep/shared/i18n";
 import { useTranslation } from "react-i18next";
 import { TextLink } from "../ui/Page";
+import { useOnline } from "./online";
 import { useOffline } from "./react";
 
 /**
@@ -55,6 +56,9 @@ function KeptLink() {
 export function OfflineNotice({ projectId }: { projectId: string }) {
   const { t, i18n } = useTranslation();
   const copy = useOffline((s) => s.pins.get(projectId)?.copy);
+  // The device keeps the changes made meanwhile, where it can keep anything
+  // (PRD FR-OFF-03).
+  const keeps = useOffline((s) => s.available === true);
   return (
     <div role="status">
       <p className="rounded-md border border-border bg-surface px-4 py-3">
@@ -63,6 +67,7 @@ export function OfflineNotice({ projectId }: { projectId: string }) {
           : t("offline.notice.copy", {
               time: formatDateTime(i18n.language, new Date(copy.savedAt)),
             })}{" "}
+        {keeps && <>{t("offline.notice.changes")} </>}
         <KeptLink />
       </p>
     </div>
@@ -82,5 +87,29 @@ export function NeedsConnection() {
         <KeptLink />
       </p>
     </div>
+  );
+}
+
+/**
+ * What a part of a page that reads the server shows while its read is under
+ * way: reading, or, while the browser has no connection, which the read
+ * waits for, that it needs one, rather than say that it reads for as long
+ * as the device is offline (PRD FR-OFF-03), as a node's statistics, or the
+ * usages of a variable, which the device's copy of the project does not
+ * hold; inline, within a line of text.
+ */
+export function ReadingNote({
+  reading,
+  inline = false,
+}: {
+  reading: string;
+  inline?: boolean;
+}) {
+  const { t } = useTranslation();
+  const text = useOnline() ? reading : t("offline.needs_connection.short");
+  return inline ? (
+    <span className="text-fg-muted">{text}</span>
+  ) : (
+    <p className="text-fg-muted">{text}</p>
   );
 }

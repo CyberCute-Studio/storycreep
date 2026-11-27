@@ -9,7 +9,11 @@
 // board went. Whichever shows them registers the commands of the undo and
 // the redo, whose keys, Ctrl+Z and Ctrl+Y, or Cmd+Z and Cmd+Shift+Z on
 // macOS, act outside the fields that the user types in, so that what they
-// say is what the buttons would (historyHandlers, plan note N72).
+// say is what the buttons would (historyHandlers, plan note N72). Offline,
+// undo takes the latest change that the device's queue keeps out of it, and
+// redo puts it back, with no connection (PRD FR-OFF-03 AC4); a step of a
+// change that the server already has waits for the connection, and for the
+// queue to be sent, which the controls say (plan note N98).
 
 import { useMutation } from "@tanstack/react-query";
 import {
@@ -24,6 +28,7 @@ import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
 import { type Handlers, useCommandHandlers } from "../commands/registry";
 import { useDocumentState, useProjectDocument } from "../document/react";
+import { useServerReachable } from "../offline/pending";
 import { Button } from "../ui/Button";
 import { Alert, Status } from "../ui/Page";
 
@@ -90,6 +95,10 @@ export function useHistory(projectId: string) {
   const redoable = useDocumentState(doc, (state) => state.redoable);
   const version = useDocumentState(doc, (state) => state.historyVersion);
   const stepping = useDocumentState(doc, (state) => state.stepping);
+  const undoLocal = useDocumentState(doc, (state) => state.undoLocal);
+  const redoLocal = useDocumentState(doc, (state) => state.redoLocal);
+  const queued = useDocumentState(doc, (state) => state.queued);
+  const reachable = useServerReachable(doc);
   const [done, setDone] = useState<"undo" | "redo">();
   // A step that there was none of once it was sent, as a redo that a change
   // saved just before ended, says nothing.
@@ -99,7 +108,40 @@ export function useHistory(projectId: string) {
     onMutate: () => setDone(undefined),
     onSuccess: (stepped, which) => setDone(stepped ? which : undefined),
   });
-  return { undoable, redoable, version, stepping, done, step };
+  return {
+    undoable,
+    redoable,
+    version,
+    stepping,
+    undoLocal,
+    redoLocal,
+    queued,
+    reachable,
+    done,
+    step,
+  };
+}
+
+/**
+ * Returns why history cannot step which way now, though it has a step:
+ * the step is of a change that the server already has, which the page
+ * cannot reach (offline), or which waits for the changes that the device's
+ * queue keeps to be sent first (queue); or undefined where it can, or has
+ * no step.
+ */
+function waitsFor(
+  history: HistoryOf,
+  which: "undo" | "redo",
+): "offline" | "queue" | undefined {
+  const count = which === "undo" ? history.undoable : history.redoable;
+  const local = which === "undo" ? history.undoLocal : history.redoLocal;
+  if (count === 0 || local) {
+    return undefined;
+  }
+  if (!history.reachable) {
+    return "offline";
+  }
+  return history.queued > 0 ? "queue" : undefined;
 }
 
 /**
@@ -110,7 +152,8 @@ export function useHistory(projectId: string) {
 function canStep(history: HistoryOf, which: "undo" | "redo"): boolean {
   return (
     (which === "undo" ? history.undoable : history.redoable) > 0 &&
-    !history.stepping
+    !history.stepping &&
+    waitsFor(history, which) === undefined
   );
 }
 
@@ -168,8 +211,16 @@ export function HistoryStatus({
   const { t } = useTranslation();
   const { done, step } = history;
   const reason = refusalOf(step.error, t)?.message ?? "";
+  const waits = waitsFor(history, "undo") ?? waitsFor(history, "redo");
   return (
     <>
+      {waits !== undefined && (
+        <p className="text-fg-muted">
+          {waits === "offline"
+            ? t("history.needs_connection")
+            : t("history.waits_for_queue")}
+        </p>
+      )}
       <Status
         message={
           done === "undo"

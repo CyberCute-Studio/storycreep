@@ -31,9 +31,9 @@ import { ErrorConsoleButton } from "../errors/ErrorConsole";
 import { NotificationsLink } from "../notifications/NotificationsLink";
 import { useNotificationListener } from "../notifications/queries";
 import { OfflineNotices } from "../offline/OfflineNotices";
+import { SignOutButton } from "../offline/SignOut";
 import { PRODUCT_NAME, TLS_DOCS_URL } from "../product";
 import { InstallButton, UpdateNotice } from "../pwa/ShellControls";
-import { Button } from "../ui/Button";
 import { Alert } from "../ui/Page";
 import { CONTENT_ID, keepFocusOnPage, skipToContent } from "./focus";
 import { unencrypted } from "./transport";
@@ -157,12 +157,11 @@ function SignedInControls({
           {account?.display_name ?? t("shell.account")}
         </span>
       </Link>
-      <Button
-        disabled={signOut.isPending}
-        onClick={() => signOut.mutate(session)}
-      >
+      {/* Asks first where the device keeps changes that the server has yet
+      to answer (PRD FR-OFF-03). */}
+      <SignOutButton signOut={signOut} session={session}>
         {t("shell.sign_out")}
-      </Button>
+      </SignOutButton>
     </>
   );
 }

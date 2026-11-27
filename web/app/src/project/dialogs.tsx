@@ -19,9 +19,17 @@ import {
 import { newId } from "@storycreep/shared/ids";
 import { useQuery } from "@tanstack/react-query";
 import { AlertDialog, Dialog } from "radix-ui";
-import { type FormEvent, type ReactNode, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
+import { useDocumentState, useProjectDocument } from "../document/react";
+import { useServerReachable } from "../offline/pending";
 import {
   ConfirmButtons,
   ConfirmFrame,
@@ -610,8 +618,35 @@ export function DeleteBoardDialog({
   const commands = useCommands(projectId);
   const rev = useExpected(board.rev, commands.error);
   const refused = referencedBy(commands.error);
+  // The list is the server's, which the page may not reach now, as
+  // offline: the dialog lists then the jumpers of the other boards that the
+  // page holds, as the device's copy of the project, which is a change
+  // that the device keeps (PRD FR-OFF-03), refused once sent, and kept for
+  // review, where the server knows of one that the copy does not.
+  const doc = useProjectDocument(projectId);
+  const reachable = useServerReachable(doc);
+  const nodes = useDocumentState(doc, (state) => state.view.nodes);
+  const held = useMemo(
+    () =>
+      reachable
+        ? undefined
+        : [...nodes.values()]
+            .filter(
+              (node) =>
+                node.type === "jumper" &&
+                node.board_id !== board.id &&
+                node.target?.board_id === board.id,
+            )
+            .map((node) => ({
+              id: node.id,
+              board_id: node.board_id,
+              title: node.title,
+            })),
+    [reachable, nodes, board.id],
+  );
   const jumpers: Jumper[] | undefined =
     refused?.jumpers ??
+    held ??
     referrers.data?.items.map((node: Node) => ({
       id: node.id,
       board_id: node.board_id,
@@ -620,7 +655,7 @@ export function DeleteBoardDialog({
   const count = refused?.count ?? jumpers?.length ?? 0;
   const more =
     refused === undefined
-      ? (referrers.data?.more ?? false)
+      ? held === undefined && (referrers.data?.more ?? false)
       : count > (jumpers?.length ?? 0);
   const confirmed = count > 0;
   const boardName = (id: string) =>
@@ -640,7 +675,7 @@ export function DeleteBoardDialog({
       // once what it breaks is shown, while Cancel closes the dialog all the
       // same, as while a read that is slow, or that waits for the browser's
       // connection, is under way.
-      ready={!referrers.isPending}
+      ready={!referrers.isPending || !reachable}
       onClose={onClose}
       onConfirm={() =>
         commands.mutate(
@@ -665,8 +700,11 @@ export function DeleteBoardDialog({
         )
       }
     >
-      {referrers.isError && (
+      {referrers.isError && reachable && (
         <Alert message={refusalOf(referrers.error, t)?.message} />
+      )}
+      {!reachable && refused === undefined && (
+        <p className="text-fg-muted">{t("boards.jumpers_offline")}</p>
       )}
       {jumpers !== undefined && jumpers.length > 0 && (
         <div className="space-y-2">

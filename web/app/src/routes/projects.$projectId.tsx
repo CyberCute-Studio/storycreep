@@ -19,6 +19,7 @@ import {
   offlinePages,
 } from "../offline/OfflinePages";
 import { useOnline } from "../offline/online";
+import { SyncIndicator } from "../offline/SyncStatus";
 import { HistoryOwned, LayoutHistory } from "../project/History";
 import { editsProject, managesProject, projectQuery } from "../project/queries";
 import { askSearchFocus, forgetSearchFocus } from "../search/focus";
@@ -55,7 +56,7 @@ export const Route = createFileRoute("/projects/$projectId")({
 // it, which its workspace's owners and admins manage, and its settings,
 // under a link back to its workspace's projects, its search (FR-PROJ-03),
 // its writing statistics (FR-TEXT-06), its validation (FR-DEP-03), its
-// dependency view (FR-DEP-02), its releases (FR-SNAP-01, FR-SNAP-02), and its threaded comments (FR-COMMENT-01), the undo and redo of the user's changes (FR-EDIT-08), and the note that an
+// dependency view (FR-DEP-02), its releases (FR-SNAP-01, FR-SNAP-02), and its threaded comments (FR-COMMENT-01), the undo and redo of the user's changes (FR-EDIT-08), whether those are saved on the server (FR-OFF-06), and the note that an
 // archived project is read-only. The palette goes to each of its pages, and
 // Ctrl+/, on macOS too, to its search, with the focus in the search's
 // field (FR-EDIT-10, plan note N72). They follow the project's document while they are shown (PRD
@@ -364,6 +365,9 @@ function ProjectPages({ projectId }: { projectId: string }) {
             )}
           </ul>
         </nav>
+        {/* Whether the user's changes are saved on the server, on their
+        way, kept on the device offline, or need review (PRD FR-OFF-06). */}
+        <SyncIndicator projectId={projectId} />
         {editsProject(project.role) && project.archived_at === undefined && (
           <LayoutHistory projectId={projectId} />
         )}

@@ -1,7 +1,10 @@
 // The image of an entity of a project's content (PRD FR-ASSET-02), as a
 // component's image and an element's cover: its thumbnail, and, for an
 // editor, its upload and its removal, each a change of its own, expecting
-// the revision that the page showed as the user asked for it.
+// the revision that the page showed as the user asked for it. An upload
+// needs the server, which the page may not reach now, as offline, when the
+// section says so in its place; the removal is a change of the project's,
+// which the device keeps offline (PRD FR-OFF-03).
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { type ChangeEvent, useId, useState } from "react";
@@ -11,6 +14,7 @@ import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
 import { useProjectDocument } from "../document/react";
 import { useOnline } from "../offline/online";
+import { useServerReachable } from "../offline/pending";
 import type { Command } from "../project/queries";
 import { Button } from "../ui/Button";
 import { Alert } from "../ui/Page";
@@ -95,6 +99,7 @@ export function AssetImage({
   // The image that could not be loaded, as offline.
   const [unloaded, setUnloaded] = useState<string>();
   const online = useOnline();
+  const reachable = useServerReachable(doc);
   const refusal = refusalOf(image.error, t);
   return (
     <section className="space-y-2">
@@ -124,10 +129,16 @@ export function AssetImage({
               id={inputId}
               type="file"
               accept={imageTypes}
-              disabled={pending}
+              disabled={pending || !reachable}
+              aria-describedby={reachable ? undefined : `${inputId}-offline`}
               onChange={chosen}
               className="min-h-11 max-w-full file:me-2 file:min-h-11 file:cursor-pointer file:rounded-md file:border file:border-border file:bg-surface file:px-4 file:text-fg"
             />
+            {!reachable && (
+              <p id={`${inputId}-offline`} className="text-fg-muted">
+                {t("offline.upload")}
+              </p>
+            )}
           </div>
           {assetId !== undefined && (
             <Button disabled={pending} onClick={() => image.mutate({ rev })}>

@@ -74,6 +74,7 @@ import {
   useDocuments,
   useProjectDocument,
 } from "../document/react";
+import { useServerReachable } from "../offline/pending";
 import { PlayPanel } from "../play/PlayPanel";
 import { goToSaved } from "../play/SavedStates";
 import {
@@ -1777,7 +1778,12 @@ function BoardCanvasOf({
   // on a board that may be changed, once the canvas is placed on its nodes,
   // as a new node is (Add), and while no copy, paste, or duplicate of the
   // canvas is under way (busy).
-  const clipboardReady = content === "ready" && copied !== undefined;
+  // Copy, Cut, Duplicate, and Paste read the server (plan note N71), which
+  // the page may not reach now, as offline, when they are not offered, and
+  // the toolbar says why (PRD FR-OFF-03 AC3).
+  const reachable = useServerReachable(doc);
+  const clipboardReady =
+    content === "ready" && copied !== undefined && reachable;
   const pastable = editable && clipboardReady && !actions.busy;
   // Pastes what the page's clipboard holds, its nodes' middle at at of the
   // board, or at the canvas's centre, where at is not given: at once where
@@ -1818,7 +1824,7 @@ function BoardCanvasOf({
   // Cut on a board that may be changed alone; and Copy, Cut, and Duplicate
   // of at most as many nodes as a clipboard holds.
   const clipboardAsked = (asked: ClipboardAsk) => {
-    if (controller.gestures.following()) {
+    if (controller.gestures.following() || !reachable) {
       return;
     }
     if (asked === "paste") {
@@ -1876,7 +1882,7 @@ function BoardCanvasOf({
   // fit; Delete is of the nodes selected, or of the connection, as the
   // toolbar's is, by the same conditions.
   const fits = selected > 0 && selected <= maxEdited;
-  const copiable = fits && !actions.busy;
+  const copiable = fits && !actions.busy && reachable;
   const deletable = selected > 0 || connection !== undefined;
   const canvasHandlers: Handlers = {
     ...Object.fromEntries(viewCommands.map((id) => [id, ofController(id)])),
@@ -2222,7 +2228,7 @@ function BoardCanvasOf({
         <fieldset className="flex min-w-0 flex-wrap gap-2">
           <legend className="sr-only">{t("canvas.clipboard")}</legend>
           <LastingButton
-            disabled={!fits}
+            disabled={!fits || !reachable}
             unavailable={actions.busy}
             onClick={() => void actions.copy([...selection])}
           >
@@ -2231,7 +2237,7 @@ function BoardCanvasOf({
           {editable && (
             <>
               <LastingButton
-                disabled={!fits}
+                disabled={!fits || !reachable}
                 unavailable={actions.busy}
                 onClick={() => void actions.cut([...selection])}
               >
@@ -2248,6 +2254,11 @@ function BoardCanvasOf({
                 {t("canvas.paste")}
               </LastingButton>
             </>
+          )}
+          {!reachable && (
+            <p className="self-center text-fg-muted">
+              {t("canvas.clipboard_offline")}
+            </p>
           )}
         </fieldset>
         {editable && (
@@ -2272,7 +2283,7 @@ function BoardCanvasOf({
               </MenuItem>
             </Menu>
             <LastingButton
-              disabled={!fits}
+              disabled={!fits || !reachable}
               unavailable={actions.busy}
               onClick={() => void actions.duplicate([...selection])}
             >
@@ -2698,7 +2709,9 @@ function BoardCanvasOf({
                         {t("canvas.zoom_selection")}
                       </MenuItem>
                       <MenuItem
-                        disabled={selected > maxEdited || actions.busy}
+                        disabled={
+                          selected > maxEdited || actions.busy || !reachable
+                        }
                         onSelect={() => void actions.copy([...selection])}
                       >
                         {t("canvas.copy")}
@@ -2706,13 +2719,17 @@ function BoardCanvasOf({
                       {editable && (
                         <>
                           <MenuItem
-                            disabled={selected > maxEdited || actions.busy}
+                            disabled={
+                              selected > maxEdited || actions.busy || !reachable
+                            }
                             onSelect={() => void actions.cut([...selection])}
                           >
                             {t("canvas.cut")}
                           </MenuItem>
                           <MenuItem
-                            disabled={selected > maxEdited || actions.busy}
+                            disabled={
+                              selected > maxEdited || actions.busy || !reachable
+                            }
                             onSelect={() =>
                               void actions.duplicate([...selection])
                             }

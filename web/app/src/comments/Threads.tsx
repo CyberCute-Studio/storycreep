@@ -76,6 +76,7 @@ import {
   conflictsOf,
   type ProjectDocument,
 } from "../document/store";
+import { useServerReachable } from "../offline/pending";
 import { conflictOf, projectQuery } from "../project/queries";
 import type { MemberChoice } from "../richtext/choices";
 import type { RichTextValue } from "../richtext/convert";
@@ -381,6 +382,11 @@ export function Comments({
   const writable =
     commentsOn(project.role) && project.archived_at === undefined;
   const list = useQuery(targetCommentsQuery(doc, target.id));
+  // The comments are the server's, no part of the project's copy, nor of
+  // the changes that the device keeps (PRD FR-OFF-03): while the page cannot
+  // reach the server, as offline, the section says that they need a
+  // connection, in place of threads and forms that would fail.
+  const reachable = useServerReachable(doc);
   const ownId = useId();
   const titleId = headingId ?? `${ownId}-title`;
   const heading = useRef<HTMLHeadingElement>(null);
@@ -427,53 +433,59 @@ export function Comments({
       >
         {t("comments.title")}
       </Heading>
-      {list.data !== undefined && (
-        <p className="text-fg-muted">
-          {t("comments.counts", {
-            open,
-            resolved: threads.length - open,
-          })}
-        </p>
-      )}
-      {writable && (
-        // Made anew for another target, as a section that stays shows
-        // another's threads, so that what was typed for one is never posted
-        // on the other.
-        <NewThread
-          key={target.id}
-          doc={doc}
-          target={target}
-          label={t("comments.new")}
-          onSending={() => setSent((n) => n + 1)}
-        />
-      )}
-      {!writable && (
-        <p className="text-fg-muted">
-          {project.archived_at !== undefined
-            ? t("comments.read_only_archived")
-            : t("comments.read_only")}
-        </p>
-      )}
-      {list.isPending ? (
-        <p className="text-fg-muted">{t("comments.reading")}</p>
+      {!reachable ? (
+        <p className="text-fg-muted">{t("comments.offline")}</p>
       ) : (
         <>
-          {list.isError && (
-            <ReadFailed
-              error={list.error}
-              onRetry={() => void list.refetch()}
+          {list.data !== undefined && (
+            <p className="text-fg-muted">
+              {t("comments.counts", {
+                open,
+                resolved: threads.length - open,
+              })}
+            </p>
+          )}
+          {writable && (
+            // Made anew for another target, as a section that stays shows
+            // another's threads, so that what was typed for one is never posted
+            // on the other.
+            <NewThread
+              key={target.id}
+              doc={doc}
+              target={target}
+              label={t("comments.new")}
+              onSending={() => setSent((n) => n + 1)}
             />
           )}
-          {list.data !== undefined && (
-            <ThreadList
-              doc={doc}
-              threads={threads}
-              writable={writable}
-              reread={() => list.refetch()}
-              heading={heading}
-              empty={t("comments.none")}
-              sent={sent}
-            />
+          {!writable && (
+            <p className="text-fg-muted">
+              {project.archived_at !== undefined
+                ? t("comments.read_only_archived")
+                : t("comments.read_only")}
+            </p>
+          )}
+          {list.isPending ? (
+            <p className="text-fg-muted">{t("comments.reading")}</p>
+          ) : (
+            <>
+              {list.isError && (
+                <ReadFailed
+                  error={list.error}
+                  onRetry={() => void list.refetch()}
+                />
+              )}
+              {list.data !== undefined && (
+                <ThreadList
+                  doc={doc}
+                  threads={threads}
+                  writable={writable}
+                  reread={() => list.refetch()}
+                  heading={heading}
+                  empty={t("comments.none")}
+                  sent={sent}
+                />
+              )}
+            </>
           )}
         </>
       )}

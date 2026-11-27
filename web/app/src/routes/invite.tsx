@@ -37,6 +37,7 @@ import { roleName } from "../auth/roles";
 import { credentialsOf, SignInFields } from "../auth/SignInFields";
 import { csrfHeaders, signedIn } from "../auth/session";
 import { signOutFailure, useSignOut } from "../auth/signOut";
+import { SignOutButton } from "../offline/SignOut";
 import { Button } from "../ui/Button";
 import { TextField, useFocusRefusal } from "../ui/Field";
 import { Alert, Page, Status, TextLink } from "../ui/Page";
@@ -257,12 +258,9 @@ function AcceptSignedIn({
           {t("invite.accept")}
         </Button>
         {mismatch && (
-          <Button
-            disabled={signOut.isPending}
-            onClick={() => signOut.mutate(session)}
-          >
+          <SignOutButton signOut={signOut} session={session}>
             {t("invite.sign_out")}
-          </Button>
+          </SignOutButton>
         )}
       </div>
     </section>

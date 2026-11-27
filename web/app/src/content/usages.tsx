@@ -17,6 +17,7 @@ import { useShallow } from "zustand/react/shallow";
 import { api, pagedQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { useDocumentState, useProjectDocument } from "../document/react";
+import { ReadingNote } from "../offline/OfflinePages";
 import { Button, MoreButton } from "../ui/Button";
 import { Alert, textLink } from "../ui/Page";
 import { nodeTitleText } from "./textNames";
@@ -266,7 +267,7 @@ function UsageList({
         {title}
       </h4>
       {list.isPending ? (
-        <p className="text-fg-muted">{t("usage.loading")}</p>
+        <ReadingNote reading={t("usage.loading")} />
       ) : list.isError ? (
         <Alert message={refusalOf(list.error, t)?.message} />
       ) : items.length === 0 ? (

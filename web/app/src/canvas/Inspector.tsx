@@ -43,6 +43,7 @@ import { hundredths } from "../document/hundredths";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { ExpressionEditor } from "../expr/ExpressionEditor";
 import { sourceOf, typedExpression, useTypedSource } from "../expr/fields";
+import { useServerReachable } from "../offline/pending";
 import { colorName, type PaletteColor, paletteColors } from "../project/colors";
 import { payloadField } from "../project/dialogs";
 import type { Command } from "../project/queries";
@@ -136,6 +137,9 @@ export function Inspector({
 }: InspectorProps) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
+  // Duplicate reads the server (plan note N71), which the page may not
+  // reach now, as offline (PRD FR-OFF-03 AC3).
+  const reachable = useServerReachable(doc);
   // The inspector's heading takes the focus as a button of the inspector
   // has it show another thing in place of what the button was of, as a
   // choice's Edit, which shows the connection's form, and which goes with
@@ -337,7 +341,7 @@ export function Inspector({
               the page's content as it goes; and it is offered while no
               copy, paste, or duplicate of the canvas is under way. */}
               <Button
-                disabled={tooMany || actions.busy}
+                disabled={tooMany || actions.busy || !reachable}
                 onClick={() => {
                   void actions.duplicate(nodes.map((n) => n.id));
                   toHeading();
@@ -352,6 +356,11 @@ export function Inspector({
                 {t("canvas.delete")}
               </Button>
             </div>
+            {!reachable && (
+              <p className="text-fg-muted">
+                {t("inspector.duplicate_offline")}
+              </p>
+            )}
           </section>
           {single !== undefined &&
             // Made anew for another node, under a key of its own, which the
