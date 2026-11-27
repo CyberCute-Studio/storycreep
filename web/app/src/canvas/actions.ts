@@ -183,6 +183,17 @@ export function useCanvasActions(
       return nodes.length > maxEdited ? Promise.resolve(false) : edit(nodes);
     };
     /**
+     * Reports whether the device's queue keeps changes that the document
+     * does not send, as once one of them came to need review while a copy or
+     * a report waited for the page's batches (ProjectDocument.sent), which
+     * the server's copy lacks: neither is asked then, as the controls say
+     * once it does (serverCopyWaits).
+     */
+    const lacksQueued = (): boolean => {
+      const now = doc.store.getState();
+      return now.holdsQueued && !now.sendsQueued;
+    };
+    /**
      * Copies the nodes of ids that the board has, at most maxEdited of
      * them, as many as a clipboard holds, and resolves with the clipboard
      * that the server answers with, or with undefined once it was refused,
@@ -192,7 +203,9 @@ export function useCanvasActions(
      * answered (ProjectDocument.sent), as the server copies what it has: a
      * node that the page has just added, moved, or changed, whose batch is
      * under way, would else be copied as it was before, or refused, and a
-     * node whose batch was refused meanwhile is not asked for.
+     * node whose batch was refused meanwhile is not asked for; and it asks
+     * nothing while the queue keeps changes that it does not send
+     * (lacksQueued).
      */
     const copyOf = async (
       ids: Iterable<string>,
@@ -205,12 +218,7 @@ export function useCanvasActions(
       }
       setRefusal(undefined);
       await doc.sent();
-      // Nor while the device's queue keeps changes that the document does
-      // not send, as once one before them came to need review meanwhile,
-      // which the server's copy lacks, as the controls say once it does
-      // (serverCopyWaits).
-      const now = doc.store.getState();
-      if (now.holdsQueued && !now.sendsQueued) {
+      if (lacksQueued()) {
         return undefined;
       }
       const nodes = nodesOf(asked).map((n) => n.id);
@@ -461,12 +469,18 @@ export function useCanvasActions(
        * answered (ProjectDocument.sent), as copyOf asks the copy, as the
        * server reports of what it has: an undo of a paste that created a
        * variable, under way, would else be reported as the variable that
-       * the project has still, and the paste after it sent without it.
+       * the project has still, and the paste after it sent without it. It
+       * asks nothing while the queue keeps changes that it does not send
+       * (lacksQueued), whose report would leave out what they create, as a
+       * variable, which the paste would create again.
        */
       resolve(clipboard: Clipboard): Promise<ClipboardReport | undefined> {
         return oneAtATime(async () => {
           setRefusal(undefined);
           await doc.sent();
+          if (lacksQueued()) {
+            return undefined;
+          }
           try {
             return await resolveClipboard(clipboard);
           } catch (error) {

@@ -1061,4 +1061,68 @@ describe("the canvas's clipboard offline", () => {
     await userEvent.keyboard("{Control>}c{/Control}");
     expect(bodiesOf(calls, "copyNodes")).toEqual([]);
   });
+
+  it("asks no paste's report once a change that the device's queue keeps comes to need review as the paste waits for it to be sent, which the server's report would lack", async () => {
+    globalThis.indexedDB = new IDBFactory();
+    const { nodes, connections } = quayAndDock();
+    // The server refuses the queued change for what it does, once the test
+    // says so.
+    let refuse = () => {};
+    let holding = false;
+    const calls = clipboardPage({
+      nodes,
+      connections,
+      apply: () =>
+        holding
+          ? new Promise<void>((_, reject) => {
+              refuse = () =>
+                reject(refused(422, { code: "validation_failed" }));
+            })
+          : Promise.resolve(),
+    });
+    const setOnline = (online: boolean) => {
+      vi.spyOn(navigator, "onLine", "get").mockReturnValue(online);
+      act(() => {
+        window.dispatchEvent(new Event(online ? "online" : "offline"));
+      });
+    };
+    const app = renderApp(
+      `/projects/${testProject.id}/boards/bd_a?node=nd_quay`,
+      {
+        session: testSession,
+        offline: { online: () => navigator.onLine },
+      },
+    );
+    await canvasOf("Harbour");
+    await userEvent.click(clipboardButton("Copy"));
+    await screen.findByText("1 node on the clipboard");
+    // A change made offline, on its way once the browser is online again,
+    // as Paste is pressed.
+    setOnline(false);
+    const doc = app.documents.get(testProject.id);
+    holding = true;
+    await act(() =>
+      doc.send([
+        {
+          type: "board.rename",
+          payload: { id: "bd_a", name: "Pier" },
+          expected_rev: { bd_a: 3 },
+        },
+      ]),
+    );
+    setOnline(true);
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    await userEvent.click(clipboardButton("Paste"));
+    await act(async () => {});
+    expect(bodiesOf(calls, "resolveClipboard")).toEqual([]);
+    refuse();
+    expect(
+      await screen.findByText(
+        "Copy, cut, paste, and duplicate wait until you decide what becomes of the changes that the server refused.",
+      ),
+    ).toBeDefined();
+    await act(async () => {});
+    expect(bodiesOf(calls, "resolveClipboard")).toEqual([]);
+    expect(batches(calls)).toHaveLength(1);
+  });
 });

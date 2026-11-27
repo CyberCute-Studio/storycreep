@@ -197,7 +197,7 @@ async function open(
   net: ReturnType<typeof connection>,
   session = testSession,
   queue: QueueStore | undefined = deviceQueue(db, { secure: true, locks }),
-  options: Pick<DocumentOptions, "realtime" | "random"> = {},
+  options: Pick<DocumentOptions, "realtime" | "random" | "storage"> = {},
 ) {
   const log = createErrorLog();
   const queryClient = createQueryClient(log);
@@ -2042,5 +2042,180 @@ describe("the device's queue of the page's batches", () => {
     expect(first?.id).not.toBe(later?.id);
     await db.close();
     await db2.close();
+  });
+
+  it("keeps for redo a change that undo took out of the queue where the server refused to have it put back for when it was sent, as with too many requests, unless another change was made meanwhile", async () => {
+    let refusal: (() => Promise<never>) | undefined;
+    let seq = testProject.seq;
+    const batches = serve(() => {
+      const refuse = refusal;
+      refusal = undefined;
+      if (refuse !== undefined) {
+        return refuse();
+      }
+      seq++;
+      return applied(seq, [{ id: "bd_a", rev: seq + 2 }]);
+    });
+    const net = connection(false);
+    const db = new OfflineDatabase();
+    const { doc } = await open(db, fakeLocks(), net);
+    await doc.send([rename("bd_a", "Quay", 3)]);
+    await doc.undo();
+    expect(shownName(doc)).toBe("Harbour");
+    net.set(true);
+    refusal = () => Promise.reject(refused(429, { code: "rate_limited" }));
+    await expect(doc.redo()).rejects.toMatchObject({ status: 429 });
+    expect(shownName(doc)).toBe("Harbour");
+    expect(doc.store.getState()).toMatchObject({
+      redoable: 1,
+      redoLocal: true,
+    });
+    // Refused again, once the page has made another change meanwhile,
+    // after which redo puts back nothing that undo took out before it.
+    let refuseNow = () => {};
+    refusal = () =>
+      new Promise<never>((_, reject) => {
+        refuseNow = () => reject(refused(429, { code: "rate_limited" }));
+      });
+    const redoing = doc.redo();
+    await vi.waitFor(() => expect(batches).toHaveLength(2));
+    const making = doc.send([rename("bd_a", "Pier", 3)]);
+    refuseNow();
+    await expect(redoing).rejects.toMatchObject({ status: 429 });
+    await expect(making).resolves.toMatchObject({ status: "applied" });
+    expect(doc.store.getState()).toMatchObject({
+      redoable: 0,
+      redoLocal: false,
+    });
+    expect(batches.map(nameOf)).toEqual(["Quay", "Quay", "Pier"]);
+    await db.close();
+  });
+
+  it("sends no step of the history kept over a reload before the batches that the queue kept, which the document is still taking as the step is asked for", async () => {
+    window.sessionStorage.clear();
+    onTestFinished(() => window.sessionStorage.clear());
+    let seq = testProject.seq;
+    const batches = serve(
+      () => {
+        seq++;
+        return applied(
+          seq,
+          [{ id: "bd_a", rev: seq + 2 }],
+          [renameBack("bd_a", "Harbour", seq + 2)],
+        );
+      },
+      () => seq,
+    );
+    const net = connection(true);
+    const locks = fakeLocks();
+    const db = new OfflineDatabase();
+    const first = await open(
+      db,
+      locks,
+      net,
+      testSession,
+      deviceQueue(db, { secure: true, locks }),
+      { storage: window.sessionStorage },
+    );
+    await first.doc.send([rename("bd_a", "Quay", 3)]);
+    net.set(false);
+    await first.doc.send([rename("bd_a", "Pier", 4)]);
+    // The tab reloads, online, and its database is slow to open, as one
+    // that another tab blocks.
+    first.doc.dispose();
+    await vi.waitFor(async () => expect(await locks.held()).toEqual(new Set()));
+    await db.close();
+    net.set(true);
+    const again = new OfflineDatabase();
+    const opening = again.open.bind(again);
+    let unblock = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      unblock = resolve;
+    });
+    vi.spyOn(again, "open").mockImplementation(async () => {
+      await blocked;
+      return opening();
+    });
+    const log = createErrorLog();
+    const queryClient = createQueryClient(log);
+    queryClient.setQueryData(sessionQuery.queryKey, testSession);
+    const doc = new ProjectDocument(testProject.id, {
+      queryClient,
+      log,
+      now: () => clock,
+      online: () => net.online,
+      onConnection: (listener) => net.listen(listener),
+      queue: deviceQueue(again, { secure: true, locks, wait: 60_000 }),
+      random: () => 0.01,
+      storage: window.sessionStorage,
+    });
+    onTestFinished(() => doc.dispose());
+    // The history kept over the reload offers its step at once.
+    expect(doc.store.getState().undoable).toBe(1);
+    const undoing = doc.undo();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    unblock();
+    await expect(undoing).resolves.toBe(false);
+    await until(doc, (s) => s.queued === 0);
+    expect(batches.map(nameOf)).toEqual(["Quay", "Pier"]);
+    // Whose undo is the latest step now.
+    expect(doc.undoesNext(seq)).toBe(true);
+    await again.close();
+  });
+
+  it("shows the batches that the keeper's document takes as a page asks for it once the page's read of a part that it holds resolves, as of a tab that closed meanwhile", async () => {
+    serve(() => applied(2, [{ id: "bd_a", rev: 4 }]));
+    const net = connection(false);
+    const locks = fakeLocks();
+    const hub = fakeBroadcast();
+    const log = createErrorLog();
+    const queryClient = createQueryClient(log);
+    queryClient.setQueryData(sessionQuery.queryKey, testSession);
+    const keeperDb = new OfflineDatabase();
+    const documents = new Documents({
+      queryClient,
+      log,
+      online: () => net.online,
+      onConnection: (listener) => net.listen(listener),
+      queue: deviceQueue(keeperDb, {
+        secure: true,
+        locks,
+        broadcast: hub.tab(),
+      }),
+    });
+    onTestFinished(() => documents.close());
+    // The tab that keeps the copies holds the project's document, which no
+    // page of it shows, with the tree read.
+    const kept = documents.get(testProject.id, true);
+    documents.acquire(kept, true);
+    await kept.ready;
+    await kept.load("tree");
+    const tabDb = new OfflineDatabase();
+    const editing = await open(
+      tabDb,
+      locks,
+      net,
+      testSession,
+      deviceQueue(tabDb, { secure: true, locks, broadcast: hub.tab() }),
+    );
+    await editing.doc.send([rename("bd_a", "Quay", 3)]);
+    // That tab closes.
+    editing.doc.dispose();
+    await vi.waitFor(async () => {
+      const held = await locks.held();
+      expect(
+        [...held].filter((name) => name.startsWith("storycreep-queue:")),
+      ).toHaveLength(1);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(shownName(kept)).toBe("Harbour");
+    // A page of the keeper's tab asks for the project, as its loader reads
+    // the tree, which the document holds.
+    const doc = documents.get(testProject.id);
+    await doc.load("tree");
+    expect(shownName(doc)).toBe("Quay");
+    expect(doc.store.getState().queued).toBe(1);
+    await keeperDb.close();
+    await tabDb.close();
   });
 });

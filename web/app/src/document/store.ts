@@ -1071,6 +1071,8 @@ export class ProjectDocument {
     depth: number;
     entry: Entry;
   }[] = [];
+  /** Counts the page's changes of the history's that send was asked for, after each of which redo puts back nothing that undo took out of the queue before it (putBack). */
+  private changesMade = 0;
   /** The timer of the queue's next try, while the server gives no answer, or refuses for when it was asked. */
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   /**
@@ -1764,8 +1766,9 @@ export class ProjectDocument {
 
   /**
    * Reads part of the project, once, and keeps it current from then on,
-   * resolving once it has; a part being read resolves with that read. A
-   * read that fails takes the part out again, so that the next asks anew.
+   * resolving once it has, and has taken the batches of the device's queue
+   * that it takes; a part being read resolves with that read. A read that
+   * fails takes the part out again, so that the next asks anew.
    * Where kept says so, a board's content is read for the device's copy of
    * the project alone, as the keeper's download reads it, until a page asks
    * for it too (keptOnly).
@@ -1776,7 +1779,18 @@ export class ProjectDocument {
     }
     const loading = this.loads.get(part);
     if (loading !== undefined) {
-      return loading;
+      // A part that the document holds, as one read before, or of the
+      // device's copy, resolves once the document has taken the batches of
+      // the device's queue that it is taking, if any, as the first read of a
+      // part does (whenReady), which the page shows on top of it: once a page
+      // asks again for a document that the keeper of the copies alone held,
+      // as a board made offline in a tab that closed meanwhile, whose page
+      // would else say that there is none (readBoard).
+      return this.adopting === undefined && this.retaking === undefined
+        ? loading
+        : Promise.all([loading, this.adopting, this.retaking]).then(
+            () => undefined,
+          );
     }
     if (kept && part.startsWith("board:")) {
       this.keptOnly.add(part);
@@ -3211,9 +3225,12 @@ export class ProjectDocument {
   ): Promise<SendResult> {
     // A new change, after which what undo took out of the device's queue is
     // not put back (AC4).
-    if (options.history !== false && this.withdrawn.length > 0) {
-      this.withdrawn = [];
-      this.queueChanged();
+    if (options.history !== false) {
+      this.changesMade++;
+      if (this.withdrawn.length > 0) {
+        this.withdrawn = [];
+        this.queueChanged();
+      }
     }
     return this.sendTracked(commands, options);
   }
@@ -3536,14 +3553,35 @@ export class ProjectDocument {
     return true;
   }
 
-  /** Puts the batch that undo took out of the device's queue last back, as a change of the page's anew, resolving once it is queued or answered. */
+  /**
+   * Puts the batch that undo took out of the device's queue last back, as a
+   * change of the page's anew, resolving once it is queued or answered. One
+   * refused for when it was sent, as with too many requests, or that the
+   * device refused to keep, as for its quota, may be put back later: redo
+   * puts it back still, as the history keeps a step refused so (stepped),
+   * unless the page has made another change meanwhile (send); one refused
+   * for what it does would be refused again.
+   */
   private async putBack(): Promise<boolean> {
     const batch = this.withdrawn.pop();
     if (batch === undefined) {
       return false;
     }
+    const made = this.changesMade;
     this.queueChanged();
-    await this.sendTracked(batch.commands, { history: batch.history });
+    try {
+      await this.sendTracked(batch.commands, { history: batch.history });
+    } catch (error) {
+      if (
+        !refusedForGood(error) &&
+        !this.disposed &&
+        this.changesMade === made
+      ) {
+        this.withdrawn.push(batch);
+        this.queueChanged();
+      }
+      throw error;
+    }
     return true;
   }
 
@@ -3640,6 +3678,14 @@ export class ProjectDocument {
       // be refused for it, and dropped, with the steps before it, which
       // expect what it undoes. Those made after wait for it (sendAfterSteps).
       await Promise.allSettled(earlier);
+      // So do the batches that the device's queue kept before the page
+      // loaded, which the document may still be taking as the step is asked
+      // for, as the history kept over a reload offers it at once: the step
+      // waits until it has taken them (adoptQueue), rather than be sent
+      // before them, as the latest change, or ahead of the one of them that
+      // undo would take out of the queue. Those that it takes after, as of
+      // a tab that closes, come after the step (adoptMore).
+      await this.adoptQueue();
       // One that the device's queue kept meanwhile, as no answer came to it,
       // comes before the step still, which waits for it, as step does.
       if (this.holdsQueued()) {
