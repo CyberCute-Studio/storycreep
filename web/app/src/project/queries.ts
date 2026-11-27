@@ -9,6 +9,7 @@
 import {
   ApiError,
   type GrantBody,
+  NetworkError,
   type Node,
   type PageTrashItemBody,
   type ProjectBody,
@@ -18,11 +19,19 @@ import {
   queryOptions,
   useMutation,
 } from "@tanstack/react-query";
-import { allAtOnce, api, everyPage, pagedQuery } from "../api";
+import {
+  allAtOnce,
+  api,
+  everyPage,
+  pagedQuery,
+  readOffline,
+  sessionQuery,
+} from "../api";
 import type { Part } from "../document/doc";
 import type { Documents } from "../document/documents";
 import { useProjectDocument } from "../document/react";
 import type { Command, ProjectDocument } from "../document/store";
+import { orKept } from "../offline/kept";
 import { found } from "../shell/found";
 
 export type { Command } from "../document/store";
@@ -33,14 +42,38 @@ export function projectQuery(projectId: string) {
     queryKey: ["projects", projectId],
     // A project that the user may not see shows the page of no page.
     meta: { showsRefusals: true },
-    queryFn: async ({ signal }): Promise<ProjectBody> =>
-      (
-        await api.call(
-          "getProject",
-          { path: { project_id: projectId } },
-          { signal },
-        )
-      ).body,
+    // A page that the server does not answer, as offline, reads the project
+    // of the device's copy of it, with the role that the account had on it,
+    // where the device keeps one (PRD FR-OFF-02), but for a read of the
+    // project that the page holds as of the copy's seq or past it, as one
+    // that the document has followed since the copy was written, which it
+    // keeps.
+    queryFn: ({ signal, client }): Promise<ProjectBody> =>
+      orKept(
+        client,
+        async () =>
+          (
+            await api.call(
+              "getProject",
+              { path: { project_id: projectId } },
+              { signal },
+            )
+          ).body,
+        async (kept) => {
+          const userId = client.getQueryData(sessionQuery.queryKey)?.user_id;
+          const copy =
+            userId === undefined
+              ? undefined
+              : await kept.project(userId, projectId);
+          const held = client.getQueryData(projectQuery(projectId).queryKey);
+          return copy !== undefined &&
+            held !== undefined &&
+            held.seq >= copy.seq
+            ? held
+            : copy;
+        },
+      ),
+    ...readOffline,
   });
 }
 
@@ -85,24 +118,55 @@ export async function loadParts(
  * does not keep current, while it is not live, may not have the board yet,
  * as one that another session made since, so it reads the project anew
  * before it says that there is none, and rejects with what that read failed
- * with, rather than say so after a read that failed.
+ * with, rather than say so after a read that failed. Where current says so,
+ * as the start page's, which opens the board that the device showed last,
+ * the project is read anew, and a document that started from the device's
+ * copy of the project, and is behind that read, is brought up to date
+ * first, while the browser is online, as the copy may hold a board deleted
+ * since, which the page would otherwise open, until the channel had
+ * brought its deletion (PRD FR-OFF-02); one that started as of that read
+ * is the server's, as a document starts from a copy behind the project's
+ * seq only offline. The board's own page shows the copy at once, and says
+ * that the board is gone once the channel has brought that. While the
+ * browser has no connection, the document reads nothing anew, and a board
+ * that it does not have may be one made since its copy was written, which
+ * the device cannot tell from one that is gone: it rejects with a
+ * NetworkError then, as a read that got no answer, rather than say that
+ * there is none.
  */
 export async function readBoard(
   context: ProjectReads,
   projectId: string,
   boardId: string,
   read: <T>(read: Promise<T>) => Promise<T> = (r) => r,
+  current = false,
 ): Promise<ProjectDocument | undefined> {
   const project = await read(
-    context.queryClient.ensureQueryData(projectQuery(projectId)),
+    current
+      ? context.queryClient.fetchQuery({
+          ...projectQuery(projectId),
+          staleTime: 0,
+        })
+      : context.queryClient.ensureQueryData(projectQuery(projectId)),
   );
   const doc = context.documents.get(project.id);
   await read(doc.load("tree"));
+  if (current && doc.fromCopy && doc.doc.seq < project.seq) {
+    await doc.refresh("tree").catch(() => undefined);
+  }
   const has = () => doc.store.getState().view.boards.has(boardId);
   if (!has()) {
     await doc.refresh();
   }
-  return has() ? doc : undefined;
+  if (has()) {
+    return doc;
+  }
+  if (!doc.isOnline()) {
+    throw new NetworkError(
+      new Error("The device's copy of the project does not have the board."),
+    );
+  }
+  return undefined;
 }
 
 /**

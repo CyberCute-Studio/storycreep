@@ -1,10 +1,11 @@
-import type { Board } from "@storycreep/shared/api";
+import { type Board, NetworkError } from "@storycreep/shared/api";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import {
   createFileRoute,
   Link,
   notFound,
   useNavigate,
+  useRouter,
 } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -27,6 +28,8 @@ import { BoardBadge } from "../dependencies/BoardBadge";
 import { boardPart } from "../document/doc";
 import { useBoard, useProjectDocument, useTree } from "../document/react";
 import type { ProjectDocument } from "../document/store";
+import { NeedsConnection } from "../offline/OfflinePages";
+import { online, useOnline } from "../offline/online";
 import { followsFlow, playSessionOf } from "../play/session";
 import { colorName, paletteColors } from "../project/colors";
 import { DeleteBoardDialog, payloadField } from "../project/dialogs";
@@ -158,14 +161,20 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
   // reads too before it opens the board: the page of no page where the
   // server has none of either for the user, or the tree no such board, and
   // otherwise what a read failed with, rather than say that there is no
-  // board after a read that failed.
+  // board after a read that failed. Offline, a board that the device's copy
+  // of the project does not have, as one made since it was written, is one
+  // that the page needs a connection for (readBoard), which it says, and
+  // reads once the browser is online again.
   loader: async ({ context, params }) => {
-    const doc = await readBoard(
-      context,
-      params.projectId,
-      params.boardId,
-      found,
-    );
+    let doc: ProjectDocument | undefined;
+    try {
+      doc = await readBoard(context, params.projectId, params.boardId, found);
+    } catch (error) {
+      if (error instanceof NetworkError && !online()) {
+        return { doc: undefined, read: undefined };
+      }
+      throw error;
+    }
     if (doc === undefined) {
       throw notFound();
     }
@@ -209,6 +218,16 @@ function BoardPage() {
   // anew since, as once the session was of another account.
   const loaded = Route.useLoaderData();
   const read = loaded.doc === doc ? loaded.read : undefined;
+  // A board that the loader did not find offline is read once the browser
+  // is online again, which says whether there is one.
+  const connected = useOnline();
+  const readOffline = loaded.doc === undefined;
+  const router = useRouter();
+  useEffect(() => {
+    if (connected && readOffline) {
+      void router.invalidate();
+    }
+  }, [connected, readOffline, router]);
   // While the board's deletion is open, the board is shown as it was, as
   // the document takes it away at once, once its deletion is sent, so that
   // the dialog stays, and says what became of the deletion, after which the
@@ -219,9 +238,10 @@ function BoardPage() {
     last.current = board;
   }
   const shown = board ?? (deleting ? last.current : undefined);
-  return shown === undefined ? (
-    <NotFound />
-  ) : (
+  if (shown === undefined) {
+    return readOffline ? <NeedsConnection /> : <NotFound />;
+  }
+  return (
     <BoardContent
       projectId={projectId}
       doc={doc}

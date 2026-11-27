@@ -4,14 +4,21 @@ import {
   Link,
   Outlet,
   useChildMatches,
+  useLocation,
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { Activity, useEffect, useEffectEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { requireSession } from "../auth/session";
 import { useCommandHandlers } from "../commands/registry";
 import { useDocumentState, useProjectDocument } from "../document/react";
+import {
+  NeedsConnection,
+  OfflineNotice,
+  offlinePages,
+} from "../offline/OfflinePages";
+import { useOnline } from "../offline/online";
 import { HistoryOwned, LayoutHistory } from "../project/History";
 import { editsProject, managesProject, projectQuery } from "../project/queries";
 import { askSearchFocus, forgetSearchFocus } from "../search/focus";
@@ -102,6 +109,70 @@ function ProjectPages({ projectId }: { projectId: string }) {
   });
   const navigate = useNavigate();
   const router = useRouter();
+  // The project is the last that the account opened on the device, which
+  // the device keeps offline (PRD FR-OFF-02), but for a run of the canvas's
+  // benchmark, which the download would compete with, as it records nothing
+  // of what the device showed last either (lastOpened.ts): as its pages
+  // open, and not as its name changes, as by a rename that another session
+  // made, which would else make a project that a tab in the background
+  // shows the one opened last, in place of the one that the user opened in
+  // another since (the copy's write names the pin anew, OfflineDatabase).
+  const keeper = router.options.context.offline;
+  const benchRun = useLocation({
+    select: (l) => (l.search as { bench?: unknown }).bench !== undefined,
+  });
+  const markOpened = useEffectEvent((id: string) => {
+    keeper?.opened(id, project.name);
+  });
+  useEffect(() => {
+    if (!benchRun) {
+      markOpened(projectId);
+    }
+  }, [projectId, benchRun]);
+  // Offline, a page that reads the server alone says that it needs a
+  // connection, in place of a page that would wait for it.
+  const connected = useOnline();
+  const offlinePage = useChildMatches({
+    select: (matches) => matches.some((m) => offlinePages.has(m.routeId)),
+  });
+  // A page of the server's that loaded offline, whose loader read nothing,
+  // reads once the browser is online again, and is shown once it has read,
+  // rather than before, as its loader's checks would not have run yet: the
+  // page says that it needs a connection meanwhile. One that was shown as
+  // the connection went is kept, hidden, while it is the page asked for,
+  // and shown again as it was, with what the user typed in it, as a
+  // project's description in its settings, rather than made anew (held).
+  const pathname = useLocation({ select: (l) => l.pathname });
+  const [readOffline, setReadOffline] = useState(!connected);
+  const [held, setHeld] = useState<string>();
+  if (!connected && !readOffline) {
+    setReadOffline(true);
+    setHeld(offlinePage ? undefined : pathname);
+  }
+  if (held !== undefined && held !== pathname) {
+    setHeld(undefined);
+  }
+  const shown = offlinePage || (connected && !readOffline);
+  useEffect(() => {
+    if (!connected || !readOffline) {
+      return;
+    }
+    if (offlinePage) {
+      setReadOffline(false);
+      return;
+    }
+    let current = true;
+    const done = () => {
+      if (current) {
+        setReadOffline(false);
+        setHeld(undefined);
+      }
+    };
+    void router.invalidate().then(done, done);
+    return () => {
+      current = false;
+    };
+  }, [connected, readOffline, offlinePage, router]);
   // The focus that the search's command asked for its page is forgotten
   // once a page that is not the search's has been shown in its place, as
   // one whose navigation overtook the search's, or once the project's
@@ -303,8 +374,14 @@ function ProjectPages({ projectId }: { projectId: string }) {
               : t("project.archived")}
           </p>
         )}
+        {!connected && <OfflineNotice projectId={projectId} />}
       </div>
-      <Outlet />
+      {!shown && <NeedsConnection />}
+      {(shown || held === pathname) && (
+        <Activity mode={shown ? "visible" : "hidden"}>
+          <Outlet />
+        </Activity>
+      )}
     </div>
   );
 }

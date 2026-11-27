@@ -31,6 +31,14 @@ import type {
  */
 export type Project = Omit<ProjectBody, "role" | "seq">;
 
+/** Returns the project of body, as the document holds it. */
+export function projectOf(
+  body: { role?: unknown; seq?: unknown } & Project,
+): Project {
+  const { role: _role, seq: _seq, ...project } = body;
+  return project as Project;
+}
+
 /**
  * A component, as the document holds it: as the list of the project's
  * components answers it, without its description and its attributes' values,

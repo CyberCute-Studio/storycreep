@@ -1,5 +1,8 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
+import { OfflineSwitch } from "../offline/OfflineSwitch";
+import { useKeeper } from "../offline/react";
 import { BoardTree } from "../project/BoardTree";
 import { editsProject, loadParts, projectQuery } from "../project/queries";
 import { Page } from "../ui/Page";
@@ -21,8 +24,11 @@ export const Route = createFileRoute("/projects/$projectId/")({
 });
 
 // A project's boards, in the tree of their folders (PRD FR-PROJ-02), which
-// an editor changes, while the project is not archived (FR-PROJ-01 AC2).
+// an editor changes, while the project is not archived (FR-PROJ-01 AC2),
+// and the switch that keeps the project on the device (FR-OFF-02).
 function Boards() {
+  const { t } = useTranslation();
+  const keeper = useKeeper();
   const { projectId } = Route.useParams();
   const project = useSuspenseQuery(projectQuery(projectId)).data;
   const editable =
@@ -35,6 +41,18 @@ function Boards() {
         </p>
       )}
       <BoardTree project={project} editable={editable} />
+      {/* Below the tree, as the end of the project's page, so that nothing
+          above the content of the project's pages moves as what it says of
+          the device's copy changes (PRD FR-OFF-02); on a page that has a
+          keeper of what the device keeps, as every page but a test's. */}
+      {keeper !== undefined && (
+        <section aria-labelledby="offline-heading" className="space-y-2">
+          <h2 id="offline-heading" className="text-xl font-semibold">
+            {t("offline.section")}
+          </h2>
+          <OfflineSwitch projectId={projectId} name={project.name} />
+        </section>
+      )}
     </Page>
   );
 }

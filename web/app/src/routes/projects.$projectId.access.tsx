@@ -19,6 +19,7 @@ import {
   roleName,
 } from "../auth/roles";
 import { csrfHeaders } from "../auth/session";
+import { online } from "../offline/online";
 import { grantsQuery, projectQuery } from "../project/queries";
 import { found } from "../shell/found";
 import { Button, MoreButton } from "../ui/Button";
@@ -34,6 +35,11 @@ import {
 
 export const Route = createFileRoute("/projects/$projectId/access")({
   loader: async ({ context: { queryClient }, params }) => {
+    // Offline, the project's pages say that this page needs a connection, in
+    // its place, rather than wait for its reads (offline/OfflinePages.tsx).
+    if (!online()) {
+      return;
+    }
     const project = await found(
       queryClient.ensureQueryData(projectQuery(params.projectId)),
     );

@@ -34,6 +34,10 @@ import type { Realtime } from "../document/realtime";
 import { ErrorConsoleProvider } from "../errors/ErrorConsole";
 import { createErrorLog } from "../errors/log";
 import { createAppI18n } from "../i18n";
+import { copySource, OfflineDatabase } from "../offline/db";
+import { OfflineKeeper } from "../offline/keeper";
+import { keepReads } from "../offline/kept";
+import { onConnection } from "../offline/online";
 import type { AppShell } from "../pwa/worker";
 import { parseSearch } from "../router";
 import { routeTree } from "../routeTree.gen";
@@ -94,6 +98,13 @@ export interface RenderAppOptions {
   realtime?: Realtime;
   /** The page's side of the app's service worker, as a fake (FR-OFF-01); none if not set. */
   pwa?: AppShell;
+  /**
+   * Whether the page keeps projects offline (FR-OFF-02), over the IndexedDB
+   * that the test gives, as fake-indexeddb's: a secure context's unless it
+   * says otherwise, whose browser has a connection while online says so;
+   * none if not set.
+   */
+  offline?: { secure?: boolean; online?: () => boolean };
 }
 
 /**
@@ -139,13 +150,48 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
   // The page's documents, without a real-time channel unless the test
   // gives one, so that its pages follow their projects through their own
   // batches alone.
+  const secure = options.offline?.secure ?? true;
+  const connected = options.offline?.online ?? (() => true);
+  const offlineDb =
+    options.offline === undefined ? undefined : new OfflineDatabase();
   const documents = new Documents({
     queryClient,
     realtime: options.realtime,
     log,
     checkSession: () => void follower.check(),
     storage: window.sessionStorage,
+    copies: offlineDb === undefined ? undefined : copySource(offlineDb, secure),
+    online: connected,
   });
+  const offline =
+    offlineDb === undefined
+      ? undefined
+      : new OfflineKeeper({
+          queryClient,
+          documents,
+          log,
+          db: offlineDb,
+          secure,
+          online: connected,
+          onConnection: (listener) => onConnection(listener),
+          lock: (write) => void write(),
+          storage: { persist: async () => true },
+          writeDelay: 0,
+          retryDelay: 50,
+        });
+  if (offline !== undefined) {
+    if (secure) {
+      keepReads(queryClient, offline.reads);
+    }
+    offline.start();
+    // The keeper's change under way is let finish, and none after it begins,
+    // before the database is closed, which a change would else open again.
+    onTestFinished(async () => {
+      offline.stop();
+      await offline.idle();
+      await offlineDb?.close();
+    });
+  }
   // The documents go after the setup has cleared the tab's storage for the
   // next test, which each writes what its history recorded to as it goes
   // (History.close): it is cleared again once they have.
@@ -164,6 +210,7 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
       documents,
       realtime: options.realtime,
       pwa: options.pwa,
+      offline,
     },
     // The address's values read as the app reads them.
     parseSearch,
@@ -184,5 +231,15 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
       </QueryClientProvider>
     </I18nextProvider>,
   );
-  return { ...view, queryClient, i18n, router, checkSession, log, documents };
+  return {
+    ...view,
+    queryClient,
+    i18n,
+    router,
+    checkSession,
+    log,
+    documents,
+    offline,
+    offlineDb,
+  };
 }

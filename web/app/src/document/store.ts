@@ -29,6 +29,7 @@ import {
   type BranchOutput,
   type CommandBody,
   type CommandResultBody,
+  NetworkError,
   type ProjectBody,
   type UndoCommandBody,
 } from "@storycreep/shared/api";
@@ -69,6 +70,7 @@ import {
   type Project,
   partOf,
   placeOf,
+  projectOf,
   typeOfAttribute,
 } from "./doc";
 import { Follower } from "./follow";
@@ -500,12 +502,39 @@ export interface DocumentOptions {
   storage?: Storage;
   /** Returns the time now, as the server writes it. */
   now?: () => string;
+  /**
+   * The device's copies of the projects that the account keeps offline
+   * (PRD FR-OFF-02, offline/keeper.ts), which the document starts from
+   * where the device has one (start); none if not set.
+   */
+  copies?: CopySource;
+  /**
+   * Reports whether the browser says that it has a connection, as
+   * navigator.onLine does, without which the document reads nothing anew
+   * (refresh); always, if not set.
+   */
+  online?: () => boolean;
 }
 
-/** Returns the project of body, as the document holds it. */
-function projectOf(body: { role?: unknown; seq?: unknown } & Project): Project {
-  const { role: _role, seq: _seq, ...project } = body;
-  return project as Project;
+/** A copy of a project that the device keeps, as a document starts from it (PRD FR-OFF-02). */
+export interface StartingCopy {
+  /** The document as of the copy's seq, holding the parts that the copy holds. */
+  doc: Doc;
+  /** The token of the copy's write, which the next write of it compares with the one that it was made on (offline/db.ts). */
+  version: string;
+  /** About how many bytes the copy takes. */
+  bytes: number;
+}
+
+/** Where a document finds the copy of its project that the device keeps (DocumentOptions.copies). */
+export interface CopySource {
+  /** Resolves to the seq of the copy of projectId that the device keeps for userId, without its entities, or to undefined for none, without rejecting. */
+  seqOf(userId: string, projectId: string): Promise<number | undefined>;
+  /** Resolves to that copy, or to undefined for none, without rejecting. */
+  readCopy(
+    userId: string,
+    projectId: string,
+  ): Promise<StartingCopy | undefined>;
 }
 
 /**
@@ -765,6 +794,34 @@ export class ProjectDocument {
   private readonly comments: Follower;
   private unsubscribe: (() => void) | undefined;
   private disposed = false;
+  /** Whether the document started from the copy of the project that the device keeps (start). */
+  private copied = false;
+  /**
+   * The copy that the document started from, until the keeper takes it as
+   * what its first write of the copy is made on (takeCopy), or the document
+   * holds something else (show), after which the document holds it no
+   * longer, as it would else hold the project as it was then for as long
+   * as the document is kept.
+   */
+  private startedFrom: StartingCopy | undefined;
+  /**
+   * The boards whose content the document holds for the device's copy of
+   * the project alone, as the keeper's download read them (load's kept), or
+   * the copy that the document started from held them, which no page has
+   * asked for since: a reading anew of the project reads anew, at once,
+   * those that the pages asked for, and lets these go, which the keeper's
+   * download reads again, at its pace (reload, offline/keeper.ts).
+   */
+  private readonly keptOnly = new Set<Part>();
+  /** Whether the real-time channel has been live since the document subscribed. */
+  private wasLive = false;
+  /**
+   * Settles once the channel of a document that started from the device's
+   * copy is live, or a while after the document subscribed, whichever comes
+   * first (start), which the document's readings anew wait for, once, as
+   * the channel brings what changed since the copy's seq (refresh).
+   */
+  private liveWait: Promise<void> | undefined;
 
   constructor(projectId: string, options: DocumentOptions) {
     this.projectId = projectId;
@@ -823,6 +880,53 @@ export class ProjectDocument {
     return this.confirmed;
   }
 
+  /** Whether the document started from the copy of the project that the device keeps, rather than from the server alone. */
+  get fromCopy(): boolean {
+    return this.copied;
+  }
+
+  /**
+   * Returns the copy of the project that the device keeps that the document
+   * started from, once, for the keeper's first write of the copy to be made
+   * on (offline/keeper.ts), after which the document holds it no longer; or
+   * undefined, where it started from the server alone, or the copy has been
+   * taken, or the document has changed since (show).
+   */
+  takeCopy(): StartingCopy | undefined {
+    const copy = this.startedFrom;
+    this.startedFrom = undefined;
+    return copy;
+  }
+
+  /**
+   * Reports whether the document has read the project, and has nothing left
+   * to read from the server of what it holds: no part, component, or entity
+   * that a read, or a reading anew, is under way of, or waits to be read, as
+   * one whose change an operation's appliers could not know, which it holds
+   * at the operation's revision, as they predicted it, until the read has
+   * corrected it; and it has the operations up to the seq that its
+   * subscription held as of, which the channel sends once it is live, so
+   * that a document that is catching up is not taken for the server's as of
+   * an operation on the way. What the document holds then is what the
+   * server had as of its seq, which the device's copy of it may be written
+   * of (offline/keeper.ts).
+   */
+  get settled(): boolean {
+    return (
+      this.started &&
+      !this.startFailed &&
+      !this.disposed &&
+      this.buffer === undefined &&
+      this.resyncing === undefined &&
+      this.confirmed.seq >= this.subscribedTo &&
+      this.partReads === 0 &&
+      this.seqChecks === 0 &&
+      this.toRead.size === 0 &&
+      !this.reading &&
+      this.rereads.size === 0
+    );
+  }
+
   /** Reads the project, as start does, and records once it has, or has failed to. */
   private begin(): Promise<void> {
     const starting = this.start();
@@ -877,13 +981,81 @@ export class ProjectDocument {
   }
 
   private async start(): Promise<void> {
-    const body = await this.options.queryClient.ensureQueryData(
+    // The copy of the project that the device keeps, where it keeps one
+    // (PRD FR-OFF-02), which the document starts from, holding every part
+    // that it holds as of its seq, whose operations since the channel
+    // brings, as it does those of a document that the socket missed, rather
+    // than have the parts read anew: where the copy is as of the project's
+    // seq, as of a project that has not changed since it was written, and,
+    // while the browser has no connection, of any seq before. Online, a copy
+    // behind the project's seq is not used: the document reads the project
+    // from the server, as without a copy, rather than bring the copy up to
+    // it. A copy of a seq past the project's is of what the server no longer
+    // has, as a database restored from an older backup, and is passed over.
+    // The copy's seq is read alone first, while the project is, which tells
+    // whether the copy is used, and the whole of it only where it is, so
+    // that a copy passed over costs the start no read of its entities,
+    // which the browser would hand the page as it loads, for nothing.
+    const userId = this.userId;
+    const copies = this.options.copies;
+    const peeking =
+      userId === undefined || copies === undefined
+        ? undefined
+        : copies.seqOf(userId, this.projectId).catch(() => undefined);
+    let body = await this.options.queryClient.ensureQueryData(
       projectQuery(this.projectId),
     );
+    const seq = await peeking;
+    // The read of the project that the query client holds may be older than
+    // the copy, as one kept from before another tab wrote it, whose seq the
+    // client's read does not follow but as the project itself changes
+    // (projectFollowed): the project is read anew before the copy is passed
+    // over, which, offline, gives the copy's own (offline/kept.ts).
+    if (seq !== undefined && seq > body.seq && !this.disposed) {
+      const held = body;
+      body = await this.options.queryClient
+        .fetchQuery({ ...projectQuery(this.projectId), staleTime: 0 })
+        .catch(() => held);
+    }
     if (this.disposed) {
       return;
     }
-    this.confirmed = { ...emptyDoc(body.seq), project: projectOf(body) };
+    const used =
+      seq !== undefined &&
+      (seq === body.seq || (seq < body.seq && !this.isOnline()));
+    const copy =
+      used && userId !== undefined && copies !== undefined
+        ? await copies.readCopy(userId, this.projectId).catch(() => undefined)
+        : undefined;
+    if (this.disposed) {
+      return;
+    }
+    // The copy that the whole read found is of the seq that the start
+    // decided on, unless another tab wrote it anew between the two reads.
+    if (
+      copy !== undefined &&
+      copy.doc.project?.id === this.projectId &&
+      copy.doc.seq === seq
+    ) {
+      this.copied = true;
+      this.startedFrom = copy;
+      this.confirmed = copy.doc;
+      // A part that a page asked for meanwhile waits for this, and finds
+      // that the document holds it (load); a board that none has asked for
+      // is held for the copy alone, until one does (keptOnly).
+      for (const part of copy.doc.parts) {
+        if (!this.loads.has(part)) {
+          const read = Promise.resolve();
+          this.loads.set(part, read);
+          this.finished.add(read);
+          if (part.startsWith("board:")) {
+            this.keptOnly.add(part);
+          }
+        }
+      }
+    } else {
+      this.confirmed = { ...emptyDoc(body.seq), project: projectOf(body) };
+    }
     // A read of the project as of a seq before the steps of the history, kept
     // over a reload, may be one that the query client kept from before them,
     // or of a database restored from an older backup since, behind them,
@@ -943,6 +1115,8 @@ export class ProjectDocument {
         // once the socket is back, are not sent again.
         if (!live) {
           this.answeredAt.clear();
+        } else {
+          this.wasLive = true;
         }
         this.store.setState({ live });
         // The answers to the page's batches past what the document has, as
@@ -972,6 +1146,36 @@ export class ProjectDocument {
     // An undo that waits for the document to have the operations up to the
     // batch that it undoes, as of a history kept over a reload, has them.
     this.settle();
+    // A part's reading anew waits for the channel once, which brings what
+    // changed since the copy's seq (refresh).
+    if (this.copied) {
+      this.liveWait = this.whenLive(confirmWait);
+    }
+  }
+
+  /**
+   * Resolves once the real-time channel is live, or has been since the
+   * document subscribed, or after wait milliseconds, whichever comes first,
+   * leaving no timer, nor listener, behind (whenConfirmed).
+   */
+  private whenLive(wait: number): Promise<void> {
+    if (this.wasLive || this.store.getState().live) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      let stop = () => {};
+      const done = () => {
+        stop();
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(done, wait);
+      stop = this.store.subscribe((state) => {
+        if (state.live || this.disposed) {
+          done();
+        }
+      });
+    });
   }
 
   /**
@@ -997,11 +1201,20 @@ export class ProjectDocument {
    * Reads part of the project, once, and keeps it current from then on,
    * resolving once it has; a part being read resolves with that read. A
    * read that fails takes the part out again, so that the next asks anew.
+   * Where kept says so, a board's content is read for the device's copy of
+   * the project alone, as the keeper's download reads it, until a page asks
+   * for it too (keptOnly).
    */
-  load(part: Part): Promise<void> {
+  load(part: Part, kept = false): Promise<void> {
+    if (!kept) {
+      this.keptOnly.delete(part);
+    }
     const loading = this.loads.get(part);
     if (loading !== undefined) {
       return loading;
+    }
+    if (kept && part.startsWith("board:")) {
+      this.keptOnly.add(part);
     }
     this.partReads++;
     // A read that fails takes out the part, unless an operation has taken
@@ -1014,6 +1227,12 @@ export class ProjectDocument {
       const watcher = this.watch(this.confirmed.seq);
       try {
         await this.whenReady();
+        // The device's copy that the document started from holds the part,
+        // as a page asked for it before the copy had been read, which the
+        // document keeps current from then on.
+        if (this.copied && this.confirmed.parts.has(part)) {
+          return;
+        }
         const since = this.confirmed.seq;
         watcher.since = since;
         generation = this.generation;
@@ -1052,6 +1271,7 @@ export class ProjectDocument {
         }
         if (this.loads.get(part) === load) {
           this.loads.delete(part);
+          this.keptOnly.delete(part);
           this.confirmed = withParts(this.confirmed, [], [part]);
           this.show();
         }
@@ -1089,10 +1309,26 @@ export class ProjectDocument {
    * opened, and resolves once it has, or has failed to, which has the
    * project read anew, and records it (readFailed). The document is busy
    * meanwhile, so that it is not dropped under the loader that waits.
+   * While the browser has no connection, it reads nothing, and resolves at
+   * once: what the document holds, as the device's copy of the project, is
+   * what there is to show, and the channel brings what changed once the
+   * browser is online again (PRD FR-OFF-02). A document that started from
+   * the copy waits for the channel first, which brings what changed since
+   * the copy's seq, rather than read the part anew because the socket is
+   * still being opened, as while the page loads: until it is live, or a
+   * while after the document subscribed, once (liveWait), so that a channel
+   * that never is, as behind a proxy that refuses the socket, does not
+   * hold up every reading anew after.
    */
   async refresh(part?: Part): Promise<void> {
+    if (!this.isOnline()) {
+      return;
+    }
     this.refreshes++;
     try {
+      if (this.liveWait !== undefined && this.options.realtime !== undefined) {
+        await this.liveWait;
+      }
       if (this.store.getState().live && this.buffer === undefined) {
         await this.whenConfirmed(this.subscribedTo, confirmWait);
         // The project read anew meanwhile, as once the server's seq went back
@@ -1395,6 +1631,7 @@ export class ProjectDocument {
     // not ask for it.
     for (const part of reconciled.dropped) {
       this.loads.delete(part);
+      this.keptOnly.delete(part);
     }
     const before = this.confirmed.project;
     this.confirmed = reconciled.doc;
@@ -1666,6 +1903,17 @@ export class ProjectDocument {
    * what it applies on top of has changed too (Waiting.shown).
    */
   private show(): void {
+    // The copy that the document started from is let go once the document
+    // holds something else, as in a tab whose keeper does not write the
+    // copies, which would else hold the project as it was then for as long
+    // as the document is kept: a first write made on it then writes the
+    // whole document (takeCopy).
+    if (
+      this.startedFrom !== undefined &&
+      this.startedFrom.doc !== this.confirmed
+    ) {
+      this.startedFrom = undefined;
+    }
     let view = this.confirmed;
     for (const entry of this.entries) {
       view = shownOn(
@@ -1905,10 +2153,15 @@ export class ProjectDocument {
       // with the others, as the document read anew would otherwise not hold
       // it, and pass over what its own read found. The parts are read a few
       // at a time, rather than one after another, as of a session that has
-      // opened many boards.
+      // opened many boards. A board held for the device's copy alone is not
+      // (keptOnly): the keeper's download reads it again, at its pace, once
+      // the document read anew no longer holds it, rather than have every
+      // board of a project that the device keeps read at once, again.
       const read = new Set<Part>();
       for (;;) {
-        const parts = [...this.loads.keys()].filter((p) => !read.has(p));
+        const parts = [...this.loads.keys()].filter(
+          (p) => !read.has(p) && !this.keptOnly.has(p),
+        );
         if (parts.length === 0) {
           break;
         }
@@ -1987,6 +2240,13 @@ export class ProjectDocument {
       return;
     }
     const before = this.confirmed.project;
+    // The boards held for the device's copy alone, which the project read
+    // anew did not read, are held no longer, as of the document that it
+    // takes, before anything that it tells of it could ask for one.
+    for (const part of this.keptOnly) {
+      this.loads.delete(part);
+    }
+    this.keptOnly.clear();
     this.took(doc);
     this.generation++;
     // What the project read anew has, it has with the server's times.
@@ -2137,9 +2397,21 @@ export class ProjectDocument {
     if (sessionDoubtedBy(error)) {
       this.options.checkSession?.();
     }
-    if (record && !signedOutBy(error)) {
+    // A request that no answer came to while the browser has no connection
+    // is no error of the app's: the device's copy is what the page shows
+    // then (PRD FR-OFF-02).
+    if (
+      record &&
+      !signedOutBy(error) &&
+      !(error instanceof NetworkError && !this.isOnline())
+    ) {
       this.options.log.record("request", error);
     }
+  }
+
+  /** Reports whether the browser says that it has a connection (DocumentOptions.online), without which the document reads nothing anew (refresh). */
+  isOnline(): boolean {
+    return this.options.online?.() ?? true;
   }
 
   /** The project can no longer be read: the project's pages show the page of no page. */

@@ -5,6 +5,8 @@
 // too, so that no console could show it, while what they leave to run later
 // runs after this file has run.
 
+import { NetworkError } from "@storycreep/shared/api";
+import { onlineManager } from "@tanstack/react-query";
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import { setNonce } from "get-nonce";
 import { StrictMode } from "react";
@@ -24,6 +26,10 @@ import { captureGlobalErrors, rootErrorOptions } from "./errors/capture";
 import { errorLog } from "./errors/log";
 import { createAppI18n } from "./i18n";
 import { cspNonce } from "./nonce";
+import { copySource, OfflineDatabase } from "./offline/db";
+import { OfflineKeeper, tabsBroadcast, writerLock } from "./offline/keeper";
+import { askForOwnSession, keepReads } from "./offline/kept";
+import { onConnection, online } from "./offline/online";
 import { startShell } from "./pwa/worker";
 import { createAppRouter } from "./router";
 import "./styles.css";
@@ -36,6 +42,12 @@ const nonce = cspNonce(document);
 if (nonce !== undefined) {
   setNonce(nonce);
 }
+
+// TanStack Query takes a page for online until the browser says otherwise,
+// which a page that loads offline, as the installed app opened on a flight,
+// it never does: told now, its reads wait for the connection, rather than
+// fail, but for those that the device keeps (offline/kept.ts).
+onlineManager.setOnline(online());
 
 const i18n = createAppI18n(navigator.languages, document.documentElement);
 requestsIn(i18n);
@@ -57,13 +69,36 @@ const realtime = createRealtime({
   log: errorLog,
   window,
 });
+// What the device keeps of the projects that the account keeps offline
+// (PRD FR-OFF-02), which a project's document starts from, and which the
+// page's queries read once the server does not answer, as offline, in a
+// secure context alone, which a page over plain HTTP is not (FR-OFF-01).
+const secure = window.isSecureContext;
+const offlineDb = new OfflineDatabase();
 const documents = new Documents({
   queryClient,
   realtime,
   log: errorLog,
   checkSession: () => void session.check(),
   storage: tabStorage(),
+  copies: copySource(offlineDb, secure),
+  online: () => online(),
 });
+const offline = new OfflineKeeper({
+  queryClient,
+  documents,
+  log: errorLog,
+  db: offlineDb,
+  secure,
+  online: () => online(),
+  onConnection: (listener) => onConnection(listener),
+  lock: writerLock(navigator),
+  broadcast: secure ? tabsBroadcast() : undefined,
+  storage: navigator.storage,
+});
+if (secure) {
+  keepReads(queryClient, offline.reads);
+}
 /**
  * How long, in milliseconds, a reload for a new version of the app waits
  * at most for the page's batches and saves, which the server answers in far
@@ -91,6 +126,7 @@ const router = createAppRouter({
   documents,
   realtime,
   pwa,
+  offline,
 });
 // A page whose session has ended elsewhere, or that another tab signed in
 // to another account, or to one, shows itself again, through the guards of
@@ -100,6 +136,24 @@ const session = followSession(
   document,
   sessionChanges(queryClient, router),
 );
+// A page that started offline from the session that the device keeps, which
+// has no CSRF token, asks the server for its own once the browser is online
+// again, and so does any other, whose session may have ended meanwhile.
+onConnection((connected) => {
+  if (connected) {
+    void session.check();
+  }
+});
+// A page that started from the device's session while the browser said
+// that it was online, as once the server did not answer as it restarted,
+// hears no "online" event: it asks for its own every few seconds, until it
+// has it (askForOwnSession).
+askForOwnSession(
+  () => queryClient.getQueryData(sessionQuery.queryKey)?.csrf_token === "",
+  () => void session.check(),
+  () => online(),
+);
+offline.start();
 /**
  * Returns the tab's session storage, which keeps the undo histories over a
  * reload (PRD FR-EDIT-08 AC3), or undefined where the browser refuses it, as
@@ -122,8 +176,17 @@ if (container === null) {
 }
 createRoot(
   container,
-  // The router throws these to its boundaries to show a page, not as errors.
-  rootErrorOptions(errorLog, (error) => isNotFound(error) || isRedirect(error)),
+  // The router throws these to its boundaries to show a page, not as
+  // errors, and a request that got no answer while the browser has no
+  // connection, which the error page shows as a page that needs one
+  // (RouteError), is no error of the app's either (PRD FR-OFF-02).
+  rootErrorOptions(
+    errorLog,
+    (error) =>
+      isNotFound(error) ||
+      isRedirect(error) ||
+      (error instanceof NetworkError && !online()),
+  ),
 ).render(
   <StrictMode>
     <App i18n={i18n} queryClient={queryClient} router={router} log={errorLog} />

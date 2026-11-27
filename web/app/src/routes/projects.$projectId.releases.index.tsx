@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ExportButton } from "../authoring/ExportDialog";
 import { publishes } from "../content/deletion";
+import { online } from "../offline/online";
 import { projectQuery } from "../project/queries";
 import { PublishButton } from "../releases/PublishDialog";
 import {
@@ -29,6 +30,11 @@ import { Page, Status } from "../ui/Page";
 
 export const Route = createFileRoute("/projects/$projectId/releases/")({
   loader: async ({ context: { queryClient }, params }) => {
+    // Offline, the project's pages say that this page needs a connection, in
+    // its place, rather than wait for its reads (offline/OfflinePages.tsx).
+    if (!online()) {
+      return;
+    }
     await found(queryClient.ensureQueryData(projectQuery(params.projectId)));
     await found(
       queryClient.ensureInfiniteQueryData(releasesQuery(params.projectId)),

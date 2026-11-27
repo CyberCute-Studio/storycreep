@@ -9,6 +9,7 @@ import {
   ApiError,
   createApiClient,
   type InstanceBody,
+  NetworkError,
   type SignedInBody,
   type VersionBody,
 } from "@storycreep/shared/api";
@@ -24,6 +25,8 @@ import {
 } from "@tanstack/react-query";
 import type { i18n as I18n } from "i18next";
 import type { ErrorLog } from "./errors/log";
+import { orKept } from "./offline/kept";
+import { online as browserOnline } from "./offline/online";
 
 /** The locale that the page is shown in, once requestsIn has been told it. */
 let pageLocale: string | undefined;
@@ -86,6 +89,15 @@ declare module "@tanstack/react-query" {
 }
 
 /**
+ * How a query that a page reads from the device once the server does not
+ * answer (offline/kept.ts) is read: whatever the browser says of its
+ * connection, rather than waiting, unsent, for it to come back, as TanStack
+ * Query's queries do by default once the browser has said that it has
+ * none, so that a page that goes offline reads it from the device at once.
+ */
+export const readOffline = { networkMode: "always" } as const;
+
+/**
  * The server's version, which the error console's reports name. The app asks
  * for it once, when it starts (requestVersion), and the console reads it
  * from the cache without asking (enabled: false), so that a report names the
@@ -110,9 +122,17 @@ export const versionQuery = queryOptions({
  */
 export const instanceQuery = queryOptions({
   queryKey: ["instance"],
-  queryFn: async ({ signal }): Promise<InstanceBody> =>
-    (await api.call("getInstance", {}, { signal })).body,
+  queryFn: ({ signal, client }): Promise<InstanceBody> =>
+    orKept(
+      client,
+      async () => (await api.call("getInstance", {}, { signal })).body,
+      async (kept) => (await kept.session())?.instance,
+    ),
+  // The instance that the device kept, which a page that the server did not
+  // answer started from, is the page's until it loads anew, as the server's
+  // is.
   staleTime: Number.POSITIVE_INFINITY,
+  ...readOffline,
 });
 
 /**
@@ -165,6 +185,14 @@ export async function fetchSession(
 }
 
 /**
+ * How long, in milliseconds, the page waits to ask the server for its
+ * session once more, where the request got no answer while the browser said
+ * that it was online, before it takes the session that the device keeps
+ * (sessionQuery).
+ */
+export const sessionAgainWait = 1_000;
+
+/**
  * The session of the page, or null if the page is signed out. Signing in
  * and out set it (auth/session.ts), and so does the page once it asks the
  * server for it again (followSession): when it is shown again after another
@@ -174,8 +202,32 @@ export async function fetchSession(
  */
 export const sessionQuery = queryOptions({
   queryKey: ["session"],
-  queryFn: ({ signal }): Promise<SignedInBody | null> => fetchSession(signal),
+  // A page that the server does not answer, as offline, is signed in to the
+  // account that the device keeps the session of, which keeps projects
+  // offline (PRD FR-OFF-02): the page asks the server again once the
+  // browser is online (main.tsx). While the browser says that it is online,
+  // the page asks once more a moment after first, as a request that a
+  // moment's failure of the network left without an answer would else give
+  // the page the device's session, which has no CSRF token, which the
+  // server refuses what the page changes without. A page that holds its own
+  // session, as the server answered it, keeps it, as once its tab is shown
+  // again before the network is back (followSession), rather than take the
+  // device's in its place.
+  queryFn: ({ signal, client }): Promise<SignedInBody | null> =>
+    orKept(
+      client,
+      () => fetchSession(signal),
+      async (kept) => {
+        const held = client.getQueryData(sessionQuery.queryKey);
+        if (held === null || (held !== undefined && held.csrf_token !== "")) {
+          return held;
+        }
+        return (await kept.session())?.session;
+      },
+      sessionAgainWait,
+    ),
   ...readByThePage,
+  ...readOffline,
 });
 
 /**
@@ -185,9 +237,18 @@ export const sessionQuery = queryOptions({
  */
 export const accountQuery = queryOptions({
   queryKey: ["account"],
-  queryFn: async ({ signal }): Promise<AccountBody> =>
-    (await api.call("getAccount", {}, { signal })).body,
+  queryFn: ({ signal, client }): Promise<AccountBody> =>
+    orKept(
+      client,
+      async () => (await api.call("getAccount", {}, { signal })).body,
+      async (kept) => {
+        const session = await kept.session();
+        const userId = client.getQueryData(sessionQuery.queryKey)?.user_id;
+        return session?.user_id === userId ? session?.account : undefined;
+      },
+    ),
   ...readByThePage,
+  ...readOffline,
 });
 
 /**
@@ -447,6 +508,11 @@ export function createQueryClient(
       options.checkSession?.();
     }
     if (signedOutBy(error)) {
+      return;
+    }
+    // A request that got no answer while the browser has no connection is
+    // no error of the app's (PRD FR-OFF-02).
+    if (error instanceof NetworkError && !browserOnline()) {
       return;
     }
     if (

@@ -304,7 +304,10 @@ export async function lastBoard(
   }
   const { projectId, boardId } = last;
   try {
-    if ((await readBoard(context, projectId, boardId)) !== undefined) {
+    if (
+      (await readBoard(context, projectId, boardId, undefined, true)) !==
+      undefined
+    ) {
       return { projectId, boardId };
     }
   } catch (error) {

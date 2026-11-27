@@ -17,8 +17,16 @@ import {
   type QueryKey,
   queryOptions,
 } from "@tanstack/react-query";
-import { allAtOnce, api, everyPage, pagedQuery } from "../api";
+import {
+  allAtOnce,
+  api,
+  everyPage,
+  pagedQuery,
+  readOffline,
+  sessionQuery,
+} from "../api";
 import type { Role } from "../auth/roles";
+import { orKept } from "../offline/kept";
 
 /**
  * The workspaces that the user is a member of, a page at a time, each with
@@ -60,32 +68,52 @@ export function workspaceQuery(workspaceId: string) {
     queryKey: ["workspaces", workspaceId, "membership"],
     // A workspace that the user may not see shows the page of no page.
     meta: { showsRefusals: true },
-    queryFn: async ({ signal }): Promise<Workspace> => {
-      // A user is a member of few workspaces, so the pages are few too.
-      const memberships = await everyPage(
-        async (cursor) =>
-          (
-            await api.call(
-              "listWorkspaces",
-              { query: { cursor, limit: allAtOnce } },
-              { signal },
-            )
-          ).body,
-      );
-      const membership = memberships.find((m) => m.id === workspaceId);
-      if (membership !== undefined) {
-        return workspaceOf(membership, true);
-      }
-      const workspace = (
+    // A page that the server does not answer, as offline, reads the
+    // workspace of the device's copy of one of its projects, where the
+    // device keeps one (PRD FR-OFF-02).
+    queryFn: ({ signal, client }): Promise<Workspace> =>
+      orKept(
+        client,
+        () => readWorkspace(workspaceId, signal),
+        async (kept) => {
+          const userId = client.getQueryData(sessionQuery.queryKey)?.user_id;
+          return userId === undefined
+            ? undefined
+            : kept.workspace(userId, workspaceId);
+        },
+      ),
+    ...readOffline,
+  });
+}
+
+/** Reads the workspace of workspaceId that the user acts in, as workspaceQuery says. */
+async function readWorkspace(
+  workspaceId: string,
+  signal: AbortSignal,
+): Promise<Workspace> {
+  // A user is a member of few workspaces, so the pages are few too.
+  const memberships = await everyPage(
+    async (cursor) =>
+      (
         await api.call(
-          "getWorkspace",
-          { path: { workspace_id: workspaceId } },
+          "listWorkspaces",
+          { query: { cursor, limit: allAtOnce } },
           { signal },
         )
-      ).body;
-      return workspaceOf(workspace, false);
-    },
-  });
+      ).body,
+  );
+  const membership = memberships.find((m) => m.id === workspaceId);
+  if (membership !== undefined) {
+    return workspaceOf(membership, true);
+  }
+  const workspace = (
+    await api.call(
+      "getWorkspace",
+      { path: { workspace_id: workspaceId } },
+      { signal },
+    )
+  ).body;
+  return workspaceOf(workspace, false);
 }
 
 /** Returns the fields of a membership, or of a workspace that is none of the user's, that its pages show. */

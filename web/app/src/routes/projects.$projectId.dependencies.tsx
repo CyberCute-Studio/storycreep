@@ -23,6 +23,7 @@ import {
   useProjectDocument,
   useTree,
 } from "../document/react";
+import { online } from "../offline/online";
 import { loadPart, loadParts, projectQuery } from "../project/queries";
 import { buildTree, itemsInOrder } from "../project/tree";
 import { found, searchId } from "../shell/found";
@@ -82,6 +83,11 @@ export const Route = createFileRoute("/projects/$projectId/dependencies")({
   // once they are read, and the inspection reads them if this read failed
   // (useTextNames).
   loader: async ({ context, params, deps }) => {
+    // Offline, the project's pages say that this page needs a connection, in
+    // its place, rather than wait for its reads (offline/OfflinePages.tsx).
+    if (!online()) {
+      return;
+    }
     await found(
       context.queryClient.ensureQueryData(projectQuery(params.projectId)),
     );

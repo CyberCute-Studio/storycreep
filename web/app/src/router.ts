@@ -7,6 +7,7 @@ import { createRouter, parseSearchWith } from "@tanstack/react-router";
 import type { i18n as I18n } from "i18next";
 import type { Documents } from "./document/documents";
 import type { Realtime } from "./document/realtime";
+import type { OfflineKeeper } from "./offline/keeper";
 import type { AppShell } from "./pwa/worker";
 import { routeTree } from "./routeTree.gen";
 import { focusContentIfLost } from "./shell/focus";
@@ -40,6 +41,12 @@ export interface RouterContext {
    * shows, or none, as in a test that gives none.
    */
   pwa?: AppShell;
+  /**
+   * The page's keeper of the projects that the device keeps offline (PRD
+   * FR-OFF-02), whose switch a project's pages show, and whose storage panel
+   * the account's screens, or none, as in a test that gives none.
+   */
+  offline?: OfflineKeeper;
 }
 
 /**

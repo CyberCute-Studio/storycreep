@@ -5,6 +5,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useProjectDocument, useTree } from "../document/react";
+import { online } from "../offline/online";
 import { loadParts, projectQuery } from "../project/queries";
 import { buildTree, itemsInOrder } from "../project/tree";
 import { found } from "../shell/found";
@@ -18,6 +19,11 @@ export const Route = createFileRoute("/projects/$projectId/statistics")({
   // which the page orders them (loadParts), and the statistics, which need
   // nothing of the tree.
   loader: async ({ context, params }) => {
+    // Offline, the project's pages say that this page needs a connection, in
+    // its place, rather than wait for its reads (offline/OfflinePages.tsx).
+    if (!online()) {
+      return;
+    }
     await found(
       context.queryClient.ensureQueryData(projectQuery(params.projectId)),
     );

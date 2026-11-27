@@ -26,6 +26,7 @@ Open each address of `tablet.md` on the tablet, in a new tab, and do not touch t
 | Target | The run | Passes when |
 | --- | --- | --- |
 | NFR-PERF-04 | `medium`, `bench=load`, in a tab opened anew, after clearing the site's cached files | The first frame of the board is under 3,000 ms. |
+| NFR-PERF-03 | `medium`, made available offline first, with the switch of its project's pages, once they say that the device has it, then `bench=load` in a tab opened anew | The first frame of the board, which the tablet reads from its copy of the project, is under 2,000 ms. Keeping a project offline needs a secure context, which plain HTTP on a LAN is not: serve the instance over HTTPS for this run, or forward its port to the tablet in Chrome's remote debugging (`chrome://inspect`, Port forwarding), and open it at `localhost` (PRD FR-OFF-01). |
 | NFR-PERF-01 | `medium`, `bench=panzoom` | 30 frames a second or more, and the time between frames is under 33 ms at the 95th percentile. |
 | FR-EDIT-01 AC3 | `dense`, `bench=panzoom` | As NFR-PERF-01, on the board of 2,000 nodes. |
 | FR-EDIT-11 AC1 | The boards of 200 and of 2,000 nodes, `bench=pan` | The page's work in a frame on the board of 2,000 is within 20% of the board of 200's, at the median and at the 95th percentile; the nodes in the canvas are the same. |

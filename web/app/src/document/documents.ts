@@ -18,7 +18,7 @@ import type { ErrorLog } from "../errors/log";
 import { type ClipboardStore, createClipboard } from "./clipboard";
 import type { Realtime } from "./realtime";
 import { whenSent } from "./sent";
-import { ProjectDocument } from "./store";
+import { type CopySource, ProjectDocument } from "./store";
 import { clearHistories } from "./undo";
 
 /** How long, in milliseconds, a document that no page shows is kept, as for a page of the project that the user goes back to. */
@@ -32,6 +32,10 @@ export interface DocumentsOptions {
   checkSession?: () => void;
   /** The tab's storage, which keeps the undo histories over a reload. */
   storage?: Storage;
+  /** The device's copies of the projects that the account keeps offline, which a document starts from (DocumentOptions.copies). */
+  copies?: CopySource;
+  /** Reports whether the browser says that it has a connection (DocumentOptions.online). */
+  online?: () => boolean;
 }
 
 interface Held {

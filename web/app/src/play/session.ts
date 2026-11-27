@@ -39,6 +39,7 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 import { boardPart, type Doc, expressionFields } from "../document/doc";
 import { equal } from "../document/reconcile";
 import { inTurns, type ProjectDocument } from "../document/store";
+import { unreadBoard, unreadComponent } from "../document/whole";
 import type { FailedPart } from "./explain";
 import type { ExpressionOwner, ProjectedValue, Projection } from "./projection";
 import type { LoadReport, SavedNames } from "./saved";
@@ -703,6 +704,17 @@ export class PlaySession {
     if (!current()) {
       return;
     }
+    // Each board whose content the document has read already, as one that
+    // it holds for the device's copy of the project alone, is asked for as
+    // the boards that play reads are (load), so that a reading anew of the
+    // project reads it again with them, rather than let it go, which would
+    // take it from the draft that play projected (ProjectDocument.load's
+    // kept, offline/keeper.ts).
+    for (const b of doc.store.getState().view.boards.values()) {
+      if (b.deleted_at === undefined && doc.hasRead(boardPart(b.id))) {
+        void doc.load(boardPart(b.id)).catch(() => undefined);
+      }
+    }
     const reads: (() => Promise<void>)[] = [];
     // addUnread adds the reads of what the document holds now and has not
     // read: each board's content, and each component whole.
@@ -714,13 +726,7 @@ export class PlaySession {
         }
       }
       for (const c of view.components.values()) {
-        const type = view.componentTypes.get(c.component_type_id);
-        if (
-          c.deleted_at === undefined &&
-          c.attributes === undefined &&
-          type !== undefined &&
-          type.deleted_at === undefined
-        ) {
+        if (unreadComponent(view, c)) {
           reads.push(() => doc.readComponent(c.id));
         }
       }
@@ -1164,17 +1170,6 @@ function placeOf(
   const source =
     field === "" ? undefined : projection.sources.get(`${at} ${field}`);
   return { ...place, ...(source === undefined ? {} : { source }) };
-}
-
-// unreadBoard reports whether b is a board out of the trash whose content
-// doc has not read, which play reads before it projects the draft, and
-// which, unread even then, as one that came back from the trash since, it
-// does not project.
-function unreadBoard(
-  doc: ProjectDocument,
-  b: { readonly id: string; readonly deleted_at?: string },
-): boolean {
-  return b.deleted_at === undefined && !doc.hasRead(boardPart(b.id));
 }
 
 // The fields of an entity, and of what it holds, as a branch's outputs and
