@@ -22,10 +22,16 @@
 // open, either of which is made before a document takes the account's
 // batches again, which takes none until it is (discarded), so that a tab
 // that closes first leaves no batch that the user signed out without to be
-// sent. A database that does not open in time refuses a write, as one
-// that refuses it for its quota does, rather than hold the document's writes,
+// sent; while the tab that signs out holds the removal's lock, as the
+// server answers, it is not made, as the page may still be signed in
+// after, nor are its batches taken, and once the server has signed the
+// page out the other tabs are told, which ask for their session, as their
+// documents may hold such batches too, which a page signed out keeps none
+// of. A database that does not open in time refuses a write, as one that
+// refuses it for its quota does, rather than hold the document's writes,
 // and the tries that wait for them, for as long as the page is open.
 
+import { formatUuid, newUuid } from "@storycreep/shared/ids";
 import type { QueuedBatch, QueueStore } from "../document/queue";
 import { type OfflineDatabase, opensWithin, openWait } from "./db";
 
@@ -89,6 +95,10 @@ export interface QueueNews {
 export interface QueueBroadcast {
   post(news: QueueNews): void;
   listen(listener: (news: QueueNews) => void): () => void;
+  /** Tells the other tabs that the page signed out of user's session, as the user signed out anyway (QueueStore.intend). */
+  signedOut?(user: string): void;
+  /** Calls listener with the account that a tab signed out of, as signedOut tells, until what it returns is called. */
+  listenSignedOut?(listener: (user: string) => void): () => void;
 }
 
 /** Returns the queue's channel of the browser's tabs, or none where it has no BroadcastChannel. */
@@ -100,6 +110,17 @@ export function queueBroadcast(): QueueBroadcast | undefined {
   const channel = new BroadcastChannel(name);
   return {
     post: (news) => channel.postMessage(news),
+    signedOut: (user) => channel.postMessage({ user, signedOut: true }),
+    listenSignedOut: (listener) => {
+      const own = new BroadcastChannel(name);
+      own.addEventListener("message", (event: MessageEvent) => {
+        const news = event.data as { user?: unknown; signedOut?: unknown };
+        if (news?.signedOut === true && typeof news.user === "string") {
+          listener(news.user);
+        }
+      });
+      return () => own.close();
+    },
     // Each listener on a channel object of its own, which hears what the
     // tab's posts, as a BroadcastChannel never hears what it posts itself.
     listen: (listener) => {
@@ -134,6 +155,13 @@ function lockOf(owner: string): string {
 interface Discarded {
   only: { project_id: string; id: string }[];
   before?: string;
+  /**
+   * The lock that the tab that signs out holds as the server answers, of a
+   * removal remembered as the user signs out anyway (intend): while a tab
+   * holds it, the removal is not made, nor are its batches taken, as the
+   * page may still be signed in after (discarded).
+   */
+  lock?: string;
 }
 
 /** Returns the key of the browser's storage that keeps what signing out could not take off the device of userId's (Discarded). */
@@ -167,10 +195,28 @@ function discardedOf(value: string | null): Discarded | undefined {
         (r) => typeof r?.project_id === "string" && typeof r.id === "string",
       ),
       ...(typeof held.before === "string" ? { before: held.before } : {}),
+      ...(typeof held.lock === "string" ? { lock: held.lock } : {}),
     };
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Returns the test of the batches that removals, of sign-outs under way,
+ * take off the device: those that they named, and those made until when the
+ * user signed out, of one that could not read them (Discarded's before).
+ */
+function namedBy(
+  removals: readonly Discarded[],
+): (record: { project_id: string; id: string; time: string }) => boolean {
+  const named = new Set(
+    removals.flatMap((d) => d.only.map((r) => `${r.project_id}/${r.id}`)),
+  );
+  const before = latestOf(removals.map((d) => d.before));
+  return (record) =>
+    named.has(`${record.project_id}/${record.id}`) ||
+    (before !== undefined && Date.parse(record.time) <= Date.parse(before));
 }
 
 /** Returns the latest of times, ISO times, or undefined where none is given. */
@@ -218,6 +264,14 @@ export interface DeviceQueueOptions {
   storage?: Storage;
   /** Returns the time now, as an ISO time, which a removal of every batch made until then remembers (Discarded's before). */
   now?: () => string;
+  /**
+   * Called as another tab tells that it signed out of an account's session,
+   * as the user signed out anyway (intend), as the page asks for its own
+   * then, which signs it out too, where it was that session, so that its
+   * documents, dropped as the page signs out, send none of the batches that
+   * the user signed out without, as once the account signs in again.
+   */
+  signedOutElsewhere?: (userId: string) => void;
 }
 
 /**
@@ -239,8 +293,11 @@ export function deviceQueue(
     return undefined;
   }
   const wait = options.wait ?? openWait;
-  const { storage } = options;
+  const { storage, signedOutElsewhere } = options;
   const now = options.now ?? (() => new Date().toISOString());
+  if (signedOutElsewhere !== undefined) {
+    broadcast?.listenSignedOut?.(signedOutElsewhere);
+  }
   // The writes under way, which signing out's removal waits for (discard).
   const writes = new Set<Promise<void>>();
   // Writes value at key of the browser's storage, which may refuse it, as
@@ -271,15 +328,20 @@ export function deviceQueue(
     discardedKey(userId),
     signingOutKey(userId),
   ];
-  // Forgets what keys held as read, of each that holds it still, and
-  // reports whether any holds what was written since, as another tab
-  // remembered as it signed out, which is not forgotten.
-  const forgetRead = (keys: readonly string[], read: (string | null)[]) => {
+  // Forgets what keys held as read, of each that holds it still, but those
+  // that kept says to keep, and reports whether any holds what was written
+  // since, as another tab remembered as it signed out, which is not
+  // forgotten.
+  const forgetRead = (
+    keys: readonly string[],
+    read: (string | null)[],
+    kept: readonly boolean[] = [],
+  ) => {
     let since = false;
     keys.forEach((key, i) => {
       if (storedAt(storage, key) !== read[i]) {
         since = true;
-      } else if (read[i] !== null) {
+      } else if (read[i] !== null && kept[i] !== true) {
         try {
           storage?.removeItem(key);
         } catch {
@@ -295,15 +357,29 @@ export function deviceQueue(
   // (adopt), which would send those that the user signed out without. What
   // another tab remembers meanwhile, as it signs out, is not forgotten with
   // it, which the storage then holds as written since, and is taken too.
+  // A removal of a sign-out under way, whose tab holds its lock as the
+  // server answers, is neither made, as the page may still be signed in
+  // after, nor forgotten: it resolves to the test of its batches, which a
+  // document does not take meanwhile, as it would send them (intend).
   const discarded = async (userId: string) => {
     const keys = keysOf(userId);
     for (;;) {
       const read = keys.map((key) => storedAt(storage, key));
-      const held = read
-        .map(discardedOf)
-        .filter((d): d is Discarded => d !== undefined);
+      const removals = read.map(discardedOf);
+      const locked = removals.some((d) => d?.lock !== undefined)
+        ? await locks.held()
+        : new Set<string>();
+      const under = removals.map(
+        (d) => d?.lock !== undefined && locked.has(d.lock),
+      );
+      const spared = namedBy(
+        removals.filter((d, i): d is Discarded => d !== undefined && under[i]),
+      );
+      const held = removals.filter(
+        (d, i): d is Discarded => d !== undefined && !under[i],
+      );
       if (held.length === 0) {
-        return;
+        return spared;
       }
       const before = latestOf(held.map((d) => d.before));
       const only = [
@@ -315,8 +391,8 @@ export function deviceQueue(
             )),
       ];
       await db.deleteQueued(userId, only);
-      if (!forgetRead(keys, read)) {
-        return;
+      if (!forgetRead(keys, read, under)) {
+        return spared;
       }
     }
   };
@@ -347,15 +423,20 @@ export function deviceQueue(
       // owner's document has stopped taking them, as once it was dropped,
       // which sends none of them, and would leave them to no document, nor
       // while it takes none (takes), as one that no page shows, which
-      // leaves them to the next that does.
+      // leaves them to the next that does; nor those that a sign-out under
+      // way takes off the device, which it leaves to the next take once the
+      // page is still signed in (discarded).
       const take = (from: () => Promise<(other: string) => boolean>) =>
         locks
           .run(takeLock, async () => {
             if (stopped.signal.aborted || !takes()) {
               return [];
             }
-            await discarded(userId);
-            return db.takeQueued(userId, projectId, owner, from);
+            const spared = await discarded(userId);
+            return db.takeQueued(userId, projectId, owner, async () => {
+              const allows = await from();
+              return (other, record) => allows(other) && !spared(record);
+            });
           })
           .then(tell);
       // The owners whose documents no tab holds now.
@@ -507,19 +588,35 @@ export function deviceQueue(
         throw error;
       }
     },
-    intend: (userId, only) => {
+    intend: async (userId, only) => {
       // Of this sign-out's alone, so that forgetting it leaves what another
-      // remembered, as one whose removal the device refused (remember).
+      // remembered, as one whose removal the device refused (remember),
+      // with a lock of its own, which the tab holds as the server answers,
+      // and lets go as it closes, after which the next take makes it; one
+      // that the browser refuses leaves it to be made by the next take.
       const key = signingOutKey(userId);
-      const written = store(key, discardedWith(undefined, only, now()));
-      return () => {
-        if (written !== undefined && storedAt(storage, key) === written) {
+      const lock = `storycreep-queue-signing-out:${userId}:${formatUuid(newUuid())}`;
+      const release = await locks.hold(lock).catch(() => undefined);
+      const written = store(key, {
+        ...discardedWith(undefined, only, now()),
+        ...(release === undefined ? {} : { lock }),
+      });
+      return (signedOut) => {
+        if (
+          !signedOut &&
+          written !== undefined &&
+          storedAt(storage, key) === written
+        ) {
           try {
             storage?.removeItem(key);
           } catch {
             // The next document that takes the account's batches takes
             // these off the device, as the user signed out anyway.
           }
+        }
+        release?.();
+        if (signedOut) {
+          broadcast?.signedOut?.(userId);
         }
       };
     },

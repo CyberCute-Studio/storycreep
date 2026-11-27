@@ -7,7 +7,9 @@
 // copies, once the server has signed the page out, which the browser's
 // storage remembers from when the user signs out anyway, so that a tab that
 // closes first, as while the server answers, leaves the removal to the next
-// page that takes the account's changes, rather than the changes to be sent
+// page that takes the account's changes, rather than the changes to be sent,
+// while no tab makes it, nor takes those changes, until the server has
+// answered, and the other tabs are told once it has signed the page out
 // (QueueStore.intend). Signing out of a device that keeps none asks
 // nothing. The device's database is read as the user clicks, once it has
 // opened, as on a page that has just loaded, and once the page's documents
@@ -130,27 +132,35 @@ export function SignOutButton({
   // device that could not be read, any (undefined): one that a document
   // kept as the page signed out, which the dialog did not name, stays, the
   // account's, as one kept after. The user's decision is remembered before
-  // the page signs out, and forgotten where the page is still signed in,
-  // which keeps them (intendDiscard).
+  // the page signs out, which no tab acts on until the server has answered,
+  // and forgotten where the page is still signed in, which keeps them, or
+  // else told to the other tabs, whose documents may hold them too
+  // (intendDiscard).
   const end = async (records: readonly QueueRecord[] | undefined) => {
     setFailure(undefined);
-    const forget =
-      records === undefined || records.length > 0
-        ? documents.intendDiscard(userId, records)
-        : undefined;
+    let settle: ((signedOut: boolean) => void) | undefined;
+    if (records === undefined || records.length > 0) {
+      setReading(true);
+      try {
+        settle = await documents.intendDiscard(userId, records);
+      } finally {
+        setReading(false);
+      }
+    }
     try {
       await signOut.mutateAsync(session);
     } catch (error) {
       // A page that the server signed out, whose showing itself anew then
       // failed (endSession), is signed out all the same, and the changes go.
       if (client.getQueryData(sessionQuery.queryKey) !== null) {
-        forget?.();
+        settle?.(false);
         // The page says why it is still signed in, as the header does
         // (signOutFailure), and so does the dialog, where it is open.
         setFailure(error);
         return;
       }
     }
+    settle?.(true);
     setAsked(undefined);
     if (records === undefined || records.length > 0) {
       // The user decided: the changes go with the account's copies, and no

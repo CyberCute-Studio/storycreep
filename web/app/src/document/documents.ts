@@ -298,15 +298,17 @@ export class Documents {
    * Remembers, as the user signs out anyway, that signing out takes the
    * changes of userId's of only, or, where it is not given, every one made
    * until now, off the device, before the server has signed the page out,
-   * so that a tab that closes first leaves none of them to be sent
-   * (QueueStore.intend); returns what forgets it, as once the page is still
-   * signed in, or undefined where the page keeps no queue.
+   * so that a tab that closes first leaves none of them to be sent, while
+   * no document takes them, nor takes them off it, until the server has
+   * answered (QueueStore.intend); resolves to what settles it, as the page
+   * is still signed in, or is not, or undefined where the page keeps no
+   * queue.
    */
-  intendDiscard(
+  async intendDiscard(
     userId: string,
     only?: readonly { project_id: string; id: string }[],
-  ): (() => void) | undefined {
-    return this.options.queue?.intend(userId, only);
+  ): Promise<((signedOut: boolean) => void) | undefined> {
+    return await this.options.queue?.intend(userId, only);
   }
 
   /**

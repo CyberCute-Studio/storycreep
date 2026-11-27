@@ -92,6 +92,8 @@ const documents = new Documents({
     locks: webLocks(navigator.locks),
     broadcast: secure ? queueBroadcast() : undefined,
     storage: deviceStorage(),
+    // A tab that signed out tells the others, whose sessions it ended too.
+    signedOutElsewhere: () => void session.check(),
   }),
 });
 const offline = new OfflineKeeper({

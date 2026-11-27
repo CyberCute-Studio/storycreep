@@ -170,13 +170,18 @@ export interface QueueStore {
    * the user signs out anyway, before the server has signed the page out,
    * so that the next document that takes the account's batches takes them
    * off it first where discard did not, as of a tab that closed while the
-   * server answered (plan note N98); returns what forgets it, as once the
-   * page is still signed in.
+   * server answered (plan note N98), but none while the tab holds the
+   * removal's lock, as the server answers, which no document takes those
+   * batches meanwhile either, as the page may still be signed in after.
+   * Resolves, once the tab holds it, to what lets it go, which forgets the
+   * removal where signedOut says that the page is still signed in, and
+   * else tells the other tabs, which ask for their session, as their
+   * documents may hold those batches too.
    */
   intend(
     userId: string,
     only?: readonly { project_id: string; id: string }[],
-  ): () => void;
+  ): Promise<(signedOut: boolean) => void>;
 }
 
 /**

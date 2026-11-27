@@ -350,6 +350,15 @@ function retryAfterOf(answer: ApiError): number {
 const refusedForWhen = [401, 403, 408, 429];
 
 /**
+ * How long, in milliseconds, a try waits for its answer before the
+ * document takes it for one that no answer comes to, as on a network whose
+ * connection stalls, which the browser may take minutes to give up on: the
+ * batch is kept in the device's queue then, as sent, as it may apply, with
+ * every batch after it, while the try goes on (stalled).
+ */
+const answerWait = 10_000;
+
+/**
  * Reports whether error refuses what a step of the history does, which
  * sending it again would meet again, as for what changed since: the server's
  * answer with a status of 4xx, but for those that refuse when or by whom it
@@ -727,6 +736,8 @@ export interface DocumentOptions {
   takesQueue?: boolean;
   /** Returns a number in [0, 1), which spreads the queue's tries again (backoff); Math.random, if not set. */
   random?: () => number;
+  /** How long, in milliseconds, a try waits for its answer before the document keeps its batch as one that no answer comes to (stalled); answerWait, if not set. */
+  answerWait?: number;
 }
 
 /** A copy of a project that the device keeps, as a document starts from it (PRD FR-OFF-02). */
@@ -4156,12 +4167,12 @@ export class ProjectDocument {
   /**
    * Returns why the page cannot reach the server now, where it keeps a
    * queue, or undefined where it can, as far as it knows: a browser that has
-   * no connection; a try that no answer came to, until the next
-   * (retryTimer), and through the next, until it is answered, so that what
-   * needs the server is not offered at each try only to be taken back as it
-   * fails; or a page that holds the session that the device kept, without
-   * its CSRF token, which no change can be sent with, until the page has its
-   * own (PRD FR-OFF-02).
+   * no connection; a try that no answer came to, or none for answerWait
+   * (stalled), until the next (retryTimer), and through the next, until it
+   * is answered, so that what needs the server is not offered at each try
+   * only to be taken back as it fails; or a page that holds the session
+   * that the device kept, without its CSRF token, which no change can be
+   * sent with, until the page has its own (PRD FR-OFF-02).
    */
   private unreachable(): "offline" | "unanswered" | "session" | undefined {
     if (this.queue === undefined) {
@@ -4589,6 +4600,8 @@ export class ProjectDocument {
     // Whether the device's queue kept the batch as sent before this try, as
     // one that no answer came to, which a refusal of the try leaves it.
     let sentBefore = entry.held?.sent ?? false;
+    // The timer after which the try, unanswered, keeps its batch (stalled).
+    let stall: ReturnType<typeof setTimeout> | undefined;
     try {
       await this.whenReady();
       // A document dropped meanwhile sends none of the queue's, which
@@ -4645,6 +4658,12 @@ export class ProjectDocument {
       // after which its answer is of what the server has (Sent.restores).
       let restores = this.restores;
       posted = true;
+      if (this.queue !== undefined) {
+        stall = setTimeout(
+          () => this.stalled(entry),
+          this.options.answerWait ?? answerWait,
+        );
+      }
       const answer = await this.post(entry.commands, session);
       this.retryFailures = 0;
       this.reached();
@@ -4759,10 +4778,56 @@ export class ProjectDocument {
       }
       this.refuse(entry, error, known);
     } finally {
+      clearTimeout(stall);
       this.inflight = false;
       void this.pump();
       this.idleChanged();
     }
+  }
+
+  /**
+   * Takes the try of entry, under way with no answer for answerWait, for one
+   * that no answer comes to, as on a network whose connection stalls (PRD
+   * FR-OFF-03): the page cannot reach the server until a try is answered
+   * (unreachable), and entry, which may apply, is kept in the device's
+   * queue as sent, where it can be, as is every batch after it (keep),
+   * rather than in the page alone, which a tab that closes before the
+   * browser gives up on the try would lose; its caller hears that it is
+   * queued once it is written. The try goes on, and its answer, or its
+   * failure, settles the batch as one of the queue's (queueKept).
+   */
+  private stalled(entry: Entry): void {
+    if (this.queue === undefined || !this.inflight || !entry.sent) {
+      return;
+    }
+    this.retryReason = "unanswered";
+    // A document dropped as the page signed out keeps nothing anew (pump).
+    const signedOut = this.signedOutOf();
+    if (
+      entry.held === undefined &&
+      this.keepable(entry) &&
+      !signedOut &&
+      this.entries.includes(entry)
+    ) {
+      entry.held = this.batchOf(entry, { sent: true });
+      entry.dirty = true;
+      this.persist().catch((failure: unknown) => {
+        if (!overQuota(failure) && !(failure instanceof SignedOutError)) {
+          this.options.log.record("error", failure);
+        }
+        // The device keeps nothing of it, and no write after writes it
+        // there (persist): its try settles it as without a queue, or, where
+        // no answer comes, it is kept anew (keep), its caller hearing of it
+        // then, or of the device's refusal.
+        entry.held = undefined;
+        entry.dirty = false;
+        this.queueChanged();
+      });
+    }
+    if (!signedOut) {
+      this.keep();
+    }
+    this.queueChanged();
   }
 
   /**

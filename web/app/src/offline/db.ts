@@ -802,10 +802,11 @@ export class OfflineDatabase {
   }
 
   /**
-   * Takes the batches of userId's projectId of the owners that the test
-   * that from resolves to allows, asked for once the batches have been
-   * read, of this version's format (queueFormat), as owner's, and resolves
-   * to them in the queue's order: a batch of another format, which another
+   * Takes the batches of userId's projectId that the test that from
+   * resolves to allows, by their owners, or themselves, asked for once the
+   * batches have been read, of this version's format (queueFormat), as
+   * owner's, and resolves to them in the queue's order: a batch of another
+   * format, which another
    * version of the app wrote, is kept as it is. One written after the read
    * is not taken, as its owner may have been allowed for having written
    * none yet, and neither is one whose owner changed after it, as another
@@ -815,7 +816,7 @@ export class OfflineDatabase {
     userId: string,
     projectId: string,
     owner: string,
-    from: () => Promise<(owner: string) => boolean>,
+    from: () => Promise<(owner: string, record: QueueRecord) => boolean>,
   ): Promise<QueueRecord[]> {
     const found = (
       await (await this.open()).getAll("queue", under(userId, projectId))
@@ -828,7 +829,7 @@ export class OfflineDatabase {
     const allows = await from();
     const owners = new Map(
       found
-        .filter((record) => allows(record.owner))
+        .filter((record) => allows(record.owner, record))
         .map((record) => [record.id, record.owner]),
     );
     if (owners.size === 0) {

@@ -75,6 +75,7 @@ afterEach(() => {
  */
 function fakeBroadcast() {
   const listeners = new Set<(news: QueueNews) => void>();
+  const signedOut = new Set<(user: string) => void>();
   return {
     tab(): QueueBroadcast {
       return {
@@ -88,6 +89,18 @@ function fakeBroadcast() {
           listeners.add(own);
           return () => {
             listeners.delete(own);
+          };
+        },
+        signedOut: (user) => {
+          for (const listener of [...signedOut]) {
+            listener(user);
+          }
+        },
+        listenSignedOut: (listener) => {
+          const own = (user: string) => listener(user);
+          signedOut.add(own);
+          return () => {
+            signedOut.delete(own);
           };
         },
       };
@@ -197,7 +210,10 @@ async function open(
   net: ReturnType<typeof connection>,
   session = testSession,
   queue: QueueStore | undefined = deviceQueue(db, { secure: true, locks }),
-  options: Pick<DocumentOptions, "realtime" | "random" | "storage"> = {},
+  options: Pick<
+    DocumentOptions,
+    "realtime" | "random" | "storage" | "answerWait"
+  > = {},
 ) {
   const log = createErrorLog();
   const queryClient = createQueryClient(log);
@@ -933,10 +949,10 @@ describe("the device's queue of the page's batches", () => {
     first.doc.dispose();
     await first.doc.lettingGo();
     // The server did not sign the page out: the change stays.
-    queue.intend(user, named ? [named] : [])();
+    (await queue.intend(user, named ? [named] : []))(false);
     expect(window.localStorage.length).toBe(0);
     // It did, and the tab closed before it took the change off the device.
-    queue.intend(user, named ? [named] : []);
+    (await queue.intend(user, named ? [named] : []))(true);
     const next = await open(db, locks, net, testSession, queue);
     expect(next.doc.store.getState().queued).toBe(1);
     expect(
@@ -974,9 +990,9 @@ describe("the device's queue of the page's batches", () => {
       queue.discard(user, quayBatch ? [quayBatch] : []),
     ).rejects.toThrow();
     // As the next document takes it off the device, another tab's user
-    // signs out anyway with the other.
+    // signs out anyway with the other, and the server signs that tab out.
     deletes.mockImplementationOnce(async (...args) => {
-      queue.intend(user, dockBatch ? [dockBatch] : []);
+      (await queue.intend(user, dockBatch ? [dockBatch] : []))(true);
       return deleting(...args);
     });
     const next = await open(db, locks, net, testSession, queue);
@@ -985,6 +1001,114 @@ describe("the device's queue of the page's batches", () => {
     expect(window.localStorage.length).toBe(0);
     next.doc.dispose();
     await next.doc.lettingGo();
+    await db.close();
+  });
+
+  it("neither takes off the device nor takes what a sign-out under way names until the server has answered, and tells the other tabs once it has signed the page out", async () => {
+    const batches = serve(() => new Promise<never>(() => {}));
+    const net = connection(false);
+    const locks = fakeLocks();
+    const db = new OfflineDatabase();
+    const hub = fakeBroadcast();
+    const queue = deviceQueue(db, {
+      secure: true,
+      locks,
+      broadcast: hub.tab(),
+      storage: window.localStorage,
+    }) as QueueStore;
+    const heard: string[] = [];
+    const other = deviceQueue(db, {
+      secure: true,
+      locks,
+      broadcast: hub.tab(),
+      storage: window.localStorage,
+      signedOutElsewhere: (userId) => heard.push(userId),
+    }) as QueueStore;
+    const first = await open(db, locks, net, testSession, queue);
+    await first.doc.send([rename("bd_a", "Quay", 3)]);
+    await first.doc.send([rename("bd_a", "Dock", 3)]);
+    const [named] = await db.queued(user, testProject.id);
+    first.doc.dispose();
+    await first.doc.lettingGo();
+    // As the server answers the sign-out, another tab's document starts,
+    // which takes the change that the sign-out did not name alone.
+    const settle = await queue.intend(user, named ? [named] : []);
+    const during = await open(db, locks, net, testSession, other);
+    expect(during.doc.store.getState().queued).toBe(1);
+    expect(
+      (await db.queued(user, testProject.id)).map((b) => nameOf(b.commands)),
+    ).toEqual(["Quay", "Dock"]);
+    during.doc.dispose();
+    await during.doc.lettingGo();
+    // The page is still signed in: the change stays, which the next takes.
+    settle(false);
+    expect(window.localStorage.length).toBe(0);
+    const after = await open(db, locks, net, testSession, other);
+    expect(after.doc.store.getState().queued).toBe(2);
+    after.doc.dispose();
+    await after.doc.lettingGo();
+    expect(heard).toEqual([]);
+    // Signed out, the page tells the other tabs, and the next take takes
+    // the change off the device, as of a tab that closed before it had.
+    (await queue.intend(user, named ? [named] : []))(true);
+    expect(heard).toEqual([user]);
+    const next = await open(db, locks, net, testSession, other);
+    expect(next.doc.store.getState().queued).toBe(1);
+    expect(
+      (await db.queued(user, testProject.id)).map((b) => nameOf(b.commands)),
+    ).toEqual(["Dock"]);
+    expect(window.localStorage.length).toBe(0);
+    expect(batches).toEqual([]);
+    next.doc.dispose();
+    await next.doc.lettingGo();
+    await db.close();
+  });
+
+  it("keeps a batch whose try no answer comes to for a while on the device, as sent, with those after it, and settles it once the answer comes", async () => {
+    let answer = (_: unknown) => {};
+    const batches = serve(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const net = connection(true);
+    const locks = fakeLocks();
+    const db = new OfflineDatabase();
+    const queue = deviceQueue(db, { secure: true, locks });
+    const { doc } = await open(db, locks, net, testSession, queue, {
+      answerWait: 20,
+    });
+    const quay = doc.send([rename("bd_a", "Quay", 3)]);
+    await until(doc, (s) => s.queued === 1);
+    expect(await quay).toEqual({ status: "queued" });
+    expect(doc.store.getState().holding).toBe(true);
+    // A change made while the try goes on is kept too, and waits for it.
+    expect(await doc.send([rename("bd_a", "Dock", 3)])).toEqual({
+      status: "queued",
+    });
+    expect(
+      (await db.queued(user, testProject.id)).map((b) => [
+        nameOf(b.commands),
+        b.sent,
+      ]),
+    ).toEqual([
+      ["Quay", true],
+      ["Dock", false],
+    ]);
+    expect(batches).toHaveLength(1);
+    answer(applied(testProject.seq + 1, [{ id: "bd_a", rev: 4 }]));
+    await until(doc, (s) => s.queued === 1 && batches.length === 2);
+    expect(
+      (await db.queued(user, testProject.id)).map((b) => nameOf(b.commands)),
+    ).toEqual(["Dock"]);
+    expect(batches[1]?.[0]?.expected_rev).toEqual({ bd_a: 4 });
+    answer(applied(testProject.seq + 2, [{ id: "bd_a", rev: 5 }]));
+    await until(doc, (s) => s.queued === 0 && !s.holding);
+    expect(await db.queued(user, testProject.id)).toEqual([]);
+    expect(shownName(doc)).toBe("Dock");
+    doc.dispose();
+    await doc.lettingGo();
     await db.close();
   });
 
