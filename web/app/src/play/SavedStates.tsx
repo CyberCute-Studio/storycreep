@@ -114,7 +114,9 @@ export const SavedStates = memo(function SavedStates({
   // of the changes that the device keeps (PRD FR-OFF-03): while the page
   // cannot reach the server, as offline, the section says that they need a
   // connection, in place of a list and controls that would fail, even of a
-  // list read before.
+  // list read before, and its form's Save is disabled, the form keeping the
+  // name typed, as through a try that got no answer, which ends once the
+  // next is answered (DocumentState.holding).
   const online = useServerReachable(doc);
   const userId = useQuery(sessionQuery).data?.user_id;
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -342,9 +344,9 @@ export const SavedStates = memo(function SavedStates({
       >
         {t("play.saved.title")}
       </h3>
-      {editable && online && (
+      {editable && (
         <SaveForm
-          disabled={busy}
+          disabled={busy || !online}
           onSave={(name) =>
             act(async () => {
               const now = session.saving();

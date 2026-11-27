@@ -8,12 +8,14 @@
 // (AC2), and, offline, lists what needs the server, which the pages offer
 // no longer meanwhile, with why (FR-OFF-03 AC3).
 
+import { ApiError } from "@storycreep/shared/api";
 import { formatDateTime } from "@storycreep/shared/i18n";
 import { useQueryClient } from "@tanstack/react-query";
 import { Dialog } from "radix-ui";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { sessionQuery } from "../api";
+import { refusalOf } from "../auth/refusal";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import type { PendingBatch } from "../document/store";
 import { Button } from "../ui/Button";
@@ -86,10 +88,20 @@ export function SyncIndicator({ projectId }: { projectId: string }) {
 /** What each change of the panel says it is. */
 function useBatchState(batch: PendingBatch): string {
   const { t } = useTranslation();
-  // What the server said as it refused the change last, if it did.
+  // What the server said as it refused the change last, if it did, in the
+  // words of the app's catalog where the app knows its code, as a form
+  // says it (refusalOf), or else its status, as of a proxy's page.
+  const refusal = batch.refusal;
   const reason =
-    batch.refusal?.error?.message ??
-    t("sync.batch.status", { status: batch.refusal?.status ?? 0 });
+    (refusal?.error === undefined
+      ? undefined
+      : refusalOf(
+          new ApiError(
+            new Response(null, { status: refusal.status }),
+            refusal.error,
+          ),
+          t,
+        ).message) ?? t("sync.batch.status", { status: refusal?.status ?? 0 });
   switch (batch.state) {
     case "sending":
       return t("sync.batch.sending");
@@ -230,8 +242,8 @@ function SyncPanel({
             {t("sync.panel.review_title")}
           </h3>
           <ul className="space-y-2">
-            {review.map((batch) => (
-              <BatchItem key={batch.id} batch={batch} />
+            {review.map((batch, i) => (
+              <BatchItem key={batch.id ?? i} batch={batch} />
             ))}
           </ul>
         </section>
@@ -245,7 +257,7 @@ function SyncPanel({
         ) : (
           <ul className="space-y-2">
             {pending.map((batch, i) => (
-              <BatchItem key={batch.id === "" ? i : batch.id} batch={batch} />
+              <BatchItem key={batch.id ?? i} batch={batch} />
             ))}
           </ul>
         )}

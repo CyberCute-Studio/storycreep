@@ -240,29 +240,32 @@ export function RenameKeyDialog({
     previewed === key &&
     lists.every((list) => list.isSuccess && !list.isRefetching) &&
     !tooLong;
+  // Whether the server refused the read of list for the key, as one that
+  // another of its scope has, or that is no identifier, which it would
+  // refuse again, and the rename with it; not for when it was asked, a
+  // request that took too long (408) or one of too many (429), which it may
+  // not refuse later.
+  const refusedKey = (list: (typeof lists)[number]) =>
+    list.error instanceof ApiError &&
+    list.error.status < 500 &&
+    list.error.status !== 408 &&
+    list.error.status !== 429;
   // A preview of the key, read before the page lost the server, that finds
-  // an expression which the rename would make too long refuses the rename
-  // offline too, as the server would once it is sent, which would hold the
-  // changes after it until the user decides.
+  // an expression which the rename would make too long, or that the server
+  // refused, as the field says, refuses the rename offline too, as the
+  // server would once it is sent, which would hold the changes after it
+  // until the user decides.
   const knownTooLong = previewed === key && tooLong;
+  const knownRefused =
+    knownTooLong ||
+    (previewed === key &&
+      lists.some((list) => list.isError && refusedKey(list)));
   // A preview whose read failed, as once the browser's connection was lost,
   // is read again once the user asks for it again, but for one that the
-  // server refused, which it would refuse again; one that it refused for
-  // when it was asked, a request that took too long (408) or one of too
-  // many (429), which it may not refuse later, is read again too.
+  // server refused for the key (refusedKey).
   const failed =
     previewed === key &&
-    lists.some(
-      (list) =>
-        list.isError &&
-        !list.isFetching &&
-        !(
-          list.error instanceof ApiError &&
-          list.error.status < 500 &&
-          list.error.status !== 408 &&
-          list.error.status !== 429
-        ),
-    );
+    lists.some((list) => list.isError && !list.isFetching && !refusedKey(list));
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (unchanged) {
@@ -282,7 +285,7 @@ export function RenameKeyDialog({
       }
       return;
     }
-    if (!ready && (reachable || knownTooLong)) {
+    if (!ready && (reachable || knownRefused)) {
       return;
     }
     commands.mutate(
@@ -329,7 +332,7 @@ export function RenameKeyDialog({
             }}
             error={refusal?.fields.key}
           />
-          {!reachable && !unchanged && !knownTooLong && (
+          {!reachable && !unchanged && !knownRefused && (
             <p className="text-fg-muted">{t("rename.preview_offline")}</p>
           )}
           {!reachable && !unchanged && knownTooLong && (
@@ -363,7 +366,7 @@ export function RenameKeyDialog({
               variant="primary"
               disabled={
                 commands.isPending ||
-                (!reachable && !unchanged && knownTooLong) ||
+                (!reachable && !unchanged && knownRefused) ||
                 (reachable &&
                   previewed === key &&
                   !unchanged &&

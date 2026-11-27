@@ -95,20 +95,35 @@ export function pendingExport(
   };
 }
 
-/** Returns the batches of projectId that a document lists, as the JSON file holds them. */
+/**
+ * Returns the batches of projectId that a document lists, as the JSON file
+ * holds them, with their commands as the command endpoint takes them: not
+ * one that waits for a step of the history, whose commands have no IDs
+ * until it is queued, once the step has settled (PendingBatch.id).
+ */
 export function exportedOf(
   projectId: string,
   batches: readonly PendingBatch[],
 ): ExportedBatch[] {
-  return batches.map((batch) => ({
-    project_id: projectId,
-    id: batch.id,
-    made_at: batch.time,
-    state: batch.state,
-    sent: batch.sent,
-    commands: batch.commands,
-    ...(batch.refusal === undefined ? {} : { refusal: batch.refusal }),
-  }));
+  return batches.flatMap((batch) => {
+    const commands = batch.commands.filter(
+      (command): command is CommandBody => "command_id" in command,
+    );
+    if (batch.id === undefined || commands.length < batch.commands.length) {
+      return [];
+    }
+    return [
+      {
+        project_id: projectId,
+        id: batch.id,
+        made_at: batch.time,
+        state: batch.state,
+        sent: batch.sent,
+        commands,
+        ...(batch.refusal === undefined ? {} : { refusal: batch.refusal }),
+      },
+    ];
+  });
 }
 
 /** Returns the name of the file of the pending changes exported at now. */

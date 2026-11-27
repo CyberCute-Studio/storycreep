@@ -1845,6 +1845,8 @@
   "sign_out.pending.confirm": "Sign out anyway",
   "sign_out.pending.export": "Export as JSON",
   "sign_out.pending.title": "{count, plural, one {Sign out and lose a change not yet sent?} other {Sign out and lose # changes not yet sent?}}",
+  "sign_out.unread.body": "This device could not read whether it keeps changes that you made offline that have not reached the server yet. Signing out removes any that it keeps from this device for good.",
+  "sign_out.unread.title": "Sign out and lose any changes not yet sent?",
   "signup.closed": "Registration is closed on this instance. Ask its administrator for an account.",
   "signup.have_account": "Have an account already?",
   "signup.invite_only": "You need an invitation to register on this instance. Open the link of your invitation.",

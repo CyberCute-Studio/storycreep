@@ -68,7 +68,13 @@ export interface QueueNews {
   owner: string;
 }
 
-/** The channel that tells the browser's other tabs which documents keep batches. */
+/**
+ * The channel that tells the documents of the browser's tabs, this one's
+ * too, which documents keep batches: each listener hears what any posts,
+ * as a document of the tab that took a project's batches after another of
+ * the tab was dropped hears of what that one kept since, which it takes
+ * once that one lets go (adopt).
+ */
 export interface QueueBroadcast {
   post(news: QueueNews): void;
   listen(listener: (news: QueueNews) => void): () => void;
@@ -79,11 +85,15 @@ export function queueBroadcast(): QueueBroadcast | undefined {
   if (typeof BroadcastChannel === "undefined") {
     return undefined;
   }
-  const channel = new BroadcastChannel("storycreep-queue");
+  const name = "storycreep-queue";
+  const channel = new BroadcastChannel(name);
   return {
     post: (news) => channel.postMessage(news),
+    // Each listener on a channel object of its own, which hears what the
+    // tab's posts, as a BroadcastChannel never hears what it posts itself.
     listen: (listener) => {
-      const on = (event: MessageEvent) => {
+      const own = new BroadcastChannel(name);
+      own.addEventListener("message", (event: MessageEvent) => {
         const news = event.data as Partial<QueueNews> | null;
         if (
           typeof news?.user === "string" &&
@@ -92,9 +102,8 @@ export function queueBroadcast(): QueueBroadcast | undefined {
         ) {
           listener(news as QueueNews);
         }
-      };
-      channel.addEventListener("message", on);
-      return () => channel.removeEventListener("message", on);
+      });
+      return () => own.close();
     },
   };
 }

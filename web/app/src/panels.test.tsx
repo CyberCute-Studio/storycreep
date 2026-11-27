@@ -1193,6 +1193,48 @@ describe("the variables", () => {
     ).toHaveProperty("disabled", true);
   });
 
+  it("does not rename offline to a key whose preview the server refused before the connection went", async () => {
+    const user = userEvent.setup();
+    const calls = fakeApi((operation, input) => {
+      if (operation === "previewVariableRename") {
+        throw refused(409, { code: "key_taken" });
+      }
+      return expected(contentPages(operation, input, content), operation);
+    });
+    renderApp(`/projects/${testProject.id}/variables?variable=var_rep`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "rep" });
+    await user.click(within(panel).getByRole("button", { name: "Rename…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename rep" });
+    const key = within(dialog).getByLabelText("New key");
+    await user.clear(key);
+    await user.type(key, "trust");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Show what changes" }),
+    );
+    expect(
+      await within(dialog).findByText(
+        "Another variable of its scope has this key. Choose another, or another scope.",
+      ),
+    ).toBeDefined();
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    try {
+      const rename = within(dialog).getByRole("button", { name: "Rename" });
+      expect(rename).toHaveProperty("disabled", true);
+      await user.type(key, "{Enter}");
+      expect(batches(calls)).toEqual([]);
+    } finally {
+      vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+      act(() => {
+        window.dispatchEvent(new Event("online"));
+      });
+    }
+  });
+
   it("lists what uses a variable when its deletion is refused, and deletes it anyway for a role that may publish", async () => {
     const user = userEvent.setup();
     const usage = {

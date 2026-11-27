@@ -136,11 +136,17 @@ export type SendResult = CommandResultBody | Queued;
 
 /** A batch of the page's that the server has yet to answer, as the sync panel lists it (PRD FR-OFF-06). */
 export interface PendingBatch {
-  /** Its ID, the queue's record's for a queued batch, else its first command's. */
-  id: string;
+  /**
+   * Its ID, the queue's record's for a queued batch, else its first
+   * command's, or none of one that waits for a step of the history, which
+   * is queued, its commands given their IDs, once the step has settled
+   * (sendAfterSteps).
+   */
+  id: string | undefined;
   /** When the page made it. */
   time: string;
-  commands: readonly CommandBody[];
+  /** Its commands, each with its command_id, but of one that has no ID yet (id). */
+  commands: readonly Command[];
   /**
    * sending, on its way to the server or about to be; queued, in the
    * device's queue, waiting for the server; review, refused by the server
@@ -1121,12 +1127,17 @@ export class ProjectDocument {
           });
     if (queue !== undefined) {
       // The queue is sent once the browser is online again, and once the
-      // page has its own session, as one that started offline asks for it.
+      // page has its own session, as one that started offline asks for it;
+      // not one that waits after a refusal for when it was sent, as of too
+      // many requests, which a try at once would meet again, as the channel
+      // live again does not either.
       const onConnection = options.onConnection;
       if (onConnection !== undefined) {
         this.stopFollowing.push(
           onConnection((online) => {
-            if (online) {
+            if (online && this.retryReason === "refused") {
+              this.tryNow();
+            } else if (online) {
               this.tryAgainNow();
             } else {
               this.show();
@@ -1530,10 +1541,21 @@ export class ProjectDocument {
    * Takes batches of another tab's document that closed, after the
    * document's own, which none of them was made on top of (moveQueued), and
    * sends them, undo taking each out of the queue in the order that they
-   * were made, among the document's own (withdrawable).
+   * were made, among the document's own (withdrawable), once no step of the
+   * history is under way: one whose answer joined the history meanwhile
+   * would be the latest change, past the step that the step under way
+   * found, which it would then send over it (stepped).
    */
   private adoptMore(batches: QueuedBatch[]): void {
     if (this.disposed) {
+      return;
+    }
+    const underWay = this.stepUnderWay;
+    if (underWay !== undefined) {
+      // Taken as the document's all the same, which, once dropped meanwhile,
+      // leaves them to the next that takes its batches (dispose).
+      const after = () => this.adoptMore(batches);
+      void underWay.done.then(after, after);
       return;
     }
     for (const batch of batches) {
@@ -3335,7 +3357,7 @@ export class ProjectDocument {
       }
       const held = entry.held;
       pending.push({
-        id: held?.id ?? entry.commands[0]?.command_id ?? "",
+        id: held?.id ?? entry.commands[0]?.command_id,
         time: entry.time,
         commands: entry.commands,
         // A batch of the queue on its way is being sent, which the device
@@ -3352,9 +3374,9 @@ export class ProjectDocument {
     }
     for (const waiting of this.waiting) {
       pending.push({
-        id: "",
+        id: undefined,
         time: waiting.time,
-        commands: waiting.commands as CommandBody[],
+        commands: waiting.commands,
         state: "sending",
         sent: false,
       });
@@ -3964,7 +3986,8 @@ export class ProjectDocument {
    * with error, as it would be without a queue, or, given none, as while a
    * batch before it needs review, with the device's refusal itself, which
    * the error console records. A change that the queue keeps ends what the
-   * history could redo, as its answer would.
+   * history could redo, as its answer would, once the device has written it
+   * (persist).
    */
   private keep(error?: Error): void {
     const fresh = this.entries.filter(
@@ -3976,9 +3999,6 @@ export class ProjectDocument {
     for (const entry of fresh) {
       entry.held = this.batchOf(entry);
       entry.dirty = true;
-    }
-    if (fresh.some((e) => e.history)) {
-      this.history.endRedo();
     }
     this.queueChanged();
     // Its caller is told once the write has kept it (persist).
@@ -4027,7 +4047,10 @@ export class ProjectDocument {
    * document dropped that has let go of its lock refuses to write, as
    * another tab's may hold its batches since (letGo), and so does one that
    * the browser refused its lock (lockRefused). Each batch that the write
-   * keeps for the first time tells its caller that it is queued (queued).
+   * keeps for the first time tells its caller that it is queued (queued),
+   * and, as a change of the history's, ends what the history could redo,
+   * which a change that the device refused to keep, as for its quota, whose
+   * caller is told that it failed, leaves as it was (History.endRedo).
    */
   private persist(remove: readonly string[] = []): Promise<void> {
     const queue = this.queue;
@@ -4104,6 +4127,9 @@ export class ProjectDocument {
         entry.stored = true;
         entry.queued?.();
       }
+      if (fresh.some((e) => e.history)) {
+        this.history.endRedo();
+      }
       if (fresh.length > 0) {
         this.show();
       }
@@ -4138,13 +4164,21 @@ export class ProjectDocument {
     });
   }
 
-  /** Returns the batch of entry as the device's queue keeps it, with changes, as of what entry holds now. */
+  /**
+   * Returns the batch of entry as the device's queue keeps it, with changes,
+   * as of what entry holds now: its latest refusal, unless changes give
+   * another, or none (null), as once a try after it got no answer, which
+   * the sync panel says instead.
+   */
   private batchOf(
     entry: Entry,
-    changes: Partial<Pick<QueuedBatch, "state" | "refusal" | "sent">> = {},
+    changes: Partial<Pick<QueuedBatch, "state" | "sent">> & {
+      refusal?: Refusal | null;
+    } = {},
   ): QueuedBatch {
     const held = entry.held;
-    const refusal = changes.refusal ?? held?.refusal;
+    const refusal =
+      changes.refusal === null ? undefined : (changes.refusal ?? held?.refusal);
     return {
       id: held?.id ?? formatUuid(newUuid()),
       owner: this.owner,
@@ -4444,6 +4478,22 @@ export class ProjectDocument {
         // of the batch, as the channel would bring it later.
         this.adopt(error);
       }
+      if (!this.entries.includes(entry)) {
+        // A batch whose operation the channel brought while its try was
+        // under way applied (confirm), whatever the try met after, as no
+        // answer, or a failure of the server's own: the device's queue
+        // keeps it no longer, and its caller, which no answer tells of what
+        // it did, is refused, as it would be without a queue, but for one of
+        // the queue's, which was told that it is queued, rather than kept,
+        // and never settled, holding the document's lock.
+        if (entry.held !== undefined) {
+          this.persistLater([entry.held.id]);
+          this.queueChanged();
+        } else {
+          this.refuse(entry, error, known);
+        }
+        return;
+      }
       if (this.retried(entry, error)) {
         if (entry.held !== undefined) {
           // Refused, it applied nothing, and is sent again with new IDs.
@@ -4551,9 +4601,6 @@ export class ProjectDocument {
       if (held === undefined) {
         entry.held = this.batchOf(entry, { sent: reached });
         entry.dirty = true;
-        if (entry.history) {
-          this.history.endRedo();
-        }
         const known = entry.known as Known;
         // Its caller is told once the write has kept it (persist).
         this.persist().catch((failure: unknown) => {
@@ -4579,7 +4626,12 @@ export class ProjectDocument {
           }
         });
       } else {
-        entry.held = this.batchOf(entry, { sent: sentBefore || reached });
+        // Sent with no answer, it may have applied, which the sync panel
+        // says, rather than the refusal of a try before.
+        entry.held = this.batchOf(entry, {
+          sent: sentBefore || reached,
+          ...(reached ? { refusal: null } : {}),
+        });
         entry.dirty = true;
         this.persistLater();
       }

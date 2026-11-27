@@ -496,4 +496,31 @@ describe("signing out", () => {
     );
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
+
+  it("asks first where it cannot read the device, which may keep changes all the same, and takes any off it once the user signs out anyway", async () => {
+    serve();
+    const user = userEvent.setup();
+    const { doc, offlineDb } = await openProject();
+    const db = offlineDb as OfflineDatabase;
+    setOnline(false);
+    await act(() => doc.send([renameQuay("Pier")]));
+    await indicator("Offline, 1 change on this device");
+    setOnline(true);
+    const queued = db.queued.bind(db);
+    vi.spyOn(db, "queued").mockRejectedValue(new Error("Unreadable."));
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    const asked = await screen.findByRole("alertdialog", {
+      name: "Sign out and lose any changes not yet sent?",
+    });
+    expect(
+      within(asked).queryByRole("button", { name: "Export as JSON" }),
+    ).toBeNull();
+    await user.click(
+      within(asked).getByRole("button", { name: "Sign out anyway" }),
+    );
+    await waitFor(async () =>
+      expect(await queued(testSession.user_id)).toEqual([]),
+    );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
 });

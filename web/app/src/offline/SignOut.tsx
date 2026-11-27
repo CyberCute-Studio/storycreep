@@ -9,7 +9,11 @@
 // clicks, once it has opened, as on a page that has just loaded, and once
 // the page's documents have written the changes that they were keeping,
 // and again as the user signs out anyway, which asks anew where the device
-// keeps changes since that the dialog did not name.
+// keeps changes since that the dialog did not name. A database that does
+// not open in time, as one that another tab blocks, or that cannot be read,
+// may keep some all the same: signing out asks first then too, saying
+// that it could not read them, and, signed out anyway, takes any off the
+// device once it can.
 
 import type { SignedInBody } from "@storycreep/shared/api";
 import { AlertDialog } from "radix-ui";
@@ -60,8 +64,9 @@ export function SignOutButton({
   const keeper = useKeeper();
   const documents = useDocuments();
   // The account's changes that the device keeps, once the click has found
-  // some, while the dialog that asks is open.
-  const [asked, setAsked] = useState<QueueRecord[]>();
+  // some, or unread, where it could not read them, while the dialog that
+  // asks is open.
+  const [asked, setAsked] = useState<QueueRecord[] | "unread">();
   const [reading, setReading] = useState(false);
   const userId = session.user_id;
   // The device's database, unless the page knows that it keeps nothing, as
@@ -71,8 +76,12 @@ export function SignOutButton({
     keeper !== undefined && keeper.store.getState().available !== false
       ? keeper.db
       : undefined;
-  /** Resolves to the account's changes that the device keeps, none where it cannot read them. */
-  const read = async (): Promise<QueueRecord[]> => {
+  /**
+   * Resolves to the account's changes that the device keeps, none where it
+   * keeps none, or undefined where it cannot read them, as of a database
+   * that does not open within openWait.
+   */
+  const read = async (): Promise<QueueRecord[] | undefined> => {
     const db = dbNow();
     if (db === undefined) {
       return [];
@@ -83,13 +92,16 @@ export function SignOutButton({
       // one made just before, is on the device once its write is done.
       await documents.whenWritten(openWait);
       return (await opensWithin(db, openWait))
-        ? await db.queued(userId).catch(() => [])
-        : [];
+        ? await db.queued(userId).catch(() => undefined)
+        : undefined;
     } finally {
       setReading(false);
     }
   };
-  const end = async (records: readonly QueueRecord[]) => {
+  // Signs out, and takes off the device the changes that the user signed
+  // out anyway with, those named, or, of a device that could not be read,
+  // any (undefined).
+  const end = async (records: readonly QueueRecord[] | undefined) => {
     try {
       await signOut.mutateAsync(session);
     } catch {
@@ -97,7 +109,7 @@ export function SignOutButton({
       return;
     }
     setAsked(undefined);
-    if (records.length > 0) {
+    if (records === undefined || records.length > 0) {
       // The user decided: the changes go with the account's copies, and no
       // document that held them writes one there again.
       await (
@@ -107,24 +119,26 @@ export function SignOutButton({
   };
   const click = async () => {
     const records = await read();
-    if (records.length === 0) {
+    if (records?.length === 0) {
       await end([]);
     } else {
-      setAsked(records);
+      setAsked(records ?? "unread");
     }
   };
   // Signing out anyway takes off the device the changes that the dialog
-  // named, and asks anew where it keeps one since that it did not name.
-  const confirm = async (named: readonly QueueRecord[]) => {
+  // named, or any, where it could not read them, and asks anew where it
+  // keeps one that it did not name, as one that it reads now.
+  const confirm = async (named: readonly QueueRecord[] | undefined) => {
     const records = await read();
-    const known = new Set(named.map((r) => `${r.project_id}/${r.id}`));
-    if (records.some((r) => !known.has(`${r.project_id}/${r.id}`))) {
+    const known = new Set((named ?? []).map((r) => `${r.project_id}/${r.id}`));
+    if (records?.some((r) => !known.has(`${r.project_id}/${r.id}`))) {
       setAsked(records);
       return;
     }
     await end(named);
   };
-  const count = asked?.length ?? 0;
+  const named = Array.isArray(asked) ? asked : undefined;
+  const count = named?.length ?? 0;
   return (
     <>
       <Button
@@ -144,27 +158,37 @@ export function SignOutButton({
         }}
       >
         <ConfirmFrame
-          title={t("sign_out.pending.title", { count })}
-          description={t("sign_out.pending.body", { count })}
+          title={
+            named === undefined
+              ? t("sign_out.unread.title")
+              : t("sign_out.pending.title", { count })
+          }
+          description={
+            named === undefined
+              ? t("sign_out.unread.body")
+              : t("sign_out.pending.body", { count })
+          }
         >
-          <div className="flex flex-wrap gap-2">
-            <Button
-              onClick={() => {
-                const now = new Date().toISOString();
-                saveJson(
-                  exportFileName(now),
-                  pendingExport(userId, exportedOfRecords(asked ?? []), now),
-                );
-              }}
-            >
-              {t("sign_out.pending.export")}
-            </Button>
-          </div>
+          {named !== undefined && (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                onClick={() => {
+                  const now = new Date().toISOString();
+                  saveJson(
+                    exportFileName(now),
+                    pendingExport(userId, exportedOfRecords(named), now),
+                  );
+                }}
+              >
+                {t("sign_out.pending.export")}
+              </Button>
+            </div>
+          )}
           <ConfirmButtons
             cancel={t("sign_out.pending.cancel")}
             confirm={t("sign_out.pending.confirm")}
             pending={signOut.isPending || reading}
-            onConfirm={() => void confirm(asked ?? [])}
+            onConfirm={() => void confirm(named)}
           />
         </ConfirmFrame>
       </AlertDialog.Root>
