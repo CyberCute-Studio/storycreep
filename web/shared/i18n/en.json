@@ -1083,6 +1083,7 @@
   "offline.full_notice": "This device's storage is full, so “{name}” could not be kept offline.",
   "offline.full_notice_link": "Make room in Offline storage",
   "offline.image": "The image needs a connection, which this device does not have now.",
+  "offline.kept_link": "The projects on this device",
   "offline.needs_connection.body": "This page reads the server, which this device cannot reach now. The boards, the variables, the components, and play mode work offline, from the copy of the project on this device.",
   "offline.needs_connection.title": "This page needs a connection",
   "offline.notice.copy": "You are offline. The project is shown as this device kept it, as of {time}.",

@@ -530,11 +530,10 @@ export interface StartingCopy {
 export interface CopySource {
   /** Resolves to the seq of the copy of projectId that the device keeps for userId, without its entities, or to undefined for none, without rejecting. */
   seqOf(userId: string, projectId: string): Promise<number | undefined>;
-  /** Resolves to that copy, or to undefined for none, or once signal aborts, as for a copy passed over, without rejecting. */
+  /** Resolves to that copy, or to undefined for none, without rejecting. */
   readCopy(
     userId: string,
     projectId: string,
-    signal?: AbortSignal,
   ): Promise<StartingCopy | undefined>;
 }
 
@@ -983,40 +982,29 @@ export class ProjectDocument {
 
   private async start(): Promise<void> {
     // The copy of the project that the device keeps, where it keeps one
-    // (PRD FR-OFF-02), read while the project is, which the document starts
-    // from, holding every part that it holds as of its seq, whose
-    // operations since the channel brings, as it does those of a document
-    // that the socket missed, rather than have the parts read anew: where
-    // the copy is as of the project's seq, as of a project that has not
-    // changed since it was written, and, while the browser has no
-    // connection, of any seq before. Online, a copy behind the project's
-    // seq is not used: the document reads the project from the server, as
-    // without a copy, rather than bring the copy up to it. A copy of a seq
-    // past the project's is of what the server no longer has, as a database
-    // restored from an older backup, and is passed over. The copy's seq is
-    // read alone too, which tells whether the copy is used before the read
-    // of the whole of it has ended: the start waits for that read only where
-    // it uses the copy, and lets it go otherwise, so that a copy passed over
-    // costs the start no wait for the whole of it.
+    // (PRD FR-OFF-02), which the document starts from, holding every part
+    // that it holds as of its seq, whose operations since the channel
+    // brings, as it does those of a document that the socket missed, rather
+    // than have the parts read anew: where the copy is as of the project's
+    // seq, as of a project that has not changed since it was written, and,
+    // while the browser has no connection, of any seq before. Online, a copy
+    // behind the project's seq is not used: the document reads the project
+    // from the server, as without a copy, rather than bring the copy up to
+    // it. A copy of a seq past the project's is of what the server no longer
+    // has, as a database restored from an older backup, and is passed over.
+    // The copy's seq is read alone first, while the project is, which tells
+    // whether the copy is used, and the whole of it only where it is, so
+    // that a copy passed over costs the start no read of its entities,
+    // which the browser would hand the page as it loads, for nothing.
     const userId = this.userId;
     const copies = this.options.copies;
-    const passed = new AbortController();
     const peeking =
       userId === undefined || copies === undefined
         ? undefined
         : copies.seqOf(userId, this.projectId).catch(() => undefined);
-    const copying =
-      userId === undefined || copies === undefined
-        ? undefined
-        : copies
-            .readCopy(userId, this.projectId, passed.signal)
-            .catch(() => undefined);
-    let body = await this.options.queryClient
-      .ensureQueryData(projectQuery(this.projectId))
-      .catch((error: unknown) => {
-        passed.abort();
-        throw error;
-      });
+    let body = await this.options.queryClient.ensureQueryData(
+      projectQuery(this.projectId),
+    );
     const seq = await peeking;
     // The read of the project that the query client holds may be older than
     // the copy, as one kept from before another tab wrote it, whose seq the
@@ -1030,16 +1018,15 @@ export class ProjectDocument {
         .catch(() => held);
     }
     if (this.disposed) {
-      passed.abort();
       return;
     }
     const used =
       seq !== undefined &&
       (seq === body.seq || (seq < body.seq && !this.isOnline()));
-    if (!used) {
-      passed.abort();
-    }
-    const copy = used ? await copying : undefined;
+    const copy =
+      used && userId !== undefined && copies !== undefined
+        ? await copies.readCopy(userId, this.projectId).catch(() => undefined)
+        : undefined;
     if (this.disposed) {
       return;
     }

@@ -8,6 +8,7 @@ import { testProject, testWorkspace } from "../test/fake";
 import type { Workspace } from "../workspace/queries";
 import {
   type CopyRecord,
+  copyFormat,
   copySource,
   type KeptSession,
   OfflineDatabase,
@@ -81,7 +82,7 @@ function docOf(seq: number, boards: Board[], nodes: Node[]): Doc {
 
 function recordOf(
   seq: number,
-): Omit<CopyRecord, "version" | "bytes" | "parts"> {
+): Omit<CopyRecord, "format" | "version" | "bytes" | "parts"> {
   return {
     user_id: user,
     project_id: testProject.id,
@@ -180,6 +181,30 @@ describe("the device's copies", () => {
     copy = await db.readCopy(user, testProject.id);
     expect([...(copy?.doc.nodes.keys() ?? [])]).toEqual(["nd_9"]);
     expect([...(copy?.doc.boards.keys() ?? [])]).toEqual(["bd_a"]);
+  });
+
+  it("sizes each entity once, though a document read anew holds new ones of them all", async () => {
+    await pin();
+    const first = docOf(
+      1,
+      [board("bd_a"), board("bd_b")],
+      [node("nd_1", "bd_a"), node("nd_2", "bd_a")],
+    );
+    const one = await db.writeCopy(recordOf(1), first, undefined);
+    const anew = docOf(
+      2,
+      [board("bd_a"), board("bd_b")],
+      [node("nd_1", "bd_a"), node("nd_2", "bd_a")],
+    );
+    const stringify = vi.spyOn(JSON, "stringify");
+    const two = await db.writeCopy(recordOf(2), anew, one);
+    const sized = stringify.mock.calls.filter(
+      ([value]) =>
+        typeof value === "object" && value !== null && "rev" in value,
+    );
+    // The new entities alone, not those of the write that it is made on too.
+    expect(sized).toHaveLength(4);
+    expect(two?.bytes).toBe(one?.bytes);
   });
 
   it("counts the bytes of its records as their JSON takes in UTF-8", async () => {
@@ -295,6 +320,19 @@ describe("the device's pins", () => {
     expect(await tx.store.count()).toBe(0);
   });
 
+  it("names a pin as the project of its copy last written, as once it was renamed", async () => {
+    await pin();
+    await db.writeCopy(
+      {
+        ...recordOf(1),
+        project: { ...testProject, seq: 1, name: "Lighthouse" },
+      },
+      docOf(1, [board("bd_a")], []),
+      undefined,
+    );
+    expect((await db.pins(user))[0].name).toBe("Lighthouse");
+  });
+
   it("keeps the status of a pin, and why it failed, until a write succeeds", async () => {
     await pin();
     await db.setStatus(user, testProject.id, "failed", "quota");
@@ -333,6 +371,9 @@ function sessionOf(u: string, savedAt = "2026-11-26T10:00:00Z"): KeptSession {
 describe("the device's records of each account", () => {
   it("takes out every account's records but the one kept, or every one's", async () => {
     for (const u of ["usr_jo", "usr_kim"]) {
+      // The records of two accounts, as of a device of an earlier version,
+      // which recorded no account's (DeviceRecord).
+      await (await db.open()).delete("device", "account");
       await pin(pinOf(u));
       await db.writeCopy(
         { ...recordOf(1), user_id: u },
@@ -357,6 +398,41 @@ describe("the device's records of each account", () => {
     expect(await db.pins("usr_jo")).toEqual([]);
     const tx = (await db.open()).transaction("entities");
     expect(await tx.store.count()).toBe(0);
+  });
+
+  it("makes no pin of an account once it has taken its records out, as of a tab that has yet to find that another signed out", async () => {
+    // A device that has pinned nothing has nothing written to it as pages
+    // follow their sessions.
+    await db.deleteAllBut(undefined);
+    await db.deleteAllBut(user);
+    expect(await (await db.open()).count("device")).toBe(0);
+    await pin();
+    await db.deleteAllBut(undefined);
+    const now = "2026-11-26T12:00:00Z";
+    await db.changePin(user, testProject.id, () => pinOf());
+    await db.markOpened(
+      user,
+      "prj_other",
+      () => ({ ...pinOf(user, "prj_other"), auto: true }),
+      now,
+    );
+    expect(await db.pins(user)).toEqual([]);
+    // Nor of one but the account whose records it keeps since.
+    await db.deleteAllBut("usr_kim");
+    await db.changePin(user, testProject.id, () => pinOf());
+    expect(await db.pins(user)).toEqual([]);
+    await pin(pinOf("usr_kim"));
+    expect(await db.pins("usr_kim")).toHaveLength(1);
+    // The account signed in again, as a tab finds, is kept again.
+    await db.deleteAllBut(user);
+    await pin();
+    await db.markOpened(
+      user,
+      "prj_other",
+      () => ({ ...pinOf(user, "prj_other"), auto: true }),
+      now,
+    );
+    expect(await db.pins(user)).toHaveLength(2);
   });
 
   it("keeps an account's session only while the account pins a project", async () => {
@@ -412,38 +488,38 @@ describe("where a project's document finds the device's copy", () => {
     ).toBeUndefined();
   });
 
-  it("tells the copy's seq without its entities, and lets go of a read of the whole of it once its reader no longer uses it", async () => {
+  it("tells the copy's seq without its entities", async () => {
     await pin();
     await db.writeCopy(recordOf(1), docOf(1, [board("bd_a")], []), undefined);
-    const getAll = IDBObjectStore.prototype.getAll;
-    let during: AbortController | undefined;
-    const reads = vi
-      .spyOn(IDBObjectStore.prototype, "getAll")
-      .mockImplementation(function (
-        this: IDBObjectStore,
-        ...args: Parameters<IDBObjectStore["getAll"]>
-      ) {
-        // The reader lets the read go as the browser reads the entities.
-        const request = getAll.apply(this, args);
-        during?.abort();
-        return request;
-      });
+    const reads = vi.spyOn(IDBObjectStore.prototype, "getAll");
     expect(await db.copySeq(user, testProject.id)).toBe(1);
     expect(await db.copySeq(user, "prj_other")).toBeUndefined();
     expect(reads).not.toHaveBeenCalled();
-    const before = new AbortController();
-    before.abort();
-    await expect(
-      db.readCopy(user, testProject.id, before.signal),
-    ).rejects.toThrow();
-    during = new AbortController();
-    await expect(
-      db.readCopy(user, testProject.id, during.signal),
-    ).rejects.toThrow();
-    expect(
-      await copySource(db, true).readCopy(user, testProject.id, before.signal),
-    ).toBeUndefined();
-    during = undefined;
-    expect((await db.readCopy(user, testProject.id))?.doc.seq).toBe(1);
+  });
+
+  it("finds none of a copy of another format, as of another version of the app, which a write replaces whole", async () => {
+    await pin();
+    const first = docOf(1, [board("bd_a")], []);
+    const one = await db.writeCopy(recordOf(1), first, undefined);
+    const [record] = await db.copies(user);
+    expect(record.format).toBe(copyFormat);
+    // Another version's copy, of another format, with an entity of its own.
+    const connection = await db.open();
+    await connection.put("copies", { ...record, format: copyFormat + 1 });
+    await connection.put("entities", {
+      user_id: user,
+      project_id: testProject.id,
+      id: "nd_old",
+      kind: "nodes",
+      entity: node("nd_old", "bd_a"),
+    });
+    expect(await db.copySeq(user, testProject.id)).toBeUndefined();
+    expect(await db.readCopy(user, testProject.id)).toBeUndefined();
+    // A write made on what this version wrote before writes the whole
+    // document in its place, rather than what changed alone.
+    await db.writeCopy(recordOf(2), { ...first, seq: 2 }, one);
+    expect(await db.copySeq(user, testProject.id)).toBe(2);
+    const copy = await db.readCopy(user, testProject.id);
+    expect([...(copy?.doc.nodes.keys() ?? [])]).toEqual([]);
   });
 });

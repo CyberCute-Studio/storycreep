@@ -8,10 +8,14 @@
 // comments, the trash, the access, and the settings, that it needs a
 // connection. The boards, the variables, the components, and their types
 // read the project's document, which the device's copy holds; the
-// validation and the dependency view go offline with plan item 93.
+// validation and the dependency view go offline with plan item 93. Each
+// leads to the storage panel, where the device keeps projects for the
+// account, which leads to each, as nothing else that a page offline shows
+// does, as the project list, which needs a connection.
 
 import { formatDateTime } from "@storycreep/shared/i18n";
 import { useTranslation } from "react-i18next";
+import { TextLink } from "../ui/Page";
 import { useOffline } from "./react";
 
 /**
@@ -38,6 +42,15 @@ export const offlinePages: ReadonlySet<string> = new Set([
   "/projects/$projectId/component-types",
 ]);
 
+/** The link to the storage panel, which lists the projects that the device keeps for the account, each a link to it, or nothing where it keeps none. */
+function KeptLink() {
+  const { t } = useTranslation();
+  const kept = useOffline((s) => s.pins.size > 0);
+  return kept ? (
+    <TextLink to="/account/offline">{t("offline.kept_link")}</TextLink>
+  ) : null;
+}
+
 /** The notice of a project's pages while the browser has no connection, of the copy of projectId that the device keeps, if it keeps one. */
 export function OfflineNotice({ projectId }: { projectId: string }) {
   const { t, i18n } = useTranslation();
@@ -49,7 +62,8 @@ export function OfflineNotice({ projectId }: { projectId: string }) {
           ? t("offline.notice.no_copy")
           : t("offline.notice.copy", {
               time: formatDateTime(i18n.language, new Date(copy.savedAt)),
-            })}
+            })}{" "}
+        <KeptLink />
       </p>
     </div>
   );
@@ -64,6 +78,9 @@ export function NeedsConnection() {
         {t("offline.needs_connection.title")}
       </h1>
       <p>{t("offline.needs_connection.body")}</p>
+      <p>
+        <KeptLink />
+      </p>
     </div>
   );
 }

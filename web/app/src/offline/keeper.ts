@@ -19,7 +19,8 @@
 // tells the others (BroadcastChannel), whose keepers read them again. Every
 // record is the account's: once the page's session is of another account,
 // or of none, as once it has signed out, what the device keeps of every
-// other account is taken out.
+// other account is taken out, and another tab, whose session has yet to
+// follow, pins nothing of the account before (OfflineDatabase.deleteAllBut).
 
 import type { QueryClient } from "@tanstack/react-query";
 import { createStore, type StoreApi } from "zustand/vanilla";
@@ -33,6 +34,7 @@ import { projectQuery } from "../project/queries";
 import { workspaceQuery } from "../workspace/queries";
 import {
   type CopyRecord,
+  copyFormat,
   OfflineDatabase,
   openedLast,
   opensWithin,
@@ -107,7 +109,7 @@ export interface KeeperOptions {
   storage?: Pick<StorageManager, "persist">;
   /** Returns the time now, as the records write it. */
   now?: () => string;
-  /** How long, in milliseconds, after a change of a kept project's document its copy is written: a second, if not set. */
+  /** How long, in milliseconds, after a change of a kept project's document its copy is written, and after a pass of its download's reads the next follows: a second, if not set. */
   writeDelay?: number;
   /** How long, in milliseconds, after a read or a write that failed it is tried again: 30 seconds, if not set. */
   retryDelay?: number;
@@ -260,20 +262,22 @@ export class OfflineKeeper {
    * the server does not answer (offline/kept.ts): none where the device's
    * database does not open within openWait, as a browser's open of it may
    * never settle, which would else keep the page loading, rather than show
-   * that the server does not answer (copySource).
+   * that the server does not answer (copySource); and of the copies of this
+   * version's format alone, which a document starts from (copyFormat).
    */
   readonly reads: KeptReads = {
     session: async () =>
       (await this.opensSoon()) ? this.db.session() : undefined,
     project: async (userId, projectId) =>
       (await this.opensSoon())
-        ? (await this.db.copies(userId)).find((c) => c.project_id === projectId)
-            ?.project
+        ? (await this.db.copies(userId)).find(
+            (c) => c.format === copyFormat && c.project_id === projectId,
+          )?.project
         : undefined,
     workspace: async (userId, workspaceId) =>
       (await this.opensSoon())
         ? (await this.db.copies(userId)).find(
-            (c) => c.workspace.id === workspaceId,
+            (c) => c.format === copyFormat && c.workspace.id === workspaceId,
           )?.workspace
         : undefined,
   };
@@ -783,8 +787,6 @@ class Kept {
   private notBefore = 0;
   /** Since when the document has changed without a step of the copy's after, which one follows at most maxWaits writeDelays after (changed). */
   private changedSince: number | undefined;
-  /** What the last pass of reads had yet to read, which a pass that finds it unread still, as of changes that went on as it was read, waits a while to read again (stepOnce). */
-  private unreadBefore: string | undefined;
   private stopped = false;
   private stepping = false;
   private again = false;
@@ -931,18 +933,6 @@ class Kept {
     const view = doc.doc;
     const unread = unreadOf(doc, view);
     if (unread.parts.length > 0 || unread.components.length > 0) {
-      // A pass that leaves what it read unread, as a component that another
-      // session changes again and again as it is read (readComponent), is
-      // tried again a while after, rather than at once, again and again,
-      // and the pin says that the copy could not be written meanwhile, as
-      // of a read that failed.
-      const what = [...unread.parts, ...unread.components].join(" ");
-      if (what === this.unreadBefore) {
-        this.unreadBefore = undefined;
-        this.failedNow();
-        await this.keeper.failed(this.userId, this.projectId, "error");
-        return;
-      }
       // The reads go at the pace of the keeper's downloads (Pace), and
       // those that a stopped Kept has yet to begin are not made. A board's
       // content is read for the copy alone, which a reading anew of the
@@ -975,7 +965,6 @@ class Kept {
           readsAtOnce,
         );
       } catch {
-        this.unreadBefore = undefined;
         // The document recorded what failed, as it records a page's reads.
         if (!this.stopped && this.keeper.options.online()) {
           this.failedNow();
@@ -983,11 +972,13 @@ class Kept {
         }
         return;
       }
-      this.unreadBefore = what;
-      this.schedule(0);
+      // The next pass follows a writeDelay after, rather than at once, as
+      // one may leave unread what it read, as a component that another
+      // session changes again and again as it is read (readComponent), or
+      // the boards that a reading anew of the project let go meanwhile.
+      this.schedule();
       return;
     }
-    this.unreadBefore = undefined;
     if (!doc.settled) {
       this.schedule();
       return;
@@ -1035,7 +1026,7 @@ class Kept {
       return;
     }
     const client = this.keeper.options.queryClient;
-    let record: Omit<CopyRecord, "version" | "bytes" | "parts">;
+    let record: Omit<CopyRecord, "format" | "version" | "bytes" | "parts">;
     try {
       const body = await client.ensureQueryData(projectQuery(this.projectId));
       const workspace = await client.ensureQueryData(

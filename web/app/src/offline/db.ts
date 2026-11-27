@@ -5,9 +5,11 @@
 // that has no answer from the server starts from, the session, the account,
 // and the instance. Every record is the account's, under its ID, so that
 // another account of the browser reads none of it, and signing out removes
-// it (deleteAllBut). A copy is written in one transaction, which the
-// browser applies whole or not at all, so that a quota that refuses it, or
-// a page that closes meanwhile, leaves the copy that was there, or none.
+// it (deleteAllBut), after which a tab that has yet to find that the
+// session changed makes none anew (DeviceRecord). A copy is written in one
+// transaction, which the browser applies whole or not at all, so that a
+// quota that refuses it, or a page that closes meanwhile, leaves the copy
+// that was there, or none.
 
 import type {
   AccountBody,
@@ -47,7 +49,7 @@ export type PinFailure = "quota" | "error";
 export interface PinRecord {
   user_id: string;
   project_id: string;
-  /** The project's name, as the page last read it, which the storage panel and a failure's notice name it by. */
+  /** The project's name, as the page read it as it pinned the project, or the copy's last write did, which the storage panel and a failure's notice name it by. */
   name: string;
   /** Whether the user made it available offline themself. */
   chosen: boolean;
@@ -66,10 +68,23 @@ export interface PinRecord {
   failure?: PinFailure;
 }
 
+/**
+ * The format of the copies that this version of the app writes, which a
+ * version of the app that holds its entities otherwise, as with a field that
+ * they did not have, takes the next number for: a copy of another format is
+ * none to a document, as a history of the undo kept by another version of
+ * the app is (document/undo.ts), rather than the project as of its seq,
+ * which the server, whose seq the change of its records does not move, has
+ * otherwise; the writer's keeper writes the whole document in its place.
+ */
+export const copyFormat = 1;
+
 /** The copy of a pinned project: what the document held, as of seq, but for its entities, which are records of their own (EntityRecord). */
 export interface CopyRecord {
   user_id: string;
   project_id: string;
+  /** The format of its records (copyFormat). */
+  format: number;
   /** A token of the write, which the next write compares with the one that it was made on, to write what changed alone. */
   version: string;
   seq: number;
@@ -92,12 +107,29 @@ export interface EntityRecord {
   entity: Entities[Kind];
 }
 
+/**
+ * The account whose records the device keeps: recorded with the first pin
+ * that the device makes (changePin, markOpened), and, from then on, as a
+ * tab that finds the browser's session, which every tab shares, of another
+ * account takes the others' records out (deleteAllBut), null once that
+ * session was of none, as once a tab signed out. Until the first pin there
+ * is no record, and nothing of any account's to keep from coming back, so
+ * that a page writes nothing to the device before it pins a project.
+ */
+interface DeviceRecord {
+  user_id: string | null;
+}
+
 interface Schema extends DBSchema {
   sessions: { key: string; value: KeptSession };
   pins: { key: [string, string]; value: PinRecord };
   copies: { key: [string, string]; value: CopyRecord };
   entities: { key: [string, string, string]; value: EntityRecord };
+  device: { key: string; value: DeviceRecord };
 }
+
+/** The key of the device's one record (DeviceRecord). */
+const deviceKey = "account";
 
 /** A copy as a document starts from it: the document, as of the copy's seq, and the version of the write that it is of. */
 export interface Copy {
@@ -122,9 +154,27 @@ function under(...key: string[]): IDBKeyRange {
 /** Encodes text as UTF-8, which sizeOf counts the bytes of. */
 const utf8 = new TextEncoder();
 
-/** Returns the size of entity as JSON, in UTF-8 bytes, which the copy's bytes count. */
-function sizeOf(entity: unknown): number {
-  return utf8.encode(JSON.stringify(entity)).byteLength;
+/** Returns the size of value as JSON, in UTF-8 bytes, which the copy's bytes count. */
+function bytesOf(value: unknown): number {
+  return utf8.encode(JSON.stringify(value)).byteLength;
+}
+
+/**
+ * The sizes of the entities that sizeOf has sized, by the entity, which the
+ * document never changes in place, but replaces: a write made on another
+ * sizes what it no longer holds without serialising it again, as each
+ * entity of a document read anew, which holds new ones of them all.
+ */
+const sizes = new WeakMap<object, number>();
+
+/** Returns the size of entity, a document's, as bytesOf does, once for each entity. */
+function sizeOf(entity: object): number {
+  let size = sizes.get(entity);
+  if (size === undefined) {
+    size = bytesOf(entity);
+    sizes.set(entity, size);
+  }
+  return size;
 }
 
 /** Reports whether error is the browser's refusal of a write beyond its quota. */
@@ -158,6 +208,14 @@ export function openedLast(pins: readonly PinRecord[]): PinRecord | undefined {
     }
   }
   return last;
+}
+
+/**
+ * Reports whether the device keeps the records of userId, as device says:
+ * where it has recorded none's yet, before its first pin, or userId's.
+ */
+function keeps(device: DeviceRecord | undefined, userId: string): boolean {
+  return device === undefined || device.user_id === userId;
 }
 
 /** Returns a new version of a copy's write. */
@@ -210,13 +268,11 @@ export function copySource(
       (await opens())
         ? db.copySeq(userId, projectId).catch(() => undefined)
         : undefined,
-    readCopy: async (userId, projectId, signal) => {
+    readCopy: async (userId, projectId) => {
       if (!(await opens())) {
         return undefined;
       }
-      const copy = await db
-        .readCopy(userId, projectId, signal)
-        .catch(() => undefined);
+      const copy = await db.readCopy(userId, projectId).catch(() => undefined);
       return copy === undefined
         ? undefined
         : {
@@ -238,18 +294,23 @@ export class OfflineDatabase {
       const opening =
         typeof indexedDB === "undefined"
           ? Promise.reject(new Error("The browser has no IndexedDB."))
-          : openDB<Schema>(databaseName, 1, {
-              upgrade(db) {
-                db.createObjectStore("sessions", { keyPath: "user_id" });
-                db.createObjectStore("pins", {
-                  keyPath: ["user_id", "project_id"],
-                });
-                db.createObjectStore("copies", {
-                  keyPath: ["user_id", "project_id"],
-                });
-                db.createObjectStore("entities", {
-                  keyPath: ["user_id", "project_id", "id"],
-                });
+          : openDB<Schema>(databaseName, 2, {
+              upgrade(db, oldVersion) {
+                if (oldVersion < 1) {
+                  db.createObjectStore("sessions", { keyPath: "user_id" });
+                  db.createObjectStore("pins", {
+                    keyPath: ["user_id", "project_id"],
+                  });
+                  db.createObjectStore("copies", {
+                    keyPath: ["user_id", "project_id"],
+                  });
+                  db.createObjectStore("entities", {
+                    keyPath: ["user_id", "project_id", "id"],
+                  });
+                }
+                if (oldVersion < 2) {
+                  db.createObjectStore("device");
+                }
               },
               // A connection that the browser closed itself, as once the
               // site's data was cleared while the page was open, is opened
@@ -338,6 +399,9 @@ export class OfflineDatabase {
    * returns it from the pin that the device has, or undefined for none:
    * a pin that it returns undefined for, or with neither chosen nor auto,
    * is taken out, with the project's copy. It returns the pin that it left.
+   * A pin of an account whose records the device no longer keeps, as of a
+   * tab that has yet to find that another signed out, or in to another
+   * account (DeviceRecord), is not made, nor changed.
    */
   async changePin(
     userId: string,
@@ -345,11 +409,28 @@ export class OfflineDatabase {
     change: (pin: PinRecord | undefined) => PinRecord | undefined,
   ): Promise<PinRecord | undefined> {
     const db = await this.open();
-    const tx = db.transaction(["pins", "copies", "entities"], "readwrite");
+    const tx = db.transaction(
+      ["pins", "copies", "entities", "device"],
+      "readwrite",
+    );
     const pins = tx.objectStore("pins");
-    const next = change(await pins.get([userId, projectId]));
+    const [pin, device] = await Promise.all([
+      pins.get([userId, projectId]),
+      tx.objectStore("device").get(deviceKey),
+    ]);
+    const next = change(pin);
     if (next !== undefined && (next.chosen || next.auto)) {
-      await Promise.all([pins.put(next), tx.done]);
+      if (!keeps(device, userId)) {
+        await tx.done;
+        return undefined;
+      }
+      await Promise.all([
+        pins.put(next),
+        device === undefined
+          ? tx.objectStore("device").put({ user_id: userId }, deviceKey)
+          : undefined,
+        tx.done,
+      ]);
       return next;
     }
     await Promise.all([
@@ -367,7 +448,8 @@ export class OfflineDatabase {
    * opened last on the device, at at, in one transaction: automatic, and
    * opened after every other automatic pin of the account's, a millisecond
    * after the one opened last where at is not past it, as in the same
-   * millisecond, so that openedLast finds it.
+   * millisecond, so that openedLast finds it; but for an account whose
+   * records the device no longer keeps, as changePin.
    */
   async markOpened(
     userId: string,
@@ -376,8 +458,15 @@ export class OfflineDatabase {
     at: string,
   ): Promise<void> {
     const db = await this.open();
-    const tx = db.transaction("pins", "readwrite");
-    const pins = await tx.store.getAll(under(userId));
+    const tx = db.transaction(["pins", "device"], "readwrite");
+    const [pins, device] = await Promise.all([
+      tx.objectStore("pins").getAll(under(userId)),
+      tx.objectStore("device").get(deviceKey),
+    ]);
+    if (!keeps(device, userId)) {
+      await tx.done;
+      return;
+    }
     const before = openedLast(pins.filter((p) => p.project_id !== projectId));
     let openedAt = at;
     if (before?.opened_at !== undefined && before.opened_at >= at) {
@@ -388,7 +477,10 @@ export class OfflineDatabase {
     }
     const pin = change(pins.find((p) => p.project_id === projectId));
     await Promise.all([
-      tx.store.put({ ...pin, auto: true, opened_at: openedAt }),
+      tx.objectStore("pins").put({ ...pin, auto: true, opened_at: openedAt }),
+      device === undefined
+        ? tx.objectStore("device").put({ user_id: userId }, deviceKey)
+        : undefined,
       tx.done,
     ]);
   }
@@ -456,9 +548,10 @@ export class OfflineDatabase {
 
   /**
    * Returns the seq of the copy of userId's project, without reading its
-   * entities, or undefined where the device has none, or the project is not
-   * pinned, as a project's document reads it to tell whether it uses the
-   * copy, before the read of the whole of it has ended (readCopy).
+   * entities, or undefined where the device has none, of this version's
+   * format (copyFormat), or the project is not pinned, as a project's
+   * document reads it to tell whether it uses the copy, before it reads the
+   * whole of it (readCopy).
    */
   async copySeq(
     userId: string,
@@ -471,47 +564,27 @@ export class OfflineDatabase {
       tx.objectStore("copies").get([userId, projectId]),
       tx.done,
     ]);
-    return pin === undefined ? undefined : record?.seq;
+    return pin === undefined || record?.format !== copyFormat
+      ? undefined
+      : record.seq;
   }
 
   /**
    * Reads the copy of userId's project, the document as of its seq, holding
    * every part that it held, or resolves to undefined where the device has
-   * none, or the project is not pinned. Once signal aborts, the read is let
-   * go, and rejects, as for a copy that its reader no longer uses, which
-   * the browser then does not hand the page.
+   * none, of this version's format (copyFormat), or the project is not
+   * pinned.
    */
-  async readCopy(
-    userId: string,
-    projectId: string,
-    signal?: AbortSignal,
-  ): Promise<Copy | undefined> {
-    signal?.throwIfAborted();
+  async readCopy(userId: string, projectId: string): Promise<Copy | undefined> {
     const db = await this.open();
-    signal?.throwIfAborted();
     const tx = db.transaction(["pins", "copies", "entities"], "readonly");
-    const abort = () => {
-      try {
-        tx.abort();
-      } catch {
-        // The transaction is done already.
-      }
-    };
-    signal?.addEventListener("abort", abort, { once: true });
-    let pin: PinRecord | undefined;
-    let record: CopyRecord | undefined;
-    let entities: EntityRecord[];
-    try {
-      [pin, record, entities] = await Promise.all([
-        tx.objectStore("pins").get([userId, projectId]),
-        tx.objectStore("copies").get([userId, projectId]),
-        tx.objectStore("entities").getAll(under(userId, projectId)),
-        tx.done,
-      ]);
-    } finally {
-      signal?.removeEventListener("abort", abort);
-    }
-    if (pin === undefined || record === undefined) {
+    const [pin, record, entities] = await Promise.all([
+      tx.objectStore("pins").get([userId, projectId]),
+      tx.objectStore("copies").get([userId, projectId]),
+      tx.objectStore("entities").getAll(under(userId, projectId)),
+      tx.done,
+    ]);
+    if (pin === undefined || record?.format !== copyFormat) {
       return undefined;
     }
     const maps = new Map<Kind, Map<string, Entities[Kind]>>(
@@ -544,10 +617,13 @@ export class OfflineDatabase {
    * resolves to undefined, where the project is not pinned, as once it was
    * unpinned in another tab meanwhile; and it rejects, writing nothing,
    * where the browser refuses the transaction, as for its quota
-   * (overQuota). The pin's status is ready once it has written.
+   * (overQuota). The pin's status is ready once it has written, and its
+   * name the project's, as of the copy, which the storage panel and the
+   * header's notice name it by. The copy is of this version's format
+   * (copyFormat).
    */
   async writeCopy(
-    record: Omit<CopyRecord, "version" | "bytes" | "parts">,
+    record: Omit<CopyRecord, "format" | "version" | "bytes" | "parts">,
     doc: Doc,
     base: Written | undefined,
   ): Promise<Written | undefined> {
@@ -577,7 +653,11 @@ export class OfflineDatabase {
     let bytes: number;
     let version: string;
     try {
-      if (base !== undefined && stored?.version === base.version) {
+      if (
+        base !== undefined &&
+        stored?.version === base.version &&
+        stored.format === copyFormat
+      ) {
         bytes = base.bytes;
         for (const kind of kinds) {
           const before = base.doc[kind] as ReadonlyMap<string, Entities[Kind]>;
@@ -602,7 +682,7 @@ export class OfflineDatabase {
           }
         }
         // The copy's record as it was sized, before its bytes were set.
-        bytes -= stored === undefined ? 0 : sizeOf({ ...stored, bytes: 0 });
+        bytes -= bytesOf({ ...stored, bytes: 0 });
       } else {
         bytes = 0;
         writes.push(entities.delete(under(record.user_id, record.project_id)));
@@ -618,14 +698,19 @@ export class OfflineDatabase {
       version = newVersion();
       const copy: CopyRecord = {
         ...record,
+        format: copyFormat,
         version,
         parts: [...doc.parts],
         bytes: 0,
       };
-      bytes += sizeOf(copy);
+      bytes += bytesOf(copy);
       copy.bytes = bytes;
       writes.push(copies.put(copy));
-      const ready: PinRecord = { ...pin, status: "ready" };
+      const ready: PinRecord = {
+        ...pin,
+        name: record.project.name,
+        status: "ready",
+      };
       delete ready.failure;
       writes.push(pins.put(ready));
     } catch (error) {
@@ -639,13 +724,23 @@ export class OfflineDatabase {
     return { doc, version, bytes };
   }
 
-  /** Takes out every record of every account but keep's, or of every account for none, as once the page has signed out. */
+  /**
+   * Takes out every record of every account but keep's, or of every account
+   * for none, as once the page has signed out, and records that the device
+   * keeps keep's alone, or none, from then on, once it has recorded an
+   * account's (DeviceRecord): a pin of another, as of a tab that has yet to
+   * find that the browser's session changed, is not made (changePin,
+   * markOpened), so that a copy, and a session, which a pin is needed for,
+   * are not written of it either.
+   */
   async deleteAllBut(keep: string | undefined): Promise<void> {
     const db = await this.open();
     const tx = db.transaction(
-      ["sessions", "pins", "copies", "entities"],
+      ["sessions", "pins", "copies", "entities", "device"],
       "readwrite",
     );
+    const device = tx.objectStore("device");
+    const recorded = await device.get(deviceKey);
     const users = new Set<string>();
     for (const key of await tx.objectStore("sessions").getAllKeys()) {
       users.add(key);
@@ -659,7 +754,14 @@ export class OfflineDatabase {
     if (keep !== undefined) {
       users.delete(keep);
     }
-    const writes: Promise<unknown>[] = [];
+    // The device's record changes once it has one, or once it held another
+    // account's records without one, as a database of an earlier version,
+    // rather than as each page follows its session.
+    const kept = keep ?? null;
+    const writes: Promise<unknown>[] =
+      (recorded !== undefined || users.size > 0) && recorded?.user_id !== kept
+        ? [device.put({ user_id: kept }, deviceKey)]
+        : [];
     for (const user of users) {
       writes.push(
         tx.objectStore("sessions").delete(user),

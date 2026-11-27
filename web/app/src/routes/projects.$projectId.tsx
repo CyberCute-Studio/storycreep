@@ -8,7 +8,7 @@ import {
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
-import { Activity, useEffect, useState } from "react";
+import { Activity, useEffect, useEffectEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { requireSession } from "../auth/session";
 import { useCommandHandlers } from "../commands/registry";
@@ -112,16 +112,23 @@ function ProjectPages({ projectId }: { projectId: string }) {
   // The project is the last that the account opened on the device, which
   // the device keeps offline (PRD FR-OFF-02), but for a run of the canvas's
   // benchmark, which the download would compete with, as it records nothing
-  // of what the device showed last either (lastOpened.ts).
+  // of what the device showed last either (lastOpened.ts): as its pages
+  // open, and not as its name changes, as by a rename that another session
+  // made, which would else make a project that a tab in the background
+  // shows the one opened last, in place of the one that the user opened in
+  // another since (the copy's write names the pin anew, OfflineDatabase).
   const keeper = router.options.context.offline;
   const benchRun = useLocation({
     select: (l) => (l.search as { bench?: unknown }).bench !== undefined,
   });
+  const markOpened = useEffectEvent((id: string) => {
+    keeper?.opened(id, project.name);
+  });
   useEffect(() => {
     if (!benchRun) {
-      keeper?.opened(projectId, project.name);
+      markOpened(projectId);
     }
-  }, [keeper, projectId, project.name, benchRun]);
+  }, [projectId, benchRun]);
   // Offline, a page that reads the server alone says that it needs a
   // connection, in place of a page that would wait for it.
   const connected = useOnline();

@@ -120,9 +120,7 @@ function open(
   }
   const realtime = fakeRealtime();
   const seqOf = vi.fn(async () => copy?.doc.seq);
-  const readCopy = vi.fn(
-    async (_user: string, _project: string, _signal?: AbortSignal) => copy,
-  );
+  const readCopy = vi.fn(async (_user: string, _project: string) => copy);
   const doc = new ProjectDocument(testProject.id, {
     queryClient,
     realtime,
@@ -144,12 +142,10 @@ describe("a document that starts from the device's copy", () => {
     await doc.ready;
     await tree;
     await doc.load(boardPart("bd_a"));
-    expect(readCopy).toHaveBeenCalledWith(
+    expect(readCopy).toHaveBeenCalledExactlyOnceWith(
       testSession.user_id,
       testProject.id,
-      expect.any(AbortSignal),
     );
-    expect(readCopy.mock.calls[0][2]?.aborted).toBe(false);
     expect(calls).toEqual(["getProject"]);
     expect(doc.fromCopy).toBe(true);
     expect(doc.hasRead("tree")).toBe(true);
@@ -193,9 +189,9 @@ describe("a document that starts from the device's copy", () => {
     await doc.ready;
     expect(doc.fromCopy).toBe(false);
     expect(doc.doc.seq).toBe(5);
-    // The read of the whole of the copy, which the document does not use,
-    // is let go, rather than waited for.
-    expect(readCopy.mock.calls[0][2]?.aborted).toBe(true);
+    // The whole of the copy, which the document does not use, is not read,
+    // as its entities would be handed to the page for nothing.
+    expect(readCopy).not.toHaveBeenCalled();
     expect(doc.hasRead("tree")).toBe(false);
     await doc.load("tree");
     expect(doc.doc.boards.get("bd_a")?.name).toBe("Server's");

@@ -5,6 +5,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { projectQuery } from "../project/queries";
 import { renderApp, testSession } from "../test/app";
 import { fakeApi, startPage, testProject, testWorkspace } from "../test/fake";
 
@@ -269,6 +270,28 @@ describe("a project's switch of keeping it offline", () => {
     ).toBeDefined();
   });
 
+  it("pins the project as its pages open, and not again as its name changes, as by a rename that another session made", async () => {
+    serve();
+    const { offline, queryClient } = renderApp(`/projects/${testProject.id}`, {
+      session: testSession,
+      offline: {},
+    });
+    await waitFor(() =>
+      expect(offline?.store.getState().pins.get(testProject.id)?.status).toBe(
+        "ready",
+      ),
+    );
+    const opened = vi.spyOn(offline as NonNullable<typeof offline>, "opened");
+    act(() => {
+      queryClient.setQueryData(projectQuery(testProject.id).queryKey, {
+        ...testProject,
+        name: "Lighthouse",
+      });
+    });
+    await screen.findByRole("heading", { name: "Lighthouse", level: 1 });
+    expect(opened).not.toHaveBeenCalled();
+  });
+
   it("is unavailable over plain HTTP, and says why", async () => {
     serve();
     renderApp(`/projects/${testProject.id}`, {
@@ -410,9 +433,23 @@ describe("the app's other pages while the browser has no connection", () => {
         name: "This page needs a connection",
       }),
     ).toBeDefined();
-    // The storage panel shows what the device keeps.
-    await act(() => router.navigate({ to: "/account/offline" }));
-    expect(await screen.findByRole("link", { name: "Harbour" })).toBeDefined();
+    // It leads to the storage panel, which leads to the projects that the
+    // device keeps, as nothing else that a page shows offline does.
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("link", { name: "The projects on this device" }),
+    );
+    await user.click(await screen.findByRole("link", { name: "Harbour" }));
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Harbour" }),
+    ).toBeDefined();
+    // So does the notice of the project's pages.
+    const notice = screen.getByText(/^You are offline\./).closest("p");
+    expect(
+      within(notice as HTMLElement).getByRole("link", {
+        name: "The projects on this device",
+      }),
+    ).toBeDefined();
     await act(() =>
       router.navigate({
         to: "/workspaces/$workspaceId",

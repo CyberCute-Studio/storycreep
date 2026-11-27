@@ -670,6 +670,27 @@ describe("the device's records of the account", () => {
     );
   });
 
+  it("are not made anew by a tab that has yet to find that another tab signed out", async () => {
+    serve();
+    const { keeper, db, hear } = setup();
+    await keeper.pin(testProject.id, testProject.name);
+    await statusOf(keeper, testProject.id, "ready");
+    // Another tab signs out, which takes the account's records off the
+    // device; this one's session is the account's still, as its page has
+    // yet to ask for it.
+    await db.deleteAllBut(undefined);
+    hear();
+    await vi.waitFor(() => expect(keeper.store.getState().pins.size).toBe(0));
+    keeper.opened(lighthouse.id, lighthouse.name);
+    await keeper.pin(tower.id, tower.name);
+    await keeper.idle();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await keeper.idle();
+    expect(await db.pins(testSession.user_id)).toEqual([]);
+    expect(await db.copies(testSession.user_id)).toEqual([]);
+    expect(await db.session()).toBeUndefined();
+  });
+
   it("are followed once the device's database opens, though it did not as the page started", async () => {
     serve();
     const { keeper, queryClient } = setup({
@@ -831,27 +852,24 @@ describe("a project's download", () => {
     expect(boards[1] - boards[0]).toBeGreaterThanOrEqual(120);
   });
 
-  it("waits a while to read again what a pass of reads left unread, as a component that keeps changing as it is read", async () => {
+  it("reads again what a pass of reads left unread a writeDelay after, as a component that keeps changing as it is read", async () => {
     // The component reads without its values, as though an operation had
     // changed it each time while it was read.
     const calls = serve({ component: () => ({ ...jo, description: "" }) });
-    const { keeper } = setup({ retryDelay: 60_000 });
+    const { keeper } = setup({ writeDelay: 150, retryDelay: 60_000 });
     await keeper.pin(testProject.id, testProject.name);
-    await vi.waitFor(() =>
-      expect(calls.filter((c) => c === "getComponent").length).toBeGreaterThan(
-        0,
-      ),
-    );
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    const read = calls.filter((c) => c === "getComponent").length;
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    expect(calls.filter((c) => c === "getComponent").length).toBe(read);
-    expect(read).toBeLessThanOrEqual(3);
-    // The pin says that the copy could not be written meanwhile.
-    expect(keeper.store.getState().pins.get(testProject.id)).toMatchObject({
-      status: "failed",
-      failure: "error",
+    const reads = () =>
+      calls.times.filter((_, i) => calls[i] === "getComponent");
+    // Each pass tries the component three times (readComponent).
+    await vi.waitFor(() => expect(reads().length).toBeGreaterThanOrEqual(6), {
+      timeout: 4000,
     });
+    const [, , last, next] = reads();
+    expect(next - last).toBeGreaterThanOrEqual(140);
+    // Downloading still, rather than a copy that could not be written.
+    expect(keeper.store.getState().pins.get(testProject.id)?.status).toBe(
+      "downloading",
+    );
   });
 
   it("is tried again at once once the browser is online again, though a read failed a moment before", async () => {
