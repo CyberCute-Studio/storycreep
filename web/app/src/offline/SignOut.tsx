@@ -19,9 +19,11 @@ import type { SignedInBody } from "@storycreep/shared/api";
 import { AlertDialog } from "radix-ui";
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { refusalOf } from "../auth/refusal";
 import { useDocuments } from "../document/react";
 import { Button, type ButtonProps } from "../ui/Button";
 import { ConfirmButtons, ConfirmFrame } from "../ui/Dialog";
+import { Alert } from "../ui/Page";
 import { opensWithin, openWait, type QueueRecord } from "./db";
 import {
   type ExportedBatch,
@@ -80,6 +82,9 @@ export function SignOutButton({
   // asks is open.
   const [asked, setAsked] = useState<QueueRecord[] | "unread">();
   const [reading, setReading] = useState(false);
+  // Why signing out anyway failed, which the dialog says, as the page's
+  // own message of it is behind the dialog (signOutFailure).
+  const [failure, setFailure] = useState<unknown>();
   const userId = session.user_id;
   // The device's database, unless the page knows that it keeps nothing, as
   // over plain HTTP, or once it failed to open, where the page keeps no
@@ -118,11 +123,13 @@ export function SignOutButton({
   // out anyway with, those named, or, of a device that could not be read,
   // any (undefined).
   const end = async (records: readonly QueueRecord[] | undefined) => {
+    setFailure(undefined);
     try {
       await signOut.mutateAsync(session);
-    } catch {
+    } catch (error) {
       // The page says why it is still signed in, as the header does
-      // (signOutFailure).
+      // (signOutFailure), and so does the dialog, where it is open.
+      setFailure(error);
       return;
     }
     setAsked(undefined);
@@ -135,6 +142,7 @@ export function SignOutButton({
     }
   };
   const click = async () => {
+    setFailure(undefined);
     const records = await read();
     if (records?.length === 0) {
       await end([]);
@@ -172,6 +180,7 @@ export function SignOutButton({
           // out next, as the buttons say (pending).
           if (!open && !signOut.isPending && !reading) {
             setAsked(undefined);
+            setFailure(undefined);
           }
         }}
       >
@@ -202,6 +211,15 @@ export function SignOutButton({
               </Button>
             </div>
           )}
+          <Alert
+            message={
+              failure === undefined
+                ? undefined
+                : t("auth.error.sign_out", {
+                    reason: refusalOf(failure, t)?.message ?? "",
+                  })
+            }
+          />
           <ConfirmButtons
             cancel={t("sign_out.pending.cancel")}
             confirm={t("sign_out.pending.confirm")}

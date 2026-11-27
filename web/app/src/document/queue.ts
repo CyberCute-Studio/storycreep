@@ -83,12 +83,12 @@ export interface QueuedBatch {
   /**
    * Whether it was sent and no answer came, so that it may have applied,
    * which the device records before each try, as the page may close before
-   * the answer comes, but for a device whose quota refuses it, which the
-   * try is made without (ProjectDocument.pump), and a refusal, which applied
-   * nothing, takes back: it is sent again with its commands' IDs, which the
-   * server answers as the batch that it applied, if it did (FR-OFF-04 AC6),
-   * and it is not taken out of the queue by an undo, as one that never
-   * reached the server is.
+   * the answer comes, but for a device that refuses the write, as for its
+   * quota, which the try is made without (ProjectDocument.pump), and a
+   * refusal, which applied nothing, takes back: it is sent again with its
+   * commands' IDs, which the server answers as the batch that it applied, if
+   * it did (FR-OFF-04 AC6), and it is not taken out of the queue by an undo,
+   * as one that never reached the server is.
    */
   sent: boolean;
   /** Whether its undo joins the history once it applies (SendOptions.history). */

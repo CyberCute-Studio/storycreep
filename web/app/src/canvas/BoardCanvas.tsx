@@ -74,7 +74,7 @@ import {
   useDocuments,
   useProjectDocument,
 } from "../document/react";
-import { useServerReachable } from "../offline/pending";
+import { useServerCopyWaits } from "../offline/pending";
 import { PlayPanel } from "../play/PlayPanel";
 import { goToSaved } from "../play/SavedStates";
 import {
@@ -1779,9 +1779,12 @@ function BoardCanvasOf({
   // as a new node is (Add), and while no copy, paste, or duplicate of the
   // canvas is under way (busy).
   // Copy, Cut, Duplicate, and Paste read the server (plan note N71), which
-  // the page may not reach now, as offline, when they are not offered, and
-  // the toolbar says why (PRD FR-OFF-03 AC3).
-  const reachable = useServerReachable(doc);
+  // the page may not reach now, as offline, or whose copy lacks the changes
+  // that the device's queue keeps meanwhile, as while one needs review, and
+  // a paste would show nothing until they are sent, when they are not
+  // offered, and the toolbar says why (PRD FR-OFF-03 AC3, plan note N98).
+  const waits = useServerCopyWaits(doc);
+  const reachable = waits === undefined;
   const clipboardReady =
     content === "ready" && copied !== undefined && reachable;
   const pastable = editable && clipboardReady && !actions.busy;
@@ -2255,9 +2258,13 @@ function BoardCanvasOf({
               </LastingButton>
             </>
           )}
-          {!reachable && (
+          {waits !== undefined && (
             <p className="self-center text-fg-muted">
-              {t("canvas.clipboard_offline")}
+              {waits === "offline"
+                ? t("canvas.clipboard_offline")
+                : waits === "review"
+                  ? t("canvas.clipboard_waits_for_review")
+                  : t("canvas.clipboard_waits_for_queue")}
             </p>
           )}
         </fieldset>

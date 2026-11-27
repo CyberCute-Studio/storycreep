@@ -4439,37 +4439,31 @@ export class ProjectDocument {
         entry.sent = false;
         return;
       }
-      const session = this.ownSession();
+      // Never recorded as sent for another account's session (ownSession).
+      this.ownSession();
       // A batch of the device's queue is recorded as sent before it is, as
       // it may apply once it is, whatever becomes of the page meanwhile, as
       // a reload, or a tab that closes: the next page sends it again with
       // its commands' IDs, rather than take it out of the queue by an undo
-      // (withdraws). A device that refuses the write leaves it as it was, and
-      // the batch is not sent, which the next page would not know of, but
-      // tried again later, as after a fault of the page's own, the record
-      // with it; but for one that refuses it for its quota, which would
-      // refuse it at every try after, and every change that the page makes
-      // meanwhile, which the queue keeps while it waits (holdReason), for as
-      // long as the device is full: the batch is sent all the same, which
-      // the device keeps as not sent, so that only a page that loads before
-      // its answer has come, and takes it out of the queue by an undo, as
-      // offline, would find the server with it after.
+      // (withdraws). A device that refuses the write, as for its quota, or
+      // as a database whose connection the browser lost, leaves it as it
+      // was, and the batch is sent all the same, which the device keeps as
+      // not sent, rather than held until a try that the device records: a
+      // device that refused it may refuse it at every try after, and every
+      // change that the page makes meanwhile, which the queue would keep
+      // while it waits (holdReason), and refuse as the device does, though
+      // the server answers. Only a page that loads before its answer has
+      // come, and takes it out of the queue by an undo, as offline, would
+      // find the server with it after.
       sentBefore = entry.held?.sent ?? false;
       if (entry.held !== undefined && !sentBefore) {
         entry.held = this.batchOf(entry, { sent: true });
         entry.dirty = true;
-        const recorded = await this.persist().then(
-          () => true,
-          (failure: unknown) => {
-            if (overQuota(failure)) {
-              return "full" as const;
-            }
-            if (!(failure instanceof SignedOutError)) {
-              this.options.log.record("error", failure);
-            }
-            return false;
-          },
-        );
+        await this.persist().catch((failure: unknown) => {
+          if (!overQuota(failure) && !(failure instanceof SignedOutError)) {
+            this.options.log.record("error", failure);
+          }
+        });
         if (this.disposed) {
           // Not sent after all: the device keeps it as it was, which the
           // next page may take out of the queue by an undo, before this
@@ -4484,15 +4478,10 @@ export class ProjectDocument {
           }
           return;
         }
-        if (recorded === false && entry.held !== undefined) {
-          entry.sent = false;
-          entry.held = this.batchOf(entry, { sent: false });
-          entry.dirty = true;
-          this.tryAgainLater("refused");
-          this.queueChanged();
-          return;
-        }
       }
+      // The session as of now, after the write, as of a CSRF token that
+      // changed meanwhile.
+      const session = this.ownSession();
       // The restores that the document had found as the batch was sent,
       // after which its answer is of what the server has (Sent.restores).
       let restores = this.restores;

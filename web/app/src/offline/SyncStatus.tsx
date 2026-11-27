@@ -210,6 +210,13 @@ function SyncPanel({
   const batches = useMemo(() => doc.pendingBatches(), [doc, version, sending]);
   const review = batches.filter((b) => b.state === "review");
   const pending = batches.filter((b) => b.state !== "review");
+  // What the export holds: not a change that waits for a step of the
+  // history, which has no IDs yet (exportedOf), and nothing to export where
+  // only such changes are listed.
+  const exported = useMemo(
+    () => exportedOf(projectId, batches),
+    [projectId, batches],
+  );
   // What needs the server is listed while the page cannot reach it, whether
   // or not a change needs review meanwhile.
   const offline = !useServerReachable(doc);
@@ -218,11 +225,7 @@ function SyncPanel({
     const session = queryClient.getQueryData(sessionQuery.queryKey);
     saveJson(
       exportFileName(now),
-      pendingExport(
-        session?.user_id ?? "",
-        exportedOf(projectId, batches),
-        now,
-      ),
+      pendingExport(session?.user_id ?? "", exported, now),
     );
   };
   const about =
@@ -264,7 +267,7 @@ function SyncPanel({
       </section>
       {offline && <Unavailable />}
       <div className="flex flex-wrap justify-end gap-2">
-        <Button disabled={batches.length === 0} onClick={exportPending}>
+        <Button disabled={exported.length === 0} onClick={exportPending}>
           {t("sync.panel.export")}
         </Button>
         <Dialog.Close asChild>

@@ -472,6 +472,28 @@ describe("signing out", () => {
     );
   });
 
+  it("says in the dialog why signing out anyway failed, as offline, and keeps the changes on the device", async () => {
+    serve();
+    const user = userEvent.setup();
+    const { doc, offlineDb } = await openProject();
+    setOnline(false);
+    await act(() => doc.send([renameQuay("Pier")]));
+    await indicator("Offline, 1 change on this device");
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    const asked = await screen.findByRole("alertdialog", {
+      name: "Sign out and lose a change not yet sent?",
+    });
+    await user.click(
+      within(asked).getByRole("button", { name: "Sign out anyway" }),
+    );
+    expect(
+      await within(asked).findByText(
+        "Signing out failed, so you are still signed in. The server could not be reached. Check your connection, and try again.",
+      ),
+    ).toBeDefined();
+    expect(await offlineDb?.queued(testSession.user_id)).toHaveLength(1);
+  });
+
   it("asks first where the device is still writing a change as the user clicks, once it has", async () => {
     const server = serve();
     const user = userEvent.setup();

@@ -1,3 +1,4 @@
+import "fake-indexeddb/auto";
 import type {
   Board,
   Clipboard,
@@ -14,6 +15,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sessionQuery } from "../api";
 import { holdCopy } from "../document/clipboard";
@@ -1002,5 +1004,61 @@ describe("the canvas's clipboard offline", () => {
       });
     }
     expect(clipboardButton("Copy")).toHaveProperty("disabled", false);
+  });
+
+  it("waits while a change that the device's queue keeps needs review, which the server's copy lacks, and says why", async () => {
+    globalThis.indexedDB = new IDBFactory();
+    const { nodes, connections } = quayAndDock();
+    // The server refuses each change for what it does.
+    const calls = clipboardPage({
+      nodes,
+      connections,
+      apply: async () => {
+        throw refused(422, { code: "validation_failed" });
+      },
+    });
+    const setOnline = (online: boolean) => {
+      vi.spyOn(navigator, "onLine", "get").mockReturnValue(online);
+      act(() => {
+        window.dispatchEvent(new Event(online ? "online" : "offline"));
+      });
+    };
+    const app = renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+      offline: { online: () => navigator.onLine },
+    });
+    const canvas = await canvasOf("Harbour");
+    await selectAll(canvas, 2);
+    expect(clipboardButton("Copy")).toHaveProperty("disabled", false);
+    // A change made offline, which the server refuses once it is sent.
+    setOnline(false);
+    const doc = app.documents.get(testProject.id);
+    await act(() =>
+      doc.send([
+        {
+          type: "board.rename",
+          payload: { id: "bd_a", name: "Pier" },
+          expected_rev: { bd_a: 3 },
+        },
+      ]),
+    );
+    setOnline(true);
+    expect(
+      await screen.findByText(
+        "Copy, cut, paste, and duplicate wait until you decide what becomes of the changes that the server refused.",
+      ),
+    ).toBeDefined();
+    for (const name of ["Copy", "Cut", "Paste"]) {
+      expect(clipboardButton(name)).toHaveProperty("disabled", true);
+    }
+    expect(
+      within(screen.getByRole("group", { name: "Edit the board" })).getByRole(
+        "button",
+        { name: "Duplicate" },
+      ),
+    ).toHaveProperty("disabled", true);
+    // Nor do the keys copy.
+    await userEvent.keyboard("{Control>}c{/Control}");
+    expect(bodiesOf(calls, "copyNodes")).toEqual([]);
   });
 });

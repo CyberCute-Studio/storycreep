@@ -43,7 +43,7 @@ import { hundredths } from "../document/hundredths";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { ExpressionEditor } from "../expr/ExpressionEditor";
 import { sourceOf, typedExpression, useTypedSource } from "../expr/fields";
-import { useServerReachable } from "../offline/pending";
+import { useServerCopyWaits } from "../offline/pending";
 import { colorName, type PaletteColor, paletteColors } from "../project/colors";
 import { payloadField } from "../project/dialogs";
 import type { Command } from "../project/queries";
@@ -138,8 +138,11 @@ export function Inspector({
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
   // Duplicate reads the server (plan note N71), which the page may not
-  // reach now, as offline (PRD FR-OFF-03 AC3).
-  const reachable = useServerReachable(doc);
+  // reach now, as offline, or whose copy lacks the changes that the
+  // device's queue keeps meanwhile, as the canvas's clipboard says (PRD
+  // FR-OFF-03 AC3, plan note N98).
+  const waits = useServerCopyWaits(doc);
+  const reachable = waits === undefined;
   // The inspector's heading takes the focus as a button of the inspector
   // has it show another thing in place of what the button was of, as a
   // choice's Edit, which shows the connection's form, and which goes with
@@ -356,9 +359,13 @@ export function Inspector({
                 {t("canvas.delete")}
               </Button>
             </div>
-            {!reachable && (
+            {waits !== undefined && (
               <p className="text-fg-muted">
-                {t("inspector.duplicate_offline")}
+                {waits === "offline"
+                  ? t("inspector.duplicate_offline")
+                  : waits === "review"
+                    ? t("inspector.duplicate_waits_for_review")
+                    : t("inspector.duplicate_waits_for_queue")}
               </p>
             )}
           </section>

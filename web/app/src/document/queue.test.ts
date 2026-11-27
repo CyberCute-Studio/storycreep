@@ -1873,26 +1873,38 @@ describe("the device's queue of the page's batches", () => {
     await db.close();
   });
 
-  it("sends a queued batch once the device has recorded that it is sent, and tries again later where the device refused to, as after a fault", async () => {
+  it("sends a queued batch that the device refuses to record as sent all the same, as of a database whose connection was lost, rather than hold it, and every change made meanwhile", async () => {
     const db = new OfflineDatabase();
     const recorded: (boolean | undefined)[] = [];
     const batches = serve(async () => {
       recorded.push((await db.queued(user, testProject.id))[0]?.sent);
-      return applied(2, [{ id: "bd_a", rev: 4 }]);
+      return applied(batches.length + 1, [
+        { id: "bd_a", rev: batches.length + 3 },
+      ]);
     });
     const net = connection(false);
-    const { doc } = await open(db, fakeLocks(), net);
+    const { doc, log } = await open(db, fakeLocks(), net);
     await doc.send([rename("bd_a", "Quay", 3)]);
-    const saves = vi
-      .spyOn(db, "saveQueued")
-      .mockRejectedValueOnce(
-        new DOMException("The transaction was aborted.", "AbortError"),
-      );
+    // The device refuses every write from now on, as Safari's database does
+    // once its connection is lost.
+    vi.spyOn(db, "saveQueued").mockRejectedValue(
+      new DOMException(
+        "Connection to Indexed Database server lost.",
+        "UnknownError",
+      ),
+    );
     net.set(true);
     await until(doc, (s) => s.queued === 0);
-    expect(saves.mock.calls.length).toBeGreaterThan(1);
     expect(batches).toHaveLength(1);
-    expect(recorded).toEqual([true]);
+    // The device keeps it as it was, which the error console records.
+    expect(recorded).toEqual([false]);
+    expect(log.entries()).toHaveLength(1);
+    // A change made since is sent, rather than kept, and refused as the
+    // device refuses it.
+    await expect(doc.send([rename("bd_a", "Pier", 4)])).resolves.toMatchObject({
+      status: "applied",
+    });
+    expect(batches).toHaveLength(2);
     await db.close();
   });
 

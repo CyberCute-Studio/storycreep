@@ -205,6 +205,14 @@ export function useCanvasActions(
       }
       setRefusal(undefined);
       await doc.sent();
+      // Nor while the device's queue keeps changes that the document does
+      // not send, as once one before them came to need review meanwhile,
+      // which the server's copy lacks, as the controls say once it does
+      // (serverCopyWaits).
+      const now = doc.store.getState();
+      if (now.holdsQueued && !now.sendsQueued) {
+        return undefined;
+      }
       const nodes = nodesOf(asked).map((n) => n.id);
       if (nodes.length === 0) {
         return undefined;

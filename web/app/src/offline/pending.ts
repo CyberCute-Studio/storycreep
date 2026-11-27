@@ -27,6 +27,46 @@ export function useServerReachable(doc: ProjectDocument): boolean {
 }
 
 /**
+ * Why what reads the server's copy of what the page shows, as the canvas's
+ * clipboard copies it, is not offered now: the page cannot reach the server
+ * (offline, useServerReachable), or the device's queue keeps changes of the
+ * page's that the document does not send now, which the server's copy
+ * would lack, as while one needs the user's review (review, plan item 92),
+ * or a try waits after a refusal for when it was sent (queue); those that
+ * it sends a read waits for (ProjectDocument.sent).
+ */
+export type ServerCopyWait = "offline" | "review" | "queue";
+
+/** Returns why the server's copy of a document of state is not read now, while the browser is online or not, or undefined where it is. */
+export function serverCopyWaits(
+  state: Pick<
+    DocumentState,
+    "holding" | "holdsQueued" | "sendsQueued" | "review"
+  >,
+  online: boolean,
+): ServerCopyWait | undefined {
+  if (!online || state.holding) {
+    return "offline";
+  }
+  if (!state.holdsQueued || state.sendsQueued) {
+    return undefined;
+  }
+  return state.review > 0 ? "review" : "queue";
+}
+
+/** Returns why the server's copy of doc is not read now, or undefined where it is, as it changes (serverCopyWaits). */
+export function useServerCopyWaits(
+  doc: ProjectDocument,
+): ServerCopyWait | undefined {
+  const online = useOnline();
+  const holding = useDocumentState(doc, (state) => state.holding);
+  const holdsQueued = useDocumentState(doc, (state) => state.holdsQueued);
+  const sendsQueued = useDocumentState(doc, (state) => state.sendsQueued);
+  const review = useDocumentState(doc, (state) => state.review);
+  return serverCopyWaits({ holding, holdsQueued, sendsQueued, review }, online);
+}
+
+/**
  * The state of the sync indicator: synced, every change saved on the
  * server; syncing, changes on their way; offline, as the page cannot reach
  * the server, with how many changes it keeps meanwhile; review, as the
