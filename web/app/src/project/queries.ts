@@ -36,22 +36,6 @@ import { found } from "../shell/found";
 
 export type { Command } from "../document/store";
 
-/**
- * The projects whose last read got no answer from the server, as offline,
- * or on a network without the internet, of each page's query client
- * (projectQuery), which the pin of the project that the account opened
- * last moves to none of (OfflineKeeper.opened).
- */
-const unanswered = new WeakMap<QueryClient, Set<string>>();
-
-/** Reports whether client's last read of the project of projectId got no answer from the server (projectQuery). */
-export function readUnanswered(
-  client: QueryClient,
-  projectId: string,
-): boolean {
-  return unanswered.get(client)?.has(projectId) ?? false;
-}
-
 /** The project of projectId, with the role that the user acts with on it. */
 export function projectQuery(projectId: string) {
   return queryOptions({
@@ -64,31 +48,17 @@ export function projectQuery(projectId: string) {
     // project that the page holds as of the copy's seq or past it, as one
     // that the document has followed since the copy was written, which it
     // keeps.
-    queryFn: ({ signal, client }): Promise<ProjectBody> => {
-      let reads = unanswered.get(client);
-      if (reads === undefined) {
-        reads = new Set();
-        unanswered.set(client, reads);
-      }
-      const told = reads;
-      return orKept(
+    queryFn: ({ signal, client }): Promise<ProjectBody> =>
+      orKept(
         client,
-        async () => {
-          try {
-            const { body } = await api.call(
+        async () =>
+          (
+            await api.call(
               "getProject",
               { path: { project_id: projectId } },
               { signal },
-            );
-            told.delete(projectId);
-            return body;
-          } catch (error) {
-            if (error instanceof NetworkError) {
-              told.add(projectId);
-            }
-            throw error;
-          }
-        },
+            )
+          ).body,
         async (kept) => {
           const userId = client.getQueryData(sessionQuery.queryKey)?.user_id;
           const copy =
@@ -102,8 +72,7 @@ export function projectQuery(projectId: string) {
             ? held
             : copy;
         },
-      );
-    },
+      ),
     ...readOffline,
   });
 }

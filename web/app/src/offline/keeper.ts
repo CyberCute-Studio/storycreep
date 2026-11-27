@@ -1,10 +1,11 @@
 // The projects that the account keeps offline on the device (PRD FR-OFF-02,
 // plan note N97): the pins, the copies, and what the page shows of them.
 // A project is pinned once the user makes it available offline, and once
-// the account opens its pages, as the last opened, whose pin moves to the
-// next project that it opens whose read the server answers, the copy of the
-// one before taken out unless the user made it available offline too
-// (OfflineKeeper.opened). While the page is signed in, one
+// the account opens its pages, as the last opened, at once, whatever the
+// connection: the automatic pin of the one opened before stays, with its
+// copy, until the copy of the project opened last is written, and then
+// goes, unless the user made it available offline too (OfflineKeeper.opened,
+// wrote). While the page is signed in, one
 // tab of the browser's keeps the copies, the one that holds the lock of the
 // writer (Web Locks): it holds the document of each pinned project, which
 // the real-time channel keeps current, has it read the whole of the project,
@@ -28,11 +29,12 @@ import type { Documents } from "../document/documents";
 import { inTurns, type ProjectDocument } from "../document/store";
 import { unreadOf } from "../document/whole";
 import type { ErrorLog } from "../errors/log";
-import { projectQuery, readUnanswered } from "../project/queries";
+import { projectQuery } from "../project/queries";
 import { workspaceQuery } from "../workspace/queries";
 import {
   type CopyRecord,
   OfflineDatabase,
+  openedLast,
   opensWithin,
   openWait,
   overQuota,
@@ -50,6 +52,12 @@ export interface PinView {
   chosen: boolean;
   /** Whether it is the project that the account last opened on the device. */
   auto: boolean;
+  /**
+   * Whether it is pinned automatically as a project that the account opened
+   * before the one that it opened last, which the device keeps until that
+   * one's copy is written.
+   */
+  openedBefore: boolean;
   status: PinRecord["status"];
   failure?: PinFailure;
   /** The copy that the device keeps of it, if it keeps one. */
@@ -401,9 +409,9 @@ export class OfflineKeeper {
 
   /**
    * Undoes the user's making the project of projectId available offline: its
-   * copy goes, at once, unless it is the project that the account last
-   * opened on the device, which is pinned for that until the account opens
-   * another.
+   * copy goes, at once, unless it is pinned automatically too, as a project
+   * that the account opened on the device, which keeps it until the copy of
+   * another that the account opened after it is written (opened).
    */
   unchoose(projectId: string): Promise<void> {
     return this.change(projectId, (pin) =>
@@ -418,60 +426,42 @@ export class OfflineKeeper {
 
   /**
    * Pins the project of projectId, named name, as the project that the
-   * account last opened on the device, in place of the one before, whose
-   * copy goes unless the user made it available offline: once the changes
-   * before it are done, where the browser says that it is online, no read
-   * of the project is under way, and the server answered the page's last
-   * read of it, rather than the device (readUnanswered). The project's
-   * pages call it as they open, and as each read of the project ends while
-   * they are shown (routes/projects.$projectId.tsx), so that a project
-   * whose pages open from what the page read of it before moves the pin as
-   * of the read that their opening makes. Otherwise, as while the
-   * browser has no connection, or on a flight's network without the
-   * internet, where the browser says that it is online, the pin stays where
-   * it is, and the copy of the one before, which the device could not
-   * download again until then, with it, as for a user on a flight who goes
-   * from one project that the device keeps to another, and back, with
-   * nothing pending, until a read that the server answers.
+   * account last opened on the device, at once, whatever the connection:
+   * automatically, as of the time now. The project's pages call it as they
+   * open (routes/projects.$projectId.tsx). The automatic pins of the
+   * projects opened before it are kept, with their copies, until its copy
+   * is written, as it may be already, or once it is (wrote), after which
+   * they go, but for the
+   * copies of those that the user made available offline
+   * (OfflineDatabase.dropBeforeLast): a project opened that the device
+   * cannot download, as offline, on a flight's network without the
+   * internet, or where its quota refuses the copy, leaves the copy of the
+   * one before on the device.
    */
   opened(projectId: string, name: string): void {
     if (!this.options.secure) {
       return;
     }
     const opened = `${projectId}:${name}`;
-    // The changes before it are done once what the page does as it opens
-    // the project has begun, as the read of it that its pages make, and the
-    // session's account is known, as the page's first change follows the
-    // session (follow).
+    // The session's account is known once the changes before it are done,
+    // as the page's first change follows the session (follow).
     this.enqueue(async () => {
-      const client = this.options.queryClient;
       const userId = this.store.getState().userId;
       if (
         this.lastOpened === opened ||
         userId === undefined ||
-        !this.options.online() ||
-        client.isFetching({
-          queryKey: projectQuery(projectId).queryKey,
-          exact: true,
-        }) > 0 ||
-        readUnanswered(client, projectId) ||
         !(await this.ready())
       ) {
         return;
       }
       this.lastOpened = opened;
-      for (const pin of await this.db.pins(userId)) {
-        if (pin.auto && pin.project_id !== projectId) {
-          await this.db.changePin(userId, pin.project_id, (p) =>
-            p === undefined ? undefined : { ...p, auto: false },
-          );
-        }
-      }
-      await this.db.changePin(userId, projectId, (pin) => ({
-        ...(pin ?? this.newPin(projectId, name)),
-        name,
-        auto: true,
-      }));
+      await this.db.markOpened(
+        userId,
+        projectId,
+        (pin) => ({ ...(pin ?? this.newPin(projectId, name)), name }),
+        this.now(),
+      );
+      await this.db.dropBeforeLast(userId);
       await this.changed();
     });
   }
@@ -510,7 +500,11 @@ export class OfflineKeeper {
    * Records that the copy of projectId has been written, which the page
    * shows, and keeps the session for it, which a page that loads offline
    * starts from: it rejects as that write does, as for the quota, after the
-   * pins have been read again, which the copy's caller records (Kept).
+   * pins have been read again, which the copy's caller records (Kept). Once
+   * the session is kept, and the changes before are done, where the project
+   * that the account opened last has its copy written, as this one, the
+   * automatic pins of those opened before it go, but for the copies of
+   * those that the user chose (OfflineDatabase.dropBeforeLast).
    */
   async wrote(projectId: string): Promise<void> {
     if (this.stopped) {
@@ -522,6 +516,18 @@ export class OfflineKeeper {
     } finally {
       await this.changed();
     }
+    // A failure here is the keeper's, which it records (enqueue), not the
+    // write's.
+    await this.enqueue(async () => {
+      const userId = this.store.getState().userId;
+      if (
+        userId !== undefined &&
+        (await this.ready()) &&
+        (await this.db.dropBeforeLast(userId))
+      ) {
+        await this.changed();
+      }
+    }).catch(() => undefined);
   }
 
   /** Takes the pin and the copy of userId's projectId off the device, as once the project can no longer be read, while the page's session is still userId's. */
@@ -642,13 +648,16 @@ export class OfflineKeeper {
       copies.map((c) => [c.project_id, c]),
     );
     // Why the copy of a project that is pinned no longer, here or in another
-    // tab, as the last opened once another was, could not be written is not
-    // shown of it once it is pinned again, before its copy has been tried.
+    // tab, as the automatic pin of one opened before the project opened
+    // last, which went once that one's copy was written, could not be
+    // written is not shown of it once it is pinned again, before its copy
+    // has been tried.
     for (const projectId of [...this.failures.keys()]) {
       if (!pins.some((pin) => pin.project_id === projectId)) {
         this.failures.delete(projectId);
       }
     }
+    const last = openedLast(pins)?.project_id;
     const views = new Map<string, PinView>();
     for (const pin of pins) {
       const copy = byProject.get(pin.project_id);
@@ -657,7 +666,8 @@ export class OfflineKeeper {
         projectId: pin.project_id,
         name: pin.name,
         chosen: pin.chosen,
-        auto: pin.auto,
+        auto: pin.project_id === last,
+        openedBefore: pin.auto && pin.project_id !== last,
         status: this.failures.has(pin.project_id) ? "failed" : pin.status,
         ...(failure === undefined ? {} : { failure }),
         ...(copy === undefined

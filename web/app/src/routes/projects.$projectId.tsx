@@ -1,4 +1,4 @@
-import { useIsFetching, useSuspenseQuery } from "@tanstack/react-query";
+import { useSuspenseQuery } from "@tanstack/react-query";
 import {
   createFileRoute,
   Link,
@@ -113,9 +113,15 @@ function ProjectPages({ projectId }: { projectId: string }) {
   // the device keeps offline (PRD FR-OFF-02), but for a run of the canvas's
   // benchmark, which the download would compete with, as it records nothing
   // of what the device showed last either (lastOpened.ts).
+  const keeper = router.options.context.offline;
   const benchRun = useLocation({
     select: (l) => (l.search as { bench?: unknown }).bench !== undefined,
   });
+  useEffect(() => {
+    if (!benchRun) {
+      keeper?.opened(projectId, project.name);
+    }
+  }, [keeper, projectId, project.name, benchRun]);
   // Offline, a page that reads the server alone says that it needs a
   // connection, in place of a page that would wait for it.
   const connected = useOnline();
@@ -357,30 +363,6 @@ function ProjectPages({ projectId }: { projectId: string }) {
       ) : (
         <NeedsConnection />
       )}
-      {!benchRun && <OpenedLast projectId={projectId} name={project.name} />}
     </div>
   );
-}
-
-/**
- * Has the project of projectId, named name, pinned as the project that the
- * account opened last on the device (OfflineKeeper.opened): as its pages
- * open, and as each read of the project ends, which the keeper takes only
- * once no read is under way, and the server answered the last, so that a
- * project whose pages open from what the page read of it before, whose
- * read anew begins as they open, moves the pin as of that read, rather than
- * as of the one before. It is a part of its own, so that the layout is not
- * shown anew at each read.
- */
-function OpenedLast({ projectId, name }: { projectId: string; name: string }) {
-  const keeper = useRouter().options.context.offline;
-  const reading =
-    useIsFetching({ queryKey: projectQuery(projectId).queryKey, exact: true }) >
-    0;
-  useEffect(() => {
-    if (!reading) {
-      keeper?.opened(projectId, name);
-    }
-  }, [keeper, projectId, name, reading]);
-  return null;
 }

@@ -51,8 +51,15 @@ export interface PinRecord {
   name: string;
   /** Whether the user made it available offline themself. */
   chosen: boolean;
-  /** Whether it is the project that the account last opened on the device, which is pinned automatically. */
+  /**
+   * Whether it is pinned automatically, as a project that the account opened
+   * on the device: the one that it opened last (openedLast), or one opened
+   * before it, which is kept until that one's copy is written
+   * (dropBeforeLast).
+   */
   auto: boolean;
+  /** When the account last opened it on the device, while it is auto. */
+  opened_at?: string;
   pinned_at: string;
   /** Whether its copy is being written for the first time, is written, or could not be written the last time that it was tried. */
   status: "downloading" | "ready" | "failed";
@@ -126,6 +133,31 @@ export function overQuota(error: unknown): boolean {
     (error instanceof DOMException || error instanceof Error) &&
     error.name === "QuotaExceededError"
   );
+}
+
+/**
+ * Returns the pin of pins of the project that the account opened last on
+ * the device, its automatic pin opened last, or, of two opened at the same
+ * time, as in two tabs, the one of the greater project ID, or undefined for
+ * none.
+ */
+export function openedLast(pins: readonly PinRecord[]): PinRecord | undefined {
+  let last: PinRecord | undefined;
+  for (const pin of pins) {
+    if (!pin.auto) {
+      continue;
+    }
+    const at = pin.opened_at ?? "";
+    const lastAt = last?.opened_at ?? "";
+    if (
+      last === undefined ||
+      at > lastAt ||
+      (at === lastAt && pin.project_id > last.project_id)
+    ) {
+      last = pin;
+    }
+  }
+  return last;
 }
 
 /** Returns a new version of a copy's write. */
@@ -327,6 +359,74 @@ export class OfflineDatabase {
       tx.done,
     ]);
     return undefined;
+  }
+
+  /**
+   * Pins userId's project, as change returns its pin from the one that the
+   * device has, or undefined for none, as the project that the account
+   * opened last on the device, at at, in one transaction: automatic, and
+   * opened after every other automatic pin of the account's, a millisecond
+   * after the one opened last where at is not past it, as in the same
+   * millisecond, so that openedLast finds it.
+   */
+  async markOpened(
+    userId: string,
+    projectId: string,
+    change: (pin: PinRecord | undefined) => PinRecord,
+    at: string,
+  ): Promise<void> {
+    const db = await this.open();
+    const tx = db.transaction("pins", "readwrite");
+    const pins = await tx.store.getAll(under(userId));
+    const before = openedLast(pins.filter((p) => p.project_id !== projectId));
+    let openedAt = at;
+    if (before?.opened_at !== undefined && before.opened_at >= at) {
+      const after = Date.parse(before.opened_at) + 1;
+      if (!Number.isNaN(after)) {
+        openedAt = new Date(after).toISOString();
+      }
+    }
+    const pin = change(pins.find((p) => p.project_id === projectId));
+    await Promise.all([
+      tx.store.put({ ...pin, auto: true, opened_at: openedAt }),
+      tx.done,
+    ]);
+  }
+
+  /**
+   * Takes out, in one transaction, every automatic pin of userId's but the
+   * one of the project that the account opened last (openedLast), once that
+   * one's copy is written (ready), with its copy, but for a pin that the
+   * user chose, which is kept, with its copy, no longer automatic. It
+   * resolves to whether it changed any pin.
+   */
+  async dropBeforeLast(userId: string): Promise<boolean> {
+    const db = await this.open();
+    const tx = db.transaction(["pins", "copies", "entities"], "readwrite");
+    const pins = tx.objectStore("pins");
+    const all = await pins.getAll(under(userId));
+    const last = openedLast(all);
+    const writes: Promise<unknown>[] = [];
+    if (last?.status === "ready") {
+      for (const pin of all) {
+        if (!pin.auto || pin.project_id === last.project_id) {
+          continue;
+        }
+        if (pin.chosen) {
+          const kept: PinRecord = { ...pin, auto: false };
+          delete kept.opened_at;
+          writes.push(pins.put(kept));
+        } else {
+          writes.push(
+            pins.delete([userId, pin.project_id]),
+            tx.objectStore("copies").delete([userId, pin.project_id]),
+            tx.objectStore("entities").delete(under(userId, pin.project_id)),
+          );
+        }
+      }
+    }
+    await Promise.all([...writes, tx.done]);
+    return writes.length > 0;
   }
 
   /**

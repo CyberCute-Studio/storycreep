@@ -5,7 +5,6 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { projectQuery, readUnanswered } from "../project/queries";
 import { renderApp, testSession } from "../test/app";
 import { fakeApi, startPage, testProject, testWorkspace } from "../test/fake";
 
@@ -169,7 +168,7 @@ describe("a project's switch of keeping it offline", () => {
     expect((box as HTMLInputElement).checked).toBe(false);
   });
 
-  it("moves the pin of the project opened last as of the read that opening its pages made, which a network without the internet leaves unanswered", async () => {
+  it("keeps the copy of the project opened before the one opened last until that one's copy is written, which a network without the internet leaves unwritten", async () => {
     const lighthouse = {
       ...testProject,
       id: "prj_lighthouse",
@@ -177,18 +176,20 @@ describe("a project's switch of keeping it offline", () => {
       slug: "lighthouse",
     };
     let answers = true;
+    let unanswered = 0;
     fakeApi(async (operation, input) => {
       const projectId =
         (input as { path?: { project_id?: string } } | undefined)?.path
           ?.project_id ?? testProject.id;
+      if (!answers && projectId === lighthouse.id) {
+        // A request that waits a while before it fails, as for a network
+        // that does not answer.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        unanswered++;
+        throw new NetworkError(new TypeError("Failed to fetch"));
+      }
       switch (operation) {
         case "getProject":
-          if (!answers) {
-            // A request that waits a while before it fails, as for a
-            // network that does not answer.
-            await new Promise((resolve) => setTimeout(resolve, 50));
-            throw new NetworkError(new TypeError("Failed to fetch"));
-          }
           return projectId === lighthouse.id ? lighthouse : testProject;
         case "listBoards":
           return page([{ ...quay, project_id: projectId }]);
@@ -206,25 +207,33 @@ describe("a project's switch of keeping it offline", () => {
       }
       return answer;
     });
-    const { offline, router, queryClient } = renderApp(
+    const { offline, offlineDb, router, queryClient } = renderApp(
       `/projects/${lighthouse.id}`,
       { session: testSession, offline: {} },
     );
     queryClient.setDefaultOptions({ queries: { retry: false } });
     const pins = () => offline?.store.getState().pins;
-    await waitFor(() => expect(pins()?.get(lighthouse.id)?.auto).toBe(true));
+    await waitFor(() =>
+      expect(pins()?.get(lighthouse.id)).toMatchObject({
+        auto: true,
+        status: "ready",
+      }),
+    );
     await act(() =>
       router.navigate({
         to: "/projects/$projectId",
         params: { projectId: testProject.id },
       }),
     );
-    await waitFor(() => expect(pins()?.get(testProject.id)?.auto).toBe(true));
-    expect(pins()?.has(lighthouse.id)).toBe(false);
-    // The page's read of the lighthouse, which the server answered, is
-    // stale by now, and its pages read it again as they open, which, on a
-    // network without the internet, gets no answer.
-    await act(() => new Promise((resolve) => setTimeout(resolve, 1_100)));
+    await waitFor(() =>
+      expect(pins()?.get(testProject.id)).toMatchObject({
+        auto: true,
+        status: "ready",
+      }),
+    );
+    await waitFor(() => expect(pins()?.has(lighthouse.id)).toBe(false));
+    // On a network without the internet, the lighthouse, opened again, is
+    // the project opened last at once, whose copy cannot be written.
     answers = false;
     await act(() =>
       router.navigate({
@@ -232,19 +241,32 @@ describe("a project's switch of keeping it offline", () => {
         params: { projectId: lighthouse.id },
       }),
     );
-    await waitFor(() =>
-      expect(readUnanswered(queryClient, lighthouse.id)).toBe(true),
-    );
-    await waitFor(() =>
-      expect(
-        queryClient.getQueryState(projectQuery(lighthouse.id).queryKey)
-          ?.fetchStatus,
-      ).toBe("idle"),
-    );
-    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    await waitFor(() => expect(pins()?.get(lighthouse.id)?.auto).toBe(true));
+    await waitFor(() => expect(unanswered).toBeGreaterThan(0));
     await offline?.idle();
-    expect(pins()?.get(testProject.id)?.auto).toBe(true);
-    expect(pins()?.has(lighthouse.id)).toBe(false);
+    expect(pins()?.get(lighthouse.id)?.status).not.toBe("ready");
+    expect(pins()?.get(testProject.id)).toMatchObject({
+      auto: false,
+      openedBefore: true,
+      status: "ready",
+    });
+    expect(
+      await offlineDb?.readCopy(testSession.user_id, testProject.id),
+    ).toBeDefined();
+    await act(() => router.navigate({ to: "/account/offline" }));
+    const item = (await screen.findByRole("link", { name: "Harbour" })).closest(
+      "li",
+    ) as HTMLElement;
+    expect(
+      within(item).getByText(
+        /^Kept until the project that you opened last is on this device\./,
+      ),
+    ).toBeDefined();
+    expect(
+      within(item).getByText(
+        /^On this device, as of .*, until the project opened last is on it too\.$/,
+      ),
+    ).toBeDefined();
   });
 
   it("is unavailable over plain HTTP, and says why", async () => {

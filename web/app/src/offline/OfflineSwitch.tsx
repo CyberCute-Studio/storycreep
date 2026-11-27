@@ -49,12 +49,15 @@ export function pinStatus(
             },
           );
   } else if (pin.status === "ready" && time !== undefined) {
-    status = t(
-      pin.auto && !pin.chosen
-        ? "offline.status.ready_last"
-        : "offline.status.ready",
-      { time },
-    );
+    // A project opened before the one opened last is kept until that one's
+    // copy is on the device.
+    let ready = "offline.status.ready";
+    if (!pin.chosen && pin.auto) {
+      ready = "offline.status.ready_last";
+    } else if (!pin.chosen && pin.openedBefore) {
+      ready = "offline.status.ready_until_last";
+    }
+    status = t(ready, { time });
   } else {
     status = t(
       online ? "offline.status.downloading" : "offline.status.waiting",

@@ -108,7 +108,9 @@ export function StoragePanel() {
                     {t(
                       pin.chosen
                         ? "offline.panel.chosen"
-                        : "offline.panel.last_opened",
+                        : pin.auto
+                          ? "offline.panel.last_opened"
+                          : "offline.panel.until_last",
                     )}{" "}
                     {pin.copy === undefined
                       ? ""

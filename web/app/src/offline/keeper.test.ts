@@ -1,11 +1,10 @@
 import "fake-indexeddb/auto";
-import {
-  type Board,
-  type ComponentType,
-  NetworkError,
-  type Node,
-  type SignedInBody,
-  type Variable,
+import type {
+  Board,
+  ComponentType,
+  Node,
+  SignedInBody,
+  Variable,
 } from "@storycreep/shared/api";
 import { IDBFactory } from "fake-indexeddb";
 import {
@@ -26,7 +25,6 @@ import {
 import { type ComponentEntry, emptyDoc, projectOf } from "../document/doc";
 import { Documents } from "../document/documents";
 import { createErrorLog } from "../errors/log";
-import { projectQuery } from "../project/queries";
 import { testAccount, testInstance, testSession } from "../test/app";
 import { fakeApi, refused, testProject, testWorkspace } from "../test/fake";
 import { fakeRealtime } from "../test/realtime";
@@ -37,7 +35,8 @@ import { OfflineKeeper } from "./keeper";
 // plan note N97), over the fake API, the fake channel, and fake-indexeddb:
 // a pin downloads the whole project, every board's content and every
 // component whole, which an operation keeps current; the last opened
-// project is pinned, and its pin moves to the next; unpinning and signing
+// project is pinned, and the pins of those opened before it go once its
+// copy is written, but for the copies of those chosen; unpinning and signing
 // out take the copies off the device at once; and a copy that the
 // browser's quota refuses is not kept, which the pin says.
 
@@ -408,33 +407,28 @@ describe("pinning a project", () => {
 });
 
 describe("the last opened project", () => {
-  it("is pinned, and its pin moves to the next project opened, whose copy the one before's gives way to unless it was chosen", async () => {
+  it("is pinned, and the pin of the one before goes, with its copy, once the copy of the next project opened is written", async () => {
     serve();
     const { keeper, db } = setup();
     keeper.opened(testProject.id, testProject.name);
     await statusOf(keeper, testProject.id, "ready");
     expect(keeper.store.getState().pins.get(testProject.id)).toMatchObject({
       auto: true,
+      openedBefore: false,
       chosen: false,
     });
     keeper.opened(lighthouse.id, lighthouse.name);
     await statusOf(keeper, lighthouse.id, "ready");
-    expect(keeper.store.getState().pins.has(testProject.id)).toBe(false);
+    await vi.waitFor(() =>
+      expect(keeper.store.getState().pins.has(testProject.id)).toBe(false),
+    );
     expect(
       await db.readCopy(testSession.user_id, testProject.id),
     ).toBeUndefined();
-
-    await keeper.pin(lighthouse.id, lighthouse.name);
-    keeper.opened(tower.id, tower.name);
-    await statusOf(keeper, tower.id, "ready");
-    expect(keeper.store.getState().pins.get(lighthouse.id)).toMatchObject({
-      auto: false,
-      chosen: true,
-    });
-    expect(await db.readCopy(testSession.user_id, lighthouse.id)).toBeDefined();
+    expect(keeper.store.getState().pins.get(lighthouse.id)?.auto).toBe(true);
   });
 
-  it("stays while the browser has no connection, keeping the copy before, and moves at a project opened once it has one", async () => {
+  it("is pinned at once while the browser has no connection, keeping the copy of the one before, which goes once its own copy is written", async () => {
     serve();
     const { keeper, db, setOnline } = setup();
     keeper.opened(testProject.id, testProject.name);
@@ -442,18 +436,121 @@ describe("the last opened project", () => {
     setOnline(false);
     keeper.opened(lighthouse.id, lighthouse.name);
     await keeper.idle();
-    expect(keeper.store.getState().pins.has(lighthouse.id)).toBe(false);
-    expect(keeper.store.getState().pins.get(testProject.id)?.auto).toBe(true);
+    expect(keeper.store.getState().pins.get(lighthouse.id)).toMatchObject({
+      auto: true,
+      status: "downloading",
+    });
+    expect(keeper.store.getState().pins.get(testProject.id)).toMatchObject({
+      auto: false,
+      openedBefore: true,
+      status: "ready",
+    });
     expect(
       await db.readCopy(testSession.user_id, testProject.id),
     ).toBeDefined();
-    // Nothing waits for the connection to move it.
     setOnline(true);
-    await keeper.idle();
-    expect(keeper.store.getState().pins.has(lighthouse.id)).toBe(false);
-    keeper.opened(lighthouse.id, lighthouse.name);
     await statusOf(keeper, lighthouse.id, "ready");
-    expect(keeper.store.getState().pins.has(testProject.id)).toBe(false);
+    await vi.waitFor(() =>
+      expect(keeper.store.getState().pins.has(testProject.id)).toBe(false),
+    );
+    expect(
+      await db.readCopy(testSession.user_id, testProject.id),
+    ).toBeUndefined();
+  });
+
+  it("keeps the copy of the one before where its own copy cannot be written, as for the quota", async () => {
+    serve();
+    // Nothing is tried again of itself within the test.
+    const { keeper, db } = setup({ retryDelay: 60_000 });
+    let full = false;
+    quota(() => full);
+    keeper.opened(testProject.id, testProject.name);
+    await statusOf(keeper, testProject.id, "ready");
+    full = true;
+    keeper.opened(lighthouse.id, lighthouse.name);
+    await statusOf(keeper, lighthouse.id, "failed");
+    await keeper.idle();
+    expect(keeper.store.getState().pins.get(lighthouse.id)).toMatchObject({
+      auto: true,
+      failure: "quota",
+    });
+    expect(keeper.store.getState().pins.get(testProject.id)).toMatchObject({
+      openedBefore: true,
+      status: "ready",
+    });
+    expect(
+      await db.readCopy(testSession.user_id, testProject.id),
+    ).toBeDefined();
+  });
+
+  it("drops the pins of every project opened before it once its copy is written, and none at the copy of one opened before it", async () => {
+    let towerAnswers = false;
+    serve({
+      fail: (_, input) =>
+        !towerAnswers &&
+        (input as { path?: { project_id?: string } } | undefined)?.path
+          ?.project_id === tower.id
+          ? refused(403, { code: "forbidden" })
+          : undefined,
+    });
+    const { keeper, db, setOnline } = setup();
+    keeper.opened(testProject.id, testProject.name);
+    await statusOf(keeper, testProject.id, "ready");
+    setOnline(false);
+    keeper.opened(lighthouse.id, lighthouse.name);
+    keeper.opened(tower.id, tower.name);
+    await keeper.idle();
+    const pins = () => keeper.store.getState().pins;
+    expect(pins().get(tower.id)?.auto).toBe(true);
+    expect(pins().get(lighthouse.id)?.openedBefore).toBe(true);
+    expect(pins().get(testProject.id)?.openedBefore).toBe(true);
+    // The lighthouse's copy is written before the tower's, which drops
+    // nothing, as the tower is the project opened last.
+    setOnline(true);
+    await statusOf(keeper, lighthouse.id, "ready");
+    await keeper.idle();
+    expect(pins().has(testProject.id)).toBe(true);
+    expect(
+      await db.readCopy(testSession.user_id, testProject.id),
+    ).toBeDefined();
+    towerAnswers = true;
+    await statusOf(keeper, tower.id, "ready");
+    await vi.waitFor(() => expect([...pins().keys()]).toEqual([tower.id]));
+    expect(await db.copies(testSession.user_id)).toMatchObject([
+      { project_id: tower.id },
+    ]);
+  });
+
+  it("keeps the copy of one opened before it that the user chose, no longer pinned automatically", async () => {
+    serve();
+    const { keeper, db, setOnline } = setup();
+    keeper.opened(lighthouse.id, lighthouse.name);
+    await keeper.pin(lighthouse.id, lighthouse.name);
+    await statusOf(keeper, lighthouse.id, "ready");
+    setOnline(false);
+    keeper.opened(tower.id, tower.name);
+    await keeper.idle();
+    expect(keeper.store.getState().pins.get(lighthouse.id)).toMatchObject({
+      chosen: true,
+      openedBefore: true,
+    });
+    setOnline(true);
+    await statusOf(keeper, tower.id, "ready");
+    await vi.waitFor(() =>
+      expect(
+        keeper.store.getState().pins.get(lighthouse.id)?.openedBefore,
+      ).toBe(false),
+    );
+    expect(keeper.store.getState().pins.get(lighthouse.id)).toMatchObject({
+      chosen: true,
+      auto: false,
+    });
+    expect(await db.readCopy(testSession.user_id, lighthouse.id)).toBeDefined();
+    expect(
+      (await db.pins(testSession.user_id)).find(
+        (p) => p.project_id === lighthouse.id,
+      ),
+    ).toMatchObject({ auto: false });
   });
 });
 
@@ -586,7 +683,7 @@ describe("a copy that the browser's quota refuses", () => {
     await statusOf(keeper, testProject.id, "ready");
   });
 
-  it("is not shown of a project whose pin went as the last opened moved on, which pinned again downloads", async () => {
+  it("is not shown of a project whose automatic pin went once the copy of the one opened after it was written, which pinned again downloads", async () => {
     serve();
     const { keeper, setOnline } = setup({ retryDelay: 60_000 });
     let full = true;
@@ -608,39 +705,6 @@ describe("a copy that the browser's quota refuses", () => {
     expect(
       keeper.store.getState().pins.get(testProject.id)?.failure,
     ).toBeUndefined();
-  });
-});
-
-describe("the last opened project, where the server does not answer", () => {
-  it("stays though the browser says that it is online, as on a flight's network without the internet, and moves from a project opened whose read the server answers", async () => {
-    let answers = true;
-    serve({
-      fail: (operation) =>
-        !answers && operation === "getProject"
-          ? new NetworkError(new TypeError("Failed to fetch"))
-          : undefined,
-    });
-    const { keeper, db, queryClient } = setup();
-    keeper.opened(testProject.id, testProject.name);
-    await statusOf(keeper, testProject.id, "ready");
-    // The page's read of the project, as its pages are opened, gets no
-    // answer, which the device's copy of it, where it has one, answers.
-    answers = false;
-    await queryClient
-      .fetchQuery({ ...projectQuery(lighthouse.id), retry: false })
-      .catch(() => undefined);
-    keeper.opened(lighthouse.id, lighthouse.name);
-    await keeper.idle();
-    expect(keeper.store.getState().pins.has(lighthouse.id)).toBe(false);
-    expect(keeper.store.getState().pins.get(testProject.id)?.auto).toBe(true);
-    expect(
-      await db.readCopy(testSession.user_id, testProject.id),
-    ).toBeDefined();
-    answers = true;
-    await queryClient.fetchQuery(projectQuery(lighthouse.id));
-    keeper.opened(lighthouse.id, lighthouse.name);
-    await statusOf(keeper, lighthouse.id, "ready");
-    expect(keeper.store.getState().pins.has(testProject.id)).toBe(false);
   });
 });
 
