@@ -376,7 +376,7 @@ export const SavedStates = memo(function SavedStates({
         // Offline, the list waits for the browser to be online again, which
         // the device's copy of the project does not hold (PRD FR-OFF-02).
         <p className="text-fg-muted">
-          {t(online ? "play.saved.reading" : "play.saved.offline")}
+          {online ? t("play.saved.reading") : t("play.saved.offline")}
         </p>
       ) : (
         <>

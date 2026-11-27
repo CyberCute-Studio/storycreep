@@ -69,11 +69,9 @@ export function StoragePanel() {
   if (keeper === undefined || available === false) {
     return (
       <p>
-        {t(
-          keeper?.options.secure === false
-            ? "offline.unavailable_insecure"
-            : "offline.unavailable_storage",
-        )}
+        {keeper?.options.secure === false
+          ? t("offline.unavailable_insecure")
+          : t("offline.unavailable_storage")}
       </p>
     );
   }
@@ -105,13 +103,11 @@ export function StoragePanel() {
                     </TextLink>
                   </p>
                   <p className="text-sm">
-                    {t(
-                      pin.chosen
-                        ? "offline.panel.chosen"
-                        : pin.auto
-                          ? "offline.panel.last_opened"
-                          : "offline.panel.until_last",
-                    )}{" "}
+                    {pin.chosen
+                      ? t("offline.panel.chosen")
+                      : pin.auto
+                        ? t("offline.panel.last_opened")
+                        : t("offline.panel.until_last")}{" "}
                     {pin.copy === undefined
                       ? ""
                       : t("offline.panel.size", {
@@ -148,11 +144,9 @@ export function StoragePanel() {
           </p>
         )}
         <p>
-          {t(
-            storage.persisted
-              ? "offline.panel.persisted"
-              : "offline.panel.not_persisted",
-          )}
+          {storage.persisted
+            ? t("offline.panel.persisted")
+            : t("offline.panel.not_persisted")}
         </p>
         {storage.persisted !== true && (
           <Button

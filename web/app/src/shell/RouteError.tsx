@@ -37,7 +37,9 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
   }, [connected, unanswered, wentOffline, reset, router]);
   const needsConnection = unanswered && !connected;
   useDocumentTitle(
-    t(needsConnection ? "offline.needs_connection.title" : "route_error.title"),
+    needsConnection
+      ? t("offline.needs_connection.title")
+      : t("route_error.title"),
   );
   if (needsConnection) {
     return (

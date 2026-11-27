@@ -34,36 +34,29 @@ export function pinStatus(
     pin.copy === undefined
       ? undefined
       : formatDateTime(locale, new Date(pin.copy.savedAt));
-  let status: string;
+  // Each key is a literal of its own, which extraction reads
+  // (server/internal/i18n/extract).
   if (pin.status === "failed") {
     const full = pin.failure === "quota";
-    status =
-      time === undefined
-        ? t(full ? "offline.status.full" : "offline.status.failed")
-        : t(
-            full
-              ? "offline.status.full_behind"
-              : "offline.status.failed_behind",
-            {
-              time,
-            },
-          );
-  } else if (pin.status === "ready" && time !== undefined) {
+    if (time === undefined) {
+      return full ? t("offline.status.full") : t("offline.status.failed");
+    }
+    return full
+      ? t("offline.status.full_behind", { time })
+      : t("offline.status.failed_behind", { time });
+  }
+  if (pin.status === "ready" && time !== undefined) {
     // A project opened before the one opened last is kept until that one's
     // copy is on the device.
-    let ready = "offline.status.ready";
     if (!pin.chosen && pin.auto) {
-      ready = "offline.status.ready_last";
-    } else if (!pin.chosen && pin.openedBefore) {
-      ready = "offline.status.ready_until_last";
+      return t("offline.status.ready_last", { time });
     }
-    status = t(ready, { time });
-  } else {
-    status = t(
-      online ? "offline.status.downloading" : "offline.status.waiting",
-    );
+    if (!pin.chosen && pin.openedBefore) {
+      return t("offline.status.ready_until_last", { time });
+    }
+    return t("offline.status.ready", { time });
   }
-  return status;
+  return online ? t("offline.status.downloading") : t("offline.status.waiting");
 }
 
 /** The project of projectId's switch of keeping it offline, named name. */
@@ -90,11 +83,9 @@ export function OfflineSwitch({
   }
   const hint =
     available === false
-      ? t(
-          keeper.options.secure
-            ? "offline.unavailable_storage"
-            : "offline.unavailable_insecure",
-        )
+      ? keeper.options.secure
+        ? t("offline.unavailable_storage")
+        : t("offline.unavailable_insecure")
       : pinStatus(pin, online, t, i18n.language);
   return (
     <CheckboxField
