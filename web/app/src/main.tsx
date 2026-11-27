@@ -91,6 +91,7 @@ const documents = new Documents({
     secure,
     locks: webLocks(navigator.locks),
     broadcast: secure ? queueBroadcast() : undefined,
+    storage: deviceStorage(),
   }),
 });
 const offline = new OfflineKeeper({
@@ -174,6 +175,19 @@ offline.start();
 function tabStorage(): Storage | undefined {
   try {
     return window.sessionStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Returns the browser's local storage, which keeps what signing out could
+ * not take off the device's queue until it has, across a restart (PRD
+ * FR-OFF-03), or undefined where the browser refuses it, as tabStorage.
+ */
+function deviceStorage(): Storage | undefined {
+  try {
+    return window.localStorage;
   } catch {
     return undefined;
   }

@@ -860,6 +860,62 @@ describe("the device's queue of the page's batches", () => {
     await db2.close();
   });
 
+  it("takes what signing out could not take off the device off it before a document takes the account's batches again, and keeps a batch made after", async () => {
+    const batches = serve(() => new Promise<never>(() => {}));
+    const net = connection(false);
+    const locks = fakeLocks();
+    const db = new OfflineDatabase();
+    const queue = deviceQueue(db, {
+      secure: true,
+      locks,
+      storage: window.localStorage,
+      now: () => "2026-11-27T10:01:00Z",
+    }) as QueueStore;
+    const first = await open(db, locks, net, testSession, queue);
+    await first.doc.send([rename("bd_a", "Quay", 3)]);
+    await first.doc.send([rename("bd_a", "Dock", 3)]);
+    const [named, unnamed] = await db.queued(user, testProject.id);
+    expect([named, unnamed].map((b) => nameOf(b?.commands ?? []))).toEqual([
+      "Quay",
+      "Dock",
+    ]);
+    first.doc.dispose();
+    await first.doc.lettingGo();
+    // The device refuses each removal as the page signs out: of the change
+    // that the dialog named, and then of any, as of a device that it could
+    // not read.
+    const deletes = vi
+      .spyOn(db, "deleteQueued")
+      .mockRejectedValue(new Error("The database connection is closing."));
+    await expect(queue.discard(user, named ? [named] : [])).rejects.toThrow();
+    await expect(queue.discard(user)).rejects.toThrow();
+    expect(await db.queued(user, testProject.id)).toHaveLength(2);
+    // Until the device takes them off it, no document takes the account's.
+    const blocked = await open(db, locks, net, testSession, queue);
+    expect(blocked.doc.store.getState().queued).toBe(0);
+    blocked.doc.dispose();
+    await blocked.doc.lettingGo();
+    deletes.mockRestore();
+    // A change made after signing out, as once the account signed in again.
+    clock = "2026-11-27T10:05:00Z";
+    const later = await open(db, locks, net, testSession, queue);
+    expect(later.doc.store.getState().queued).toBe(0);
+    await later.doc.send([rename("bd_a", "Pier", 3)]);
+    later.doc.dispose();
+    await later.doc.lettingGo();
+    const again = await open(db, locks, net, testSession, queue);
+    expect(shownName(again.doc)).toBe("Pier");
+    expect(again.doc.store.getState().queued).toBe(1);
+    expect(
+      (await db.queued(user, testProject.id)).map((b) => nameOf(b.commands)),
+    ).toEqual(["Pier"]);
+    expect(window.localStorage.length).toBe(0);
+    expect(batches).toEqual([]);
+    again.doc.dispose();
+    await again.doc.lettingGo();
+    await db.close();
+  });
+
   it("sends another tab's batch, taken as that tab closed, as it was made, and keeps it for review where this one's changed what it changes, rather than write over it", async () => {
     const batches = serveBoard();
     const net = connection(false);
@@ -1508,6 +1564,45 @@ describe("the device's queue of the page's batches", () => {
     net.set(false);
     net.set(true);
     await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(batches).toHaveLength(1);
+    doc.dispose();
+    await db.close();
+  });
+
+  it("writes a batch whose write the device refused with the next write, rather than leave the device's record of it behind", async () => {
+    const batches = serve(() => {
+      throw refused(429, { code: "rate_limited" });
+    });
+    const net = connection(false);
+    const db = new OfflineDatabase();
+    const locks = fakeLocks();
+    const { doc } = await open(
+      db,
+      locks,
+      net,
+      testSession,
+      deviceQueue(db, { secure: true, locks }),
+      { random: () => 0.99 },
+    );
+    await doc.send([rename("bd_a", "Quay", 3)]);
+    // The device refuses the write of the refusal, as for its quota.
+    const save = db.saveQueued.bind(db);
+    let refusedWrite = false;
+    vi.spyOn(db, "saveQueued").mockImplementation(async (...args) => {
+      if (!refusedWrite && args[2].some((b) => b.refusal !== undefined)) {
+        refusedWrite = true;
+        throw new DOMException("The quota was exceeded.", "QuotaExceededError");
+      }
+      return save(...args);
+    });
+    net.set(true);
+    await vi.waitFor(() => expect(refusedWrite).toBe(true));
+    net.set(false);
+    expect((await db.queued(user, testProject.id))[0]?.refusal).toBeUndefined();
+    // The next write, of a change made offline, carries it.
+    await doc.send([rename("bd_a", "Dock", 3)]);
+    const [kept] = await db.queued(user, testProject.id);
+    expect(kept?.refusal?.status).toBe(429);
     expect(batches).toHaveLength(1);
     doc.dispose();
     await db.close();
@@ -2507,6 +2602,111 @@ describe("the device's queue of the page's batches", () => {
     expect(batches).toHaveLength(2);
     expect(doc.doc.nodes.get("nd_new")?.board_id).toBe("bd_new");
     expect(doc.hasRead("board:bd_new")).toBe(true);
+    await db.close();
+  });
+
+  it("holds the content of a board that a queued batch creates as none where a reading anew began before the server applied the batch, which it answered meanwhile", async () => {
+    let seq = testProject.seq;
+    let created = false;
+    // The reads of the board's content that began before the server had
+    // the board wait for gate, and then find none of it.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let gated = 0;
+    fakeApi(async (operation, input) => {
+      switch (operation) {
+        case "getProject":
+          return { ...testProject, seq };
+        case "listFolders":
+          return { items: [], next_cursor: null };
+        case "listBoards":
+          return {
+            items: [
+              board("bd_a", "Harbour"),
+              ...(created ? [board("bd_new", "Quay", 1)] : []),
+            ],
+            next_cursor: null,
+          };
+        case "listBoardNodes":
+        case "listBoardConnections": {
+          if (!created) {
+            gated++;
+            await gate;
+            throw refused(404, { code: "not_found" });
+          }
+          return {
+            items:
+              operation === "listBoardNodes"
+                ? [
+                    {
+                      id: "nd_new",
+                      project_id: testProject.id,
+                      board_id: "bd_new",
+                      type: "branch",
+                      title: "",
+                      position: { x: 0, y: 0 },
+                      outputs: [],
+                      tags: [],
+                      rev: 1,
+                      created_at: time,
+                      updated_at: time,
+                    },
+                  ]
+                : [],
+            next_cursor: null,
+          };
+        }
+        case "applyCommands": {
+          const commands = (input as { body: { commands: CommandBody[] } }).body
+            .commands;
+          seq++;
+          if (commands[0]?.type === "board.create") {
+            created = true;
+            return applied(seq, [{ id: "bd_new", rev: 1 }]);
+          }
+          return applied(seq, [{ id: "nd_new", rev: 1 }]);
+        }
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const net = connection(false);
+    const db = new OfflineDatabase();
+    const { doc, queryClient } = await open(db, fakeLocks(), net);
+    await doc.send([
+      { type: "board.create", payload: { id: "bd_new", name: "Quay" } },
+    ]);
+    await doc.load("board:bd_new");
+    await doc.send([
+      {
+        type: "node.create",
+        payload: {
+          board_id: "bd_new",
+          id: "nd_new",
+          type: "branch",
+          position: { x: 0, y: 0 },
+        },
+      },
+    ]);
+    // Online, the project is read anew while the queue is held, and its
+    // read of the board waits; meanwhile the queue is sent, and answered.
+    const kept: SignedInBody = { ...testSession, csrf_token: "" };
+    queryClient.setQueryData(sessionQuery.queryKey, kept);
+    net.set(true);
+    const reading = doc.refresh();
+    await vi.waitFor(() => expect(gated).toBeGreaterThan(0));
+    queryClient.setQueryData(sessionQuery.queryKey, testSession);
+    await until(doc, (s) => s.queued === 0 && s.sending === 0);
+    release();
+    await reading;
+    // The board's content, which the server gave it after that read, the
+    // document holds still, and reads anew.
+    await vi.waitFor(() =>
+      expect(doc.doc.nodes.get("nd_new")?.board_id).toBe("bd_new"),
+    );
+    expect(doc.hasRead("board:bd_new")).toBe(true);
+    expect(doc.store.getState().view.nodes.has("nd_new")).toBe(true);
     await db.close();
   });
 });

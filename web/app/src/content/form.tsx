@@ -146,11 +146,18 @@ export function useEntityForm<T extends { id: string; rev: number }>(
   };
 }
 
-/** What a form of an entity says of its last save: that nothing changed, or that it saved. */
+/**
+ * What a form of an entity says of its last save: that nothing changed,
+ * that it saved, or that the device keeps it, as offline, until the server
+ * has it (PRD FR-OFF-03).
+ */
 export function SaveStatus({
   form,
 }: {
-  form: { unchanged: boolean; commands: { isSuccess: boolean } };
+  form: {
+    unchanged: boolean;
+    commands: { isSuccess: boolean; data?: { status: string } };
+  };
 }) {
   const { t } = useTranslation();
   return (
@@ -158,9 +165,11 @@ export function SaveStatus({
       message={
         form.unchanged
           ? t("board.unchanged")
-          : form.commands.isSuccess
-            ? t("board.saved")
-            : undefined
+          : !form.commands.isSuccess
+            ? undefined
+            : form.commands.data?.status === "queued"
+              ? t("board.kept")
+              : t("board.saved")
       }
     />
   );

@@ -2051,8 +2051,12 @@ export class ProjectDocument {
    * to answer, as one that the device's queue keeps: as of what the server
    * confirmed, it has none, and a read of it, which the server answers as
    * of a board that it has not, is none either (load, reload, rereadOnce).
+   * Where answered says so, as of a read that the server answered as of no
+   * such board, the batch may have been answered since, as the queue is
+   * sent while the project is read anew, its operation, which gives the
+   * board, and those after it, its content, yet to come (reload).
    */
-  private createdUnanswered(part: Part): boolean {
+  private createdUnanswered(part: Part, answered = false): boolean {
     if (!part.startsWith("board:")) {
       return false;
     }
@@ -2061,7 +2065,7 @@ export class ProjectDocument {
       !this.confirmed.boards.has(id) &&
       this.entries.some(
         (e) =>
-          e.answer === undefined &&
+          (answered || e.answer === undefined) &&
           e.commands.some(
             (c) => c.type === "board.create" && canonical(c.payload.id) === id,
           ),
@@ -2858,11 +2862,13 @@ export class ProjectDocument {
             } catch (error) {
               if (part.startsWith("board:") && notFoundBy(error)) {
                 // A board that a batch of the page's creates, which the
-                // server has yet to answer, has no content there yet, and
-                // is held with none (createdUnanswered); another went to
-                // the trash, by an operation that the document has yet to
-                // apply, which takes its part out.
-                if (this.createdUnanswered(part)) {
+                // server had yet to apply as it read it, as one that it
+                // has answered since, has no content there yet, and is
+                // held with none, which the operations after the read give
+                // it (createdUnanswered); another went to the trash, by an
+                // operation that the document has yet to apply, which takes
+                // its part out.
+                if (this.createdUnanswered(part, true)) {
                   lists.set(part, []);
                 } else {
                   this.loads.delete(part);
@@ -4356,7 +4362,27 @@ export class ProjectDocument {
       this.saves--;
       this.idleChanged();
     };
-    write.then(done, done);
+    write.then(done, (error: unknown) => {
+      // A write that the device refused, as for its quota, left its records
+      // as they were: each batch that it carried, which the document keeps
+      // as it put it, is behind there still, as with the revisions that an
+      // answer moved (moveQueued), and the next write carries it, rather
+      // than leave a page that loads anew to send it as it was. One that a
+      // document dropped as the page signed out no longer keeps is not.
+      if (!(error instanceof SignedOutError)) {
+        put.forEach((batch, i) => {
+          const entry = writing[i] as Entry;
+          if (
+            entry.held === batch &&
+            entry.answer === undefined &&
+            this.entries.includes(entry)
+          ) {
+            entry.dirty = true;
+          }
+        });
+      }
+      done();
+    });
     this.saving = write.catch(() => undefined);
     return write;
   }

@@ -1,6 +1,8 @@
 // A fake of the browser's Web Locks, which the device's queue holds its
 // documents' batches by (offline/queue.ts), for the tests, whose browser
-// (jsdom) has none: each lock exclusive, granted in the order asked for.
+// (jsdom) has none: each lock exclusive, granted in the order asked for,
+// and none to a request whose signal has aborted already, which it refuses
+// at once, as the browser does.
 
 import type { QueueLocks } from "../offline/queue";
 
@@ -10,6 +12,10 @@ export function fakeLocks(): QueueLocks {
   const waiting = new Map<string, (() => void)[]>();
   const hold = (name: string, signal?: AbortSignal) =>
     new Promise<() => void>((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new DOMException("Aborted.", "AbortError"));
+        return;
+      }
       const grant = () => {
         held.add(name);
         let released = false;

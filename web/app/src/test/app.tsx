@@ -168,7 +168,11 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
     queue:
       offlineDb === undefined
         ? undefined
-        : deviceQueue(offlineDb, { secure, locks: fakeLocks() }),
+        : deviceQueue(offlineDb, {
+            secure,
+            locks: fakeLocks(),
+            storage: window.localStorage,
+          }),
   });
   const offline =
     offlineDb === undefined

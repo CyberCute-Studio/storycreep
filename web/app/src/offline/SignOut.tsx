@@ -137,7 +137,9 @@ export function SignOutButton({
     setAsked(undefined);
     if (records === undefined || records.length > 0) {
       // The user decided: the changes go with the account's copies, and no
-      // document that held them writes one there again.
+      // document that held them writes one there again; those that the
+      // device refuses to take off it now it takes once it can, before a
+      // document takes the account's changes again (QueueStore.discard).
       await (
         documents.discardQueued(userId, records) ??
         dbNow()?.deleteQueued(userId, records)
