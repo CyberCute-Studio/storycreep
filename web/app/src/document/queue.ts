@@ -83,10 +83,12 @@ export interface QueuedBatch {
   /**
    * Whether it was sent and no answer came, so that it may have applied,
    * which the device records before each try, as the page may close before
-   * the answer comes, and a refusal, which applied nothing, takes back: it
-   * is sent again with its commands' IDs, which the server answers as the
-   * batch that it applied, if it did (FR-OFF-04 AC6), and it is not taken
-   * out of the queue by an undo, as one that never reached the server is.
+   * the answer comes, but for a device whose quota refuses it, which the
+   * try is made without (ProjectDocument.pump), and a refusal, which applied
+   * nothing, takes back: it is sent again with its commands' IDs, which the
+   * server answers as the batch that it applied, if it did (FR-OFF-04 AC6),
+   * and it is not taken out of the queue by an undo, as one that never
+   * reached the server is.
    */
   sent: boolean;
   /** Whether its undo joins the history once it applies (SendOptions.history). */
@@ -119,7 +121,8 @@ export interface QueueStore {
    * document that a page shows, those of a document that closes meanwhile
    * being left to the next that takes them; again takes those that no open
    * page's document holds, as once takes says so again, and resolves once
-   * found has them.
+   * found has them, or once the wait for the device's database to open is
+   * over, as the first taking's is, found having them once it has opened.
    */
   adopt(
     userId: string,

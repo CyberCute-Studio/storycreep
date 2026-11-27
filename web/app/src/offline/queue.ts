@@ -239,13 +239,24 @@ export function deviceQueue(
         return first;
       };
       // Takes those that no open tab's document holds, as once owner's
-      // takes them again, which it left meanwhile, as of a tab that closed.
-      const again = async () => {
-        const more = await take(closed).catch(() => [] as QueuedBatch[]);
-        if (more.length > 0 && !stopped.signal.aborted) {
-          found(more);
-        }
-      };
+      // takes them again, which it left meanwhile, as of a tab that closed,
+      // resolving once it has, or after wait, as of a database that does not
+      // open by then, which a read waits for no longer than for the first
+      // (whenReady): those that it takes after it gives as it gives those of
+      // a tab that closes (found), leaving no timer behind.
+      const again = () =>
+        new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, wait);
+          void take(closed)
+            .catch(() => [] as QueuedBatch[])
+            .then((more) => {
+              if (more.length > 0 && !stopped.signal.aborted) {
+                found(more);
+              }
+              clearTimeout(timer);
+              resolve();
+            });
+        });
       if (await opensWithin(db, wait)) {
         return { batches: await begin(), stop, again };
       }

@@ -314,13 +314,20 @@ function unansweredBy(error: unknown): boolean {
 }
 
 /**
+ * The statuses of the answers that refuse when or by whom a batch was sent,
+ * rather than what it does, which may not refuse it later: a session that
+ * has ended (401), credentials or a role that do not allow it (403), a
+ * request that took too long (408), and too many requests (429), whether
+ * the server's own or a proxy's, as one whose own sign-in has ended.
+ */
+const refusedForWhen = [401, 403, 408, 429];
+
+/**
  * Reports whether error refuses what a step of the history does, which
  * sending it again would meet again, as for what changed since: the server's
  * answer with a status of 4xx, but for those that refuse when or by whom it
- * was sent, which may not refuse it later: a session that has ended (401),
- * credentials or a role that do not allow it (403), a request that took too
- * long (408), too many requests (429), and a project that is archived until
- * it is unarchived (project_archived). A failure of the server's own, as 503
+ * was sent (refusedForWhen), and a project that is archived until it is
+ * unarchived (project_archived). A failure of the server's own, as 503
  * not_ready, may not come again either (FR-EDIT-08).
  */
 function refusedForGood(error: unknown): boolean {
@@ -331,7 +338,7 @@ function refusedForGood(error: unknown): boolean {
   return (
     status >= 400 &&
     status < 500 &&
-    ![401, 403, 408, 429].includes(status) &&
+    !refusedForWhen.includes(status) &&
     body?.code !== "project_archived"
   );
 }
@@ -4437,10 +4444,16 @@ export class ProjectDocument {
       // it may apply once it is, whatever becomes of the page meanwhile, as
       // a reload, or a tab that closes: the next page sends it again with
       // its commands' IDs, rather than take it out of the queue by an undo
-      // (withdraws). A device that refuses the write, as for its quota,
-      // leaves it as it was, and the batch is not sent, which the next page
-      // would not know of, but tried again later, as after a fault of the
-      // page's own, the record with it.
+      // (withdraws). A device that refuses the write leaves it as it was, and
+      // the batch is not sent, which the next page would not know of, but
+      // tried again later, as after a fault of the page's own, the record
+      // with it; but for one that refuses it for its quota, which would
+      // refuse it at every try after, and every change that the page makes
+      // meanwhile, which the queue keeps while it waits (holdReason), for as
+      // long as the device is full: the batch is sent all the same, which
+      // the device keeps as not sent, so that only a page that loads before
+      // its answer has come, and takes it out of the queue by an undo, as
+      // offline, would find the server with it after.
       sentBefore = entry.held?.sent ?? false;
       if (entry.held !== undefined && !sentBefore) {
         entry.held = this.batchOf(entry, { sent: true });
@@ -4448,7 +4461,10 @@ export class ProjectDocument {
         const recorded = await this.persist().then(
           () => true,
           (failure: unknown) => {
-            if (!overQuota(failure) && !(failure instanceof SignedOutError)) {
+            if (overQuota(failure)) {
+              return "full" as const;
+            }
+            if (!(failure instanceof SignedOutError)) {
               this.options.log.record("error", failure);
             }
             return false;
@@ -4468,7 +4484,7 @@ export class ProjectDocument {
           }
           return;
         }
-        if (!recorded && entry.held !== undefined) {
+        if (recorded === false && entry.held !== undefined) {
           entry.sent = false;
           entry.held = this.batchOf(entry, { sent: false });
           entry.dirty = true;
@@ -4749,9 +4765,12 @@ export class ProjectDocument {
       ...(answer.error === undefined ? {} : { error: answer.error }),
       at: this.now(),
     };
+    // A proxy's page, as one that its own sign-in answers with once it has
+    // ended, refuses when or by whom the batch was sent as the server would,
+    // or is its failure (plan note N98).
     const waits = answered(answer)
       ? !refusedForGood(answer)
-      : answer.status >= 500 || answer.status === 408 || answer.status === 429;
+      : answer.status >= 500 || refusedForWhen.includes(answer.status);
     entry.held = this.batchOf(entry, {
       refusal,
       state: waits ? "pending" : "review",

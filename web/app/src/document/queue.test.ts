@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto";
 import {
+  ApiError,
   type Board,
   type CommandBody,
   type CommandResultBody,
@@ -1872,7 +1873,7 @@ describe("the device's queue of the page's batches", () => {
     await db.close();
   });
 
-  it("sends a queued batch once the device has recorded that it is sent, and tries again later where the device refused to", async () => {
+  it("sends a queued batch once the device has recorded that it is sent, and tries again later where the device refused to, as after a fault", async () => {
     const db = new OfflineDatabase();
     const recorded: (boolean | undefined)[] = [];
     const batches = serve(async () => {
@@ -1884,13 +1885,112 @@ describe("the device's queue of the page's batches", () => {
     await doc.send([rename("bd_a", "Quay", 3)]);
     const saves = vi
       .spyOn(db, "saveQueued")
-      .mockRejectedValueOnce(new DOMException("Full.", "QuotaExceededError"));
+      .mockRejectedValueOnce(
+        new DOMException("The transaction was aborted.", "AbortError"),
+      );
     net.set(true);
     await until(doc, (s) => s.queued === 0);
     expect(saves.mock.calls.length).toBeGreaterThan(1);
     expect(batches).toHaveLength(1);
     expect(recorded).toEqual([true]);
     await db.close();
+  });
+
+  it("sends a queued batch that the device's quota refuses to record as sent all the same, rather than hold it, and every change made meanwhile, for as long as the device is full", async () => {
+    const db = new OfflineDatabase();
+    const recorded: (boolean | undefined)[] = [];
+    const batches = serve(async () => {
+      recorded.push((await db.queued(user, testProject.id))[0]?.sent);
+      return applied(batches.length + 1, [
+        { id: "bd_a", rev: batches.length + 3 },
+      ]);
+    });
+    const net = connection(false);
+    const { doc } = await open(db, fakeLocks(), net);
+    await doc.send([rename("bd_a", "Quay", 3)]);
+    // The device is full from now on.
+    vi.spyOn(db, "saveQueued").mockRejectedValue(
+      new DOMException("Full.", "QuotaExceededError"),
+    );
+    net.set(true);
+    await until(doc, (s) => s.queued === 0);
+    expect(batches).toHaveLength(1);
+    // The device keeps it as it was.
+    expect(recorded).toEqual([false]);
+    // A change made since is sent, rather than kept, and refused for the
+    // device's quota.
+    await expect(doc.send([rename("bd_a", "Pier", 4)])).resolves.toMatchObject({
+      status: "applied",
+    });
+    expect(batches).toHaveLength(2);
+    await db.close();
+  });
+
+  it("tries a queued batch again later that a proxy refused with a page of its own, as for its sign-in, rather than keep it for review", async () => {
+    let failures = 1;
+    const batches = serve(() => {
+      if (failures-- > 0) {
+        throw new ApiError(
+          new Response("<html>Sign in</html>", {
+            status: 401,
+            headers: { "Content-Type": "text/html" },
+          }),
+          undefined,
+        );
+      }
+      return applied(2, [{ id: "bd_a", rev: 4 }]);
+    });
+    const net = connection(false);
+    const db = new OfflineDatabase();
+    const { doc } = await open(db, fakeLocks(), net);
+    await doc.send([rename("bd_a", "Quay", 3)]);
+    net.set(true);
+    await until(doc, (s) => s.queued === 0);
+    expect(doc.store.getState().review).toBe(0);
+    expect(batches).toHaveLength(2);
+    expect(batches[1]).toEqual(batches[0]);
+    await db.close();
+  });
+
+  it("lets a read go on once the device's database does not open in time as the document takes the batches let go while it took none, and takes them once it opens", async () => {
+    serve(() => applied(2, [{ id: "bd_a", rev: 4 }]));
+    const net = connection(false);
+    const locks = fakeLocks();
+    const db = new OfflineDatabase();
+    const { doc } = await open(
+      db,
+      locks,
+      net,
+      testSession,
+      deviceQueue(db, { secure: true, locks, wait: 10 }),
+    );
+    // No page shows the document, while another tab's, which closes, keeps
+    // a batch.
+    doc.takeQueue(false);
+    const otherDb = new OfflineDatabase();
+    const other = await open(otherDb, locks, net);
+    await other.doc.send([rename("bd_a", "Quay", 3)]);
+    other.doc.dispose();
+    await vi.waitFor(async () => expect((await locks.held()).size).toBe(1));
+    // The database is slow to open again, as one that another tab blocks.
+    const opening = db.open.bind(db);
+    let unblock = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      unblock = resolve;
+    });
+    vi.spyOn(db, "open").mockImplementation(async () => {
+      await blocked;
+      return opening();
+    });
+    // A page asks for it again, whose loader reads it.
+    doc.takeQueue(true);
+    await doc.ready;
+    expect(doc.store.getState().queued).toBe(0);
+    unblock();
+    await until(doc, (s) => s.queued === 1);
+    expect(shownName(doc)).toBe("Quay");
+    await db.close();
+    await otherDb.close();
   });
 
   it("sends a queued batch made before one that needs review, which holds only those after it", async () => {

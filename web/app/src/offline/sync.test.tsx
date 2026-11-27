@@ -17,7 +17,9 @@ import {
   onTestFinished,
   vi,
 } from "vitest";
+import { boardPart } from "../document/doc";
 import { renderApp, testSession } from "../test/app";
+import { testNode } from "../test/canvas";
 import { fakeApi, refused, startPage, testProject } from "../test/fake";
 import type { OfflineDatabase, QueueRecord } from "./db";
 import { syncStateOf } from "./pending";
@@ -368,6 +370,74 @@ describe("the history's controls", () => {
         "Undoing or redoing a change that the server already has waits until you decide what becomes of the changes that the server refused.",
       ),
     ).toBeDefined();
+  });
+});
+
+describe("a board's deletion offline", () => {
+  it("lists the jumpers of the page's copy that it would break, but those whose target is in the trash, as the server does", async () => {
+    const harbour = { ...quay, id: "bd_a", name: "Harbour", slug: "harbour" };
+    const lighthouse = {
+      ...quay,
+      id: "bd_b",
+      name: "Lighthouse",
+      slug: "lighthouse",
+      order: "W",
+    };
+    const jumper = (id: string, title: string, target: string) =>
+      testNode(id, 0, 0, {
+        board_id: "bd_b",
+        type: "jumper",
+        title,
+        target: { board_id: "bd_a", node_id: target },
+      });
+    fakeApi(async (operation, input) => {
+      if (!navigator.onLine) {
+        throw new NetworkError(new TypeError("Failed to fetch"));
+      }
+      switch (operation) {
+        case "getProject":
+          return testProject;
+        case "listBoards":
+          return page([harbour, lighthouse]);
+        case "listBoardNodes":
+          // The node that the gate targets is in the trash.
+          return (input as { path: { board_id: string } }).path.board_id ===
+            "bd_a"
+            ? page([testNode("nd_hall", 0, 0, { board_id: "bd_a" })])
+            : page([
+                jumper("nd_door", "The door", "nd_hall"),
+                jumper("nd_gate", "The gate", "nd_cellar"),
+              ]);
+        case "listBoardConnections":
+        case "listFolders":
+        case "listVariables":
+        case "listComponentTypes":
+        case "listComponents":
+          return page([]);
+      }
+      const answer = startPage(operation);
+      if (answer === undefined) {
+        throw new Error(`unexpected ${operation}`);
+      }
+      return answer;
+    });
+    const user = userEvent.setup();
+    const app = renderApp(`/projects/${testProject.id}`, {
+      session: testSession,
+      offline: { online: () => navigator.onLine },
+    });
+    await screen.findByRole("link", { name: "Harbour" });
+    const doc = app.documents.get(testProject.id);
+    await act(() => doc.load(boardPart("bd_a")));
+    await act(() => doc.load(boardPart("bd_b")));
+    setOnline(false);
+    await user.click(
+      await screen.findByRole("button", { name: "Actions of Harbour" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Delete…" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await within(dialog).findByText("The door, on Lighthouse");
+    expect(within(dialog).queryByText("The gate, on Lighthouse")).toBeNull();
   });
 });
 

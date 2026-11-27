@@ -28,6 +28,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
+import { boardPart } from "../document/doc";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { useServerReachable } from "../offline/pending";
 import {
@@ -622,10 +623,13 @@ export function DeleteBoardDialog({
   // offline: the dialog lists then the jumpers of the other boards that the
   // page holds, as the device's copy of the project, which is a change
   // that the device keeps (PRD FR-OFF-03), refused once sent, and kept for
-  // review, where the server knows of one that the copy does not.
+  // review, where the server knows of one that the copy does not. As the
+  // server's, it lists no jumper whose target is in the trash, which the
+  // page tells where it holds the board's content without it (FR-PROJ-02).
   const doc = useProjectDocument(projectId);
   const reachable = useServerReachable(doc);
   const nodes = useDocumentState(doc, (state) => state.view.nodes);
+  const parts = useDocumentState(doc, (state) => state.view.parts);
   const held = useMemo(
     () =>
       reachable
@@ -635,14 +639,16 @@ export function DeleteBoardDialog({
               (node) =>
                 node.type === "jumper" &&
                 node.board_id !== board.id &&
-                node.target?.board_id === board.id,
+                node.target?.board_id === board.id &&
+                (!parts.has(boardPart(board.id)) ||
+                  nodes.has(node.target.node_id ?? "")),
             )
             .map((node) => ({
               id: node.id,
               board_id: node.board_id,
               title: node.title,
             })),
-    [reachable, nodes, board.id],
+    [reachable, nodes, parts, board.id],
   );
   const jumpers: Jumper[] | undefined =
     refused?.jumpers ??
