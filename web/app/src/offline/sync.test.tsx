@@ -149,6 +149,18 @@ async function openProject() {
   return { ...app, doc: app.documents.get(testProject.id) };
 }
 
+/** Returns the keys of the browser's local storage that the device's queue keeps, of what signing out takes off the device (offline/queue.ts). */
+function queueKeys(): string[] {
+  const keys: string[] = [];
+  for (let i = 0; i < window.localStorage.length; i++) {
+    const key = window.localStorage.key(i);
+    if (key?.startsWith("storycreep.queue.")) {
+      keys.push(key);
+    }
+  }
+  return keys;
+}
+
 /** Waits at most a second for the sync indicator to say text (AC1). */
 function indicator(text: string) {
   return screen.findByRole("button", { name: text }, { timeout: 1_000 });
@@ -571,6 +583,74 @@ describe("a board's deletion offline", () => {
       ),
     ).toBeDefined();
   });
+
+  it("lists still the jumpers that the server listed as it opened once the page goes offline, which the deletion is confirmed for", async () => {
+    const harbour = { ...quay, id: "bd_a", name: "Harbour", slug: "harbour" };
+    const lighthouse = {
+      ...quay,
+      id: "bd_b",
+      name: "Lighthouse",
+      slug: "lighthouse",
+      order: "W",
+    };
+    fakeApi(async (operation) => {
+      if (!navigator.onLine) {
+        throw new NetworkError(new TypeError("Failed to fetch"));
+      }
+      switch (operation) {
+        case "getProject":
+          return testProject;
+        case "listBoards":
+          return page([harbour, lighthouse]);
+        case "listBoardReferrers":
+          // Of a board that the page's copy has not read.
+          return page([
+            testNode("nd_bell", 0, 0, {
+              board_id: "bd_b",
+              type: "jumper",
+              title: "The bell",
+              target: { board_id: "bd_a", node_id: "nd_hall" },
+            }),
+          ]);
+        case "listFolders":
+        case "listVariables":
+        case "listComponentTypes":
+        case "listComponents":
+          return page([]);
+      }
+      const answer = startPage(operation);
+      if (answer === undefined) {
+        throw new Error(`unexpected ${operation}`);
+      }
+      return answer;
+    });
+    const user = userEvent.setup();
+    const app = renderApp(`/projects/${testProject.id}`, {
+      session: testSession,
+      offline: { online: () => navigator.onLine },
+    });
+    await screen.findByRole("link", { name: "Harbour" });
+    await user.click(
+      await screen.findByRole("button", { name: "Actions of Harbour" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Delete…" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await within(dialog).findByText("The bell, on Lighthouse");
+    setOnline(false);
+    const confirm = await within(dialog).findByRole("button", {
+      name: "Delete it, and leave the jumper broken",
+    });
+    expect(within(dialog).getByText("The bell, on Lighthouse")).toBeDefined();
+    expect(within(dialog).queryByText(/^Offline, the/)).toBeNull();
+    await user.click(confirm);
+    await waitFor(async () =>
+      expect(
+        (await app.offlineDb?.queued(testSession.user_id))?.map(
+          (r) => r.commands[0]?.payload,
+        ),
+      ).toEqual([{ id: "bd_a", confirm: true }]),
+    );
+  });
 });
 
 describe("signing out", () => {
@@ -624,6 +704,45 @@ describe("signing out", () => {
       ),
     ).toBeDefined();
     expect(await offlineDb?.queued(testSession.user_id)).toHaveLength(1);
+    // Nothing remembers it as one to take off the device, which the next
+    // page that takes the account's changes would.
+    expect(queueKeys()).toEqual([]);
+  });
+
+  it("remembers what it takes off the device from when the user signs out anyway, as a tab that closes while the server signs it out would leave it, until it has", async () => {
+    let answer = () => {};
+    serve(
+      undefined,
+      () =>
+        new Promise<void>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    const { doc, offlineDb } = await openProject();
+    setOnline(false);
+    await act(() => doc.send([renameQuay("Pier")]));
+    await indicator("Offline, 1 change on this device");
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    setOnline(true);
+    await user.click(
+      within(
+        await screen.findByRole("alertdialog", {
+          name: "Sign out and lose a change not yet sent?",
+        }),
+      ).getByRole("button", { name: "Sign out anyway" }),
+    );
+    await waitFor(() =>
+      expect(queueKeys()).toEqual([
+        `storycreep.queue.signing-out.${testSession.user_id}`,
+      ]),
+    );
+    expect(await offlineDb?.queued(testSession.user_id)).toHaveLength(1);
+    answer();
+    await waitFor(async () =>
+      expect(await offlineDb?.queued(testSession.user_id)).toEqual([]),
+    );
+    expect(queueKeys()).toEqual([]);
   });
 
   it("asks first where the device is still writing a change as the user clicks, once it has", async () => {

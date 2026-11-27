@@ -295,6 +295,21 @@ export class Documents {
   }
 
   /**
+   * Remembers, as the user signs out anyway, that signing out takes the
+   * changes of userId's of only, or, where it is not given, every one made
+   * until now, off the device, before the server has signed the page out,
+   * so that a tab that closes first leaves none of them to be sent
+   * (QueueStore.intend); returns what forgets it, as once the page is still
+   * signed in, or undefined where the page keeps no queue.
+   */
+  intendDiscard(
+    userId: string,
+    only?: readonly { project_id: string; id: string }[],
+  ): (() => void) | undefined {
+    return this.options.queue?.intend(userId, only);
+  }
+
+  /**
    * Resolves once every document's writes of the device's queue begun so
    * far are done, kept or refused (ProjectDocument.queueWritten), those of
    * the documents dropped that have yet to let go of the queue too, as of a

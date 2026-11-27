@@ -607,7 +607,7 @@ describe("the device's queue of changes", () => {
       user,
       testProject.id,
       "me",
-      (owner) => owner === "gone",
+      async () => (owner) => owner === "gone",
     );
     expect(taken.map((b) => [b.id, b.owner])).toEqual([["b1", "me"]]);
     expect(
@@ -616,6 +616,37 @@ describe("the device's queue of changes", () => {
       ["b1", "me"],
       ["b2", "open"],
       ["b3", "gone"],
+    ]);
+  });
+
+  it("asks which owners a document may take the batches of once it has read them, and takes none written, or taken by another, after", async () => {
+    await db.saveQueued(
+      user,
+      testProject.id,
+      [batch("b1", 1, "gone"), batch("b2", 2, "gone")],
+      [],
+    );
+    const taken = await db.takeQueued(user, testProject.id, "me", async () => {
+      // A document that starts as the locks are read writes a batch, as
+      // one whose lock it holds, though no lock of it was held as they
+      // were read; and another document takes one of those read.
+      await db.saveQueued(user, testProject.id, [batch("b3", 3, "new")], []);
+      await db.saveQueued(
+        user,
+        testProject.id,
+        [batch("b2", 2, "other")],
+        [],
+        [],
+      );
+      return () => true;
+    });
+    expect(taken.map((b) => [b.id, b.owner])).toEqual([["b1", "me"]]);
+    expect(
+      (await db.queued(user, testProject.id)).map((b) => [b.id, b.owner]),
+    ).toEqual([
+      ["b1", "me"],
+      ["b2", "other"],
+      ["b3", "new"],
     ]);
   });
 });

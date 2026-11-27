@@ -4,21 +4,26 @@
 // signing in, until they are sent; signing out asks first, naming how many
 // there are, of every project of the account's, and offers them as JSON,
 // for support, before it takes them off the device with the account's
-// copies, once the server has signed the page out. Signing out of a device
-// that keeps none asks nothing. The device's database is read as the user
-// clicks, once it has opened, as on a page that has just loaded, and once
-// the page's documents have written the changes that they were keeping,
-// and again as the user signs out anyway, which asks anew where the device
-// keeps changes since that the dialog did not name. A database that does
-// not open in time, as one that another tab blocks, or that cannot be read,
-// may keep some all the same: signing out asks first then too, saying
-// that it could not read them, and, signed out anyway, takes any off the
-// device once it can.
+// copies, once the server has signed the page out, which the browser's
+// storage remembers from when the user signs out anyway, so that a tab that
+// closes first, as while the server answers, leaves the removal to the next
+// page that takes the account's changes, rather than the changes to be sent
+// (QueueStore.intend). Signing out of a device that keeps none asks
+// nothing. The device's database is read as the user clicks, once it has
+// opened, as on a page that has just loaded, and once the page's documents
+// have written the changes that they were keeping, and again as the user
+// signs out anyway, which asks anew where the device keeps changes since
+// that the dialog did not name. A database that does not open in time, as
+// one that another tab blocks, or that cannot be read, may keep some all
+// the same: signing out asks first then too, saying that it could not read
+// them, and, signed out anyway, takes any off the device once it can.
 
 import type { SignedInBody } from "@storycreep/shared/api";
+import { useQueryClient } from "@tanstack/react-query";
 import { AlertDialog } from "radix-ui";
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { useDocuments } from "../document/react";
 import { Button, type ButtonProps } from "../ui/Button";
@@ -77,6 +82,7 @@ export function SignOutButton({
   const { t } = useTranslation();
   const keeper = useKeeper();
   const documents = useDocuments();
+  const client = useQueryClient();
   // The account's changes that the device keeps, once the click has found
   // some, or unread, where it could not read them, while the dialog that
   // asks is open.
@@ -123,16 +129,27 @@ export function SignOutButton({
   // out anyway with, those named, by their projects and IDs, or, of a
   // device that could not be read, any (undefined): one that a document
   // kept as the page signed out, which the dialog did not name, stays, the
-  // account's, as one kept after.
+  // account's, as one kept after. The user's decision is remembered before
+  // the page signs out, and forgotten where the page is still signed in,
+  // which keeps them (intendDiscard).
   const end = async (records: readonly QueueRecord[] | undefined) => {
     setFailure(undefined);
+    const forget =
+      records === undefined || records.length > 0
+        ? documents.intendDiscard(userId, records)
+        : undefined;
     try {
       await signOut.mutateAsync(session);
     } catch (error) {
-      // The page says why it is still signed in, as the header does
-      // (signOutFailure), and so does the dialog, where it is open.
-      setFailure(error);
-      return;
+      // A page that the server signed out, whose showing itself anew then
+      // failed (endSession), is signed out all the same, and the changes go.
+      if (client.getQueryData(sessionQuery.queryKey) !== null) {
+        forget?.();
+        // The page says why it is still signed in, as the header does
+        // (signOutFailure), and so does the dialog, where it is open.
+        setFailure(error);
+        return;
+      }
     }
     setAsked(undefined);
     if (records === undefined || records.length > 0) {

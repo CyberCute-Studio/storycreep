@@ -164,6 +164,19 @@ export interface QueueStore {
     userId: string,
     only?: readonly { project_id: string; id: string }[],
   ): Promise<void>;
+  /**
+   * Remembers that signing out takes the batches of userId's of only, or,
+   * where it is not given, every one made until now, off the device, as
+   * the user signs out anyway, before the server has signed the page out,
+   * so that the next document that takes the account's batches takes them
+   * off it first where discard did not, as of a tab that closed while the
+   * server answered (plan note N98); returns what forgets it, as once the
+   * page is still signed in.
+   */
+  intend(
+    userId: string,
+    only?: readonly { project_id: string; id: string }[],
+  ): () => void;
 }
 
 /**

@@ -8,8 +8,17 @@ import {
   pointOf,
   settled,
 } from "./boards.ts";
-import { apply, signedIn } from "./content.ts";
-import { en, expect, message, press, test } from "./fixtures.ts";
+import { apply, sessionOf, signedIn } from "./content.ts";
+import {
+  atStart,
+  en,
+  expect,
+  message,
+  press,
+  registerAccount,
+  signIn,
+  test,
+} from "./fixtures.ts";
 
 // The device's queue of the changes that the server has yet to answer (PRD
 // FR-OFF-03, FR-OFF-06, plan note N98), in the browser, against the server:
@@ -25,7 +34,9 @@ import { en, expect, message, press, test } from "./fixtures.ts";
 // connected by a choice whose condition names the variable, to the other
 // board made offline, which play mode walks offline, which a reload offline
 // shows, the script view with the condition compiled on the device, and
-// which the server has once online.
+// which the server has once online. And a change that the user signed out
+// anyway with, whose tab closed as the server signed it out, which the
+// next sign-in does not send.
 
 test.use({ serviceWorkers: "allow" });
 
@@ -416,5 +427,67 @@ test.describe("the changes made offline", () => {
     expect(connections.map((c) => c.condition)).toMatchObject([
       { source: "planks > 2", is_valid: true },
     ]);
+  });
+
+  test("that the user signed out anyway with stay off the server, though the tab closed as the server signed it out", async ({
+    page,
+    context,
+  }) => {
+    const account = await registerAccount(page.request, "Cal Closer");
+    await signIn(page, account.email);
+    await atStart(page, account.name);
+    const session = await sessionOf(page.request);
+    const projectId = await makeProject(page.request, session, "Harbour");
+    await apply(page.request, session, projectId, [
+      { type: "board.create", payload: { id: newId("board"), name: "Quay" } },
+    ]);
+    await page.goto(`/app/projects/${projectId}`);
+    await page.evaluate(async () => {
+      await navigator.serviceWorker.ready;
+    });
+    await expect(page.getByText(/^On this device/)).toBeVisible({
+      timeout: 30_000,
+    });
+    await context.setOffline(true);
+    await expect(indicator(page, "Offline")).toBeVisible();
+    await renameBoard(page, "Quay", "Pier");
+    await expect(
+      indicator(page, "Offline, 1 change on this device"),
+    ).toBeVisible();
+    // Online, the server fails on every change, which the device keeps.
+    const commands = `**/api/v1/projects/${projectId}/commands`;
+    await context.route(commands, (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: { code: "unavailable", message: "Unavailable." },
+        }),
+      }),
+    );
+    await context.setOffline(false);
+    await expect(indicator(page, "Saving 1 change…")).toBeVisible({
+      timeout: 30_000,
+    });
+    await press(page.getByRole("button", { name: en["shell.sign_out"] }));
+    const asked = page.getByRole("alertdialog");
+    const signedOut = page.waitForResponse((res) =>
+      res.url().endsWith("/api/v1/auth/logout"),
+    );
+    await press(
+      asked.getByRole("button", { name: en["sign_out.pending.confirm"] }),
+    );
+    // The tab closes as the server's answer comes.
+    await signedOut;
+    await page.close({ runBeforeUnload: false });
+    await context.unroute(commands);
+
+    const next = await context.newPage();
+    await signIn(next, account.email);
+    await atStart(next, account.name);
+    await next.goto(`/app/projects/${projectId}`);
+    await expect(next.getByRole("link", { name: "Quay" })).toBeVisible();
+    await expect(indicator(next, en["sync.state.synced"])).toBeVisible();
+    expect(await serverBoards(next, projectId)).toEqual(["Quay"]);
   });
 });

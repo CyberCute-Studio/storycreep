@@ -802,27 +802,46 @@ export class OfflineDatabase {
   }
 
   /**
-   * Takes the batches of userId's projectId of the owners that from allows,
-   * of this version's format (queueFormat), as owner's, in one transaction,
-   * and resolves to them in the queue's order: a batch of another format,
-   * which another version of the app wrote, is kept as it is.
+   * Takes the batches of userId's projectId of the owners that the test
+   * that from resolves to allows, asked for once the batches have been
+   * read, of this version's format (queueFormat), as owner's, and resolves
+   * to them in the queue's order: a batch of another format, which another
+   * version of the app wrote, is kept as it is. One written after the read
+   * is not taken, as its owner may have been allowed for having written
+   * none yet, and neither is one whose owner changed after it, as another
+   * document took it; the rest are taken in one transaction.
    */
   async takeQueued(
     userId: string,
     projectId: string,
     owner: string,
-    from: (owner: string) => boolean,
+    from: () => Promise<(owner: string) => boolean>,
   ): Promise<QueueRecord[]> {
-    const db = await this.open();
-    const tx = db.transaction("queue", "readwrite");
+    const found = (
+      await (await this.open()).getAll("queue", under(userId, projectId))
+    ).filter(
+      (record) => record.owner !== owner && record.format === queueFormat,
+    );
+    if (found.length === 0) {
+      return [];
+    }
+    const allows = await from();
+    const owners = new Map(
+      found
+        .filter((record) => allows(record.owner))
+        .map((record) => [record.id, record.owner]),
+    );
+    if (owners.size === 0) {
+      return [];
+    }
+    const tx = (await this.open()).transaction("queue", "readwrite");
     const store = tx.objectStore("queue");
     const taken: QueueRecord[] = [];
     const writes: Promise<unknown>[] = [];
     for (const record of await store.getAll(under(userId, projectId))) {
       if (
-        record.owner !== owner &&
         record.format === queueFormat &&
-        from(record.owner)
+        owners.get(record.id) === record.owner
       ) {
         const mine = { ...record, owner };
         taken.push(mine);

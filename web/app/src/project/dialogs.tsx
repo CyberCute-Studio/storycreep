@@ -629,6 +629,11 @@ export function DeleteBoardDialog({
   // knows of and the copy does not too, which the dialog says. As the
   // server's, it lists no jumper whose target is in the trash, which the
   // page tells where it holds the board's content without it (FR-PROJ-02).
+  // The server's list, once read as the dialog opened, is listed still once
+  // the page cannot reach the server, with the copy's that it lacks, as
+  // made offline since, rather than the copy's alone, which lacks those of
+  // the boards that the copy has not read, and would leave the deletion
+  // unconfirmed for them.
   const doc = useProjectDocument(projectId);
   const reachable = useServerReachable(doc);
   const nodes = useDocumentState(doc, (state) => state.view.nodes);
@@ -653,18 +658,20 @@ export function DeleteBoardDialog({
             })),
     [reachable, nodes, parts, board.id],
   );
+  const listed = referrers.data?.items.map((node: Node) => ({
+    id: node.id,
+    board_id: node.board_id,
+    title: node.title,
+  }));
   const jumpers: Jumper[] | undefined =
     refused?.jumpers ??
-    held ??
-    referrers.data?.items.map((node: Node) => ({
-      id: node.id,
-      board_id: node.board_id,
-      title: node.title,
-    }));
+    (listed === undefined || held === undefined
+      ? (held ?? listed)
+      : [...listed, ...held.filter((j) => !listed.some((l) => l.id === j.id))]);
   const count = refused?.count ?? jumpers?.length ?? 0;
   const more =
     refused === undefined
-      ? held === undefined && (referrers.data?.more ?? false)
+      ? (referrers.data?.more ?? false)
       : count > (jumpers?.length ?? 0);
   const confirmed = count > 0;
   const boardName = (id: string) =>
@@ -712,7 +719,7 @@ export function DeleteBoardDialog({
       {referrers.isError && reachable && (
         <Alert message={refusalOf(referrers.error, t)?.message} />
       )}
-      {!reachable && refused === undefined && (
+      {!reachable && refused === undefined && listed === undefined && (
         <p className="text-fg-muted">
           {t("boards.jumpers_offline", { count })}
         </p>

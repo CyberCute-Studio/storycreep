@@ -916,6 +916,78 @@ describe("the device's queue of the page's batches", () => {
     await db.close();
   });
 
+  it("takes what the user signed out anyway with off the device before a document takes the account's batches again, as of a tab that closed before it had, but not once forgotten, as of a page still signed in", async () => {
+    const batches = serve(() => new Promise<never>(() => {}));
+    const net = connection(false);
+    const locks = fakeLocks();
+    const db = new OfflineDatabase();
+    const queue = deviceQueue(db, {
+      secure: true,
+      locks,
+      storage: window.localStorage,
+    }) as QueueStore;
+    const first = await open(db, locks, net, testSession, queue);
+    await first.doc.send([rename("bd_a", "Quay", 3)]);
+    await first.doc.send([rename("bd_a", "Dock", 3)]);
+    const [named] = await db.queued(user, testProject.id);
+    first.doc.dispose();
+    await first.doc.lettingGo();
+    // The server did not sign the page out: the change stays.
+    queue.intend(user, named ? [named] : [])();
+    expect(window.localStorage.length).toBe(0);
+    // It did, and the tab closed before it took the change off the device.
+    queue.intend(user, named ? [named] : []);
+    const next = await open(db, locks, net, testSession, queue);
+    expect(next.doc.store.getState().queued).toBe(1);
+    expect(
+      (await db.queued(user, testProject.id)).map((b) => nameOf(b.commands)),
+    ).toEqual(["Dock"]);
+    expect(window.localStorage.length).toBe(0);
+    expect(batches).toEqual([]);
+    next.doc.dispose();
+    await next.doc.lettingGo();
+    await db.close();
+  });
+
+  it("takes off the device too what another tab remembers as it takes off it what signing out could not, rather than forget it", async () => {
+    serve(() => new Promise<never>(() => {}));
+    const net = connection(false);
+    const locks = fakeLocks();
+    const db = new OfflineDatabase();
+    const queue = deviceQueue(db, {
+      secure: true,
+      locks,
+      storage: window.localStorage,
+    }) as QueueStore;
+    const first = await open(db, locks, net, testSession, queue);
+    await first.doc.send([rename("bd_a", "Quay", 3)]);
+    await first.doc.send([rename("bd_a", "Dock", 3)]);
+    const [quayBatch, dockBatch] = await db.queued(user, testProject.id);
+    first.doc.dispose();
+    await first.doc.lettingGo();
+    const deleting = db.deleteQueued.bind(db);
+    const deletes = vi.spyOn(db, "deleteQueued");
+    deletes.mockRejectedValueOnce(
+      new Error("The database connection is closing."),
+    );
+    await expect(
+      queue.discard(user, quayBatch ? [quayBatch] : []),
+    ).rejects.toThrow();
+    // As the next document takes it off the device, another tab's user
+    // signs out anyway with the other.
+    deletes.mockImplementationOnce(async (...args) => {
+      queue.intend(user, dockBatch ? [dockBatch] : []);
+      return deleting(...args);
+    });
+    const next = await open(db, locks, net, testSession, queue);
+    expect(next.doc.store.getState().queued).toBe(0);
+    expect(await db.queued(user, testProject.id)).toEqual([]);
+    expect(window.localStorage.length).toBe(0);
+    next.doc.dispose();
+    await next.doc.lettingGo();
+    await db.close();
+  });
+
   it("sends another tab's batch, taken as that tab closed, as it was made, and keeps it for review where this one's changed what it changes, rather than write over it", async () => {
     const batches = serveBoard();
     const net = connection(false);

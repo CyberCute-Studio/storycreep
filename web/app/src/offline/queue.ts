@@ -16,10 +16,13 @@
 // batches that it named off the device (discard), after which no tab writes
 // one of them there again, as of an answer to it that comes after, since a
 // batch written before is written again only where the device still keeps
-// it (save); a removal that the device refuses, as of a database that does
-// not open, is remembered in the browser's storage, and made before a
-// document takes the account's batches again, which takes none until it is
-// (discarded). A database that does not open in time refuses a write, as one
+// it (save); the removal is remembered in the browser's storage as the user
+// signs out anyway, before the server has signed the page out (intend),
+// and so is one that the device refuses, as of a database that does not
+// open, either of which is made before a document takes the account's
+// batches again, which takes none until it is (discarded), so that a tab
+// that closes first leaves no batch that the user signed out without to be
+// sent. A database that does not open in time refuses a write, as one
 // that refuses it for its quota does, rather than hold the document's writes,
 // and the tries that wait for them, for as long as the page is open.
 
@@ -122,10 +125,11 @@ function lockOf(owner: string): string {
 }
 
 /**
- * What signing out took off the device that the device refused to take, of
- * an account's, which the browser's storage keeps until it has: the batches
- * that it named, by their projects and IDs, and, where it could not read
- * them, every one made until when it signed out (before), as an ISO time.
+ * What signing out takes off the device, of an account's, which the
+ * browser's storage keeps until it has, as one that the device refused to
+ * take, or that a tab that closed first did not: the batches that it named,
+ * by their projects and IDs, and, where it could not read them, every one
+ * made until when the user signed out (before), as an ISO time.
  */
 interface Discarded {
   only: { project_id: string; id: string }[];
@@ -137,27 +141,63 @@ function discardedKey(userId: string): string {
   return `storycreep.queue.discarded.${userId}`;
 }
 
-/** Returns what storage keeps that signing out could not take off the device of userId's, if it keeps any that this code wrote. */
-function discardedOf(
-  storage: Storage | undefined,
-  userId: string,
-): Discarded | undefined {
+/** Returns the key of the browser's storage that keeps what signing out anyway takes off the device of userId's, until it has, or the page is still signed in (intend). */
+function signingOutKey(userId: string): string {
+  return `storycreep.queue.signing-out.${userId}`;
+}
+
+/** Returns what storage keeps at key, or null where it keeps nothing, or refuses to be read. */
+function storedAt(storage: Storage | undefined, key: string): string | null {
   try {
-    const value = JSON.parse(
-      storage?.getItem(discardedKey(userId)) ?? "null",
-    ) as Partial<Discarded> | null;
-    if (value === null || !Array.isArray(value.only)) {
+    return storage?.getItem(key) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Returns the Discarded that value, as storage kept it, holds, if it is one that this code wrote. */
+function discardedOf(value: string | null): Discarded | undefined {
+  try {
+    const held = JSON.parse(value ?? "null") as Partial<Discarded> | null;
+    if (held === null || !Array.isArray(held.only)) {
       return undefined;
     }
     return {
-      only: value.only.filter(
+      only: held.only.filter(
         (r) => typeof r?.project_id === "string" && typeof r.id === "string",
       ),
-      ...(typeof value.before === "string" ? { before: value.before } : {}),
+      ...(typeof held.before === "string" ? { before: held.before } : {}),
     };
   } catch {
     return undefined;
   }
+}
+
+/** Returns the latest of times, ISO times, or undefined where none is given. */
+function latestOf(times: readonly (string | undefined)[]): string | undefined {
+  return times
+    .filter((time) => time !== undefined)
+    .sort((a, b) => Date.parse(a) - Date.parse(b))
+    .at(-1);
+}
+
+/** Returns what signing out takes off the device, of the batches of only, or, where it is not given, of every one made until now, with what was held before, if anything (Discarded). */
+function discardedWith(
+  held: Discarded | undefined,
+  only: readonly { project_id: string; id: string }[] | undefined,
+  now: string,
+): Discarded {
+  const before = latestOf([held?.before, only === undefined ? now : undefined]);
+  const named = new Map(
+    [...(held?.only ?? []), ...(only ?? [])].map((r) => [
+      `${r.project_id}/${r.id}`,
+      { project_id: r.project_id, id: r.id },
+    ]),
+  );
+  return {
+    only: [...named.values()],
+    ...(before === undefined ? {} : { before }),
+  };
 }
 
 /** Options of deviceQueue. */
@@ -170,9 +210,10 @@ export interface DeviceQueueOptions {
   /** How long, in milliseconds, a document waits at most for the database to open (openWait). */
   wait?: number;
   /**
-   * The browser's storage, which keeps what signing out could not take off
-   * the device, as of a database that refused, until it has (Discarded);
-   * without it, such a removal is tried once alone.
+   * The browser's storage, which keeps what signing out takes off the
+   * device, from when the user signs out anyway, and what it could not, as
+   * of a database that refused, until it has (Discarded); without it, such
+   * a removal is tried once alone.
    */
   storage?: Storage;
   /** Returns the time now, as an ISO time, which a removal of every batch made until then remembers (Discarded's before). */
@@ -202,56 +243,81 @@ export function deviceQueue(
   const now = options.now ?? (() => new Date().toISOString());
   // The writes under way, which signing out's removal waits for (discard).
   const writes = new Set<Promise<void>>();
+  // Writes value at key of the browser's storage, which may refuse it, as
+  // with the site's data blocked, after which nothing more is kept of it.
+  const store = (key: string, value: Discarded): string | undefined => {
+    const written = JSON.stringify(value);
+    try {
+      storage?.setItem(key, written);
+      return written;
+    } catch {
+      return undefined;
+    }
+  };
   // Remembers that the device refused to take the batches of userId's of
   // only off it, or, where it is not given, every one made until now, with
-  // what it remembered before, which the browser's storage may refuse in
-  // turn, as with the site's data blocked.
+  // what it remembered before.
   const remember = (
     userId: string,
     only: readonly { project_id: string; id: string }[] | undefined,
   ) => {
-    const held = discardedOf(storage, userId);
-    const times = [held?.before, only === undefined ? now() : undefined]
-      .filter((time) => time !== undefined)
-      .sort((a, b) => Date.parse(a) - Date.parse(b));
-    const before = times.at(-1);
-    const discarded: Discarded = {
-      only: [...(held?.only ?? []), ...(only ?? [])].map((r) => ({
-        project_id: r.project_id,
-        id: r.id,
-      })),
-      ...(before === undefined ? {} : { before }),
-    };
-    try {
-      storage?.setItem(discardedKey(userId), JSON.stringify(discarded));
-    } catch {
-      // Nothing more is kept of it.
-    }
+    const key = discardedKey(userId);
+    store(key, discardedWith(discardedOf(storedAt(storage, key)), only, now()));
   };
-  // Takes off the device what signing out could not of userId's, if any,
-  // and forgets it once it has, rejecting where the device refuses again,
-  // after which a document takes none of the account's batches (adopt),
-  // which would send those that the user signed out without.
+  // The keys of the browser's storage that keep what signing out takes off
+  // the device of userId's: what it could not, and what it does as the
+  // user signs out anyway (intend).
+  const keysOf = (userId: string) => [
+    discardedKey(userId),
+    signingOutKey(userId),
+  ];
+  // Forgets what keys held as read, of each that holds it still, and
+  // reports whether any holds what was written since, as another tab
+  // remembered as it signed out, which is not forgotten.
+  const forgetRead = (keys: readonly string[], read: (string | null)[]) => {
+    let since = false;
+    keys.forEach((key, i) => {
+      if (storedAt(storage, key) !== read[i]) {
+        since = true;
+      } else if (read[i] !== null) {
+        try {
+          storage?.removeItem(key);
+        } catch {
+          // It is taken again, of none, next time.
+        }
+      }
+    });
+    return since;
+  };
+  // Takes off the device what signing out took, or could not, of userId's,
+  // if any, and forgets it once it has, rejecting where the device refuses
+  // again, after which a document takes none of the account's batches
+  // (adopt), which would send those that the user signed out without. What
+  // another tab remembers meanwhile, as it signs out, is not forgotten with
+  // it, which the storage then holds as written since, and is taken too.
   const discarded = async (userId: string) => {
-    const held = discardedOf(storage, userId);
-    if (held === undefined) {
-      return;
-    }
-    const before = held.before;
-    const only =
-      before === undefined
-        ? held.only
-        : [
-            ...held.only,
-            ...(await db.queued(userId)).filter(
+    const keys = keysOf(userId);
+    for (;;) {
+      const read = keys.map((key) => storedAt(storage, key));
+      const held = read
+        .map(discardedOf)
+        .filter((d): d is Discarded => d !== undefined);
+      if (held.length === 0) {
+        return;
+      }
+      const before = latestOf(held.map((d) => d.before));
+      const only = [
+        ...held.flatMap((d) => d.only),
+        ...(before === undefined
+          ? []
+          : (await db.queued(userId)).filter(
               (r) => Date.parse(r.time) <= Date.parse(before),
-            ),
-          ];
-    await db.deleteQueued(userId, only);
-    try {
-      storage?.removeItem(discardedKey(userId));
-    } catch {
-      // It is taken again, of none, next time.
+            )),
+      ];
+      await db.deleteQueued(userId, only);
+      if (!forgetRead(keys, read)) {
+        return;
+      }
     }
   };
   return {
@@ -275,11 +341,13 @@ export function deviceQueue(
         return taken;
       };
       // Takes, under the lock, as owner's, the batches of the owners that
-      // the test that from resolves to allows, read inside the lock, and
-      // resolves to them: none once owner's document has stopped taking
-      // them, as once it was dropped, which sends none of them, and would
-      // leave them to no document, nor while it takes none (takes), as one
-      // that no page shows, which leaves them to the next that does.
+      // the test that from resolves to allows, read inside the lock once
+      // the batches have been, so that one that a document wrote holding
+      // its lock is not taken for closed, and resolves to them: none once
+      // owner's document has stopped taking them, as once it was dropped,
+      // which sends none of them, and would leave them to no document, nor
+      // while it takes none (takes), as one that no page shows, which
+      // leaves them to the next that does.
       const take = (from: () => Promise<(other: string) => boolean>) =>
         locks
           .run(takeLock, async () => {
@@ -287,7 +355,7 @@ export function deviceQueue(
               return [];
             }
             await discarded(userId);
-            return db.takeQueued(userId, projectId, owner, await from());
+            return db.takeQueued(userId, projectId, owner, from);
           })
           .then(tell);
       // The owners whose documents no tab holds now.
@@ -420,12 +488,40 @@ export function deviceQueue(
       // account's batches again (discarded).
       await Promise.allSettled([...writes]);
       try {
+        if (only === undefined) {
+          // Every one of the account's goes, and with it what signing out
+          // remembered of them until now, which needs no read of them,
+          // which the device may refuse, as it did as the user clicked.
+          const keys = keysOf(userId);
+          const read = keys.map((key) => storedAt(storage, key));
+          await db.deleteQueued(userId);
+          if (forgetRead(keys, read)) {
+            await discarded(userId);
+          }
+          return;
+        }
         await discarded(userId);
         await db.deleteQueued(userId, only);
       } catch (error) {
         remember(userId, only);
         throw error;
       }
+    },
+    intend: (userId, only) => {
+      // Of this sign-out's alone, so that forgetting it leaves what another
+      // remembered, as one whose removal the device refused (remember).
+      const key = signingOutKey(userId);
+      const written = store(key, discardedWith(undefined, only, now()));
+      return () => {
+        if (written !== undefined && storedAt(storage, key) === written) {
+          try {
+            storage?.removeItem(key);
+          } catch {
+            // The next document that takes the account's batches takes
+            // these off the device, as the user signed out anyway.
+          }
+        }
+      };
     },
   };
 }
