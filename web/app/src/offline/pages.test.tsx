@@ -319,6 +319,43 @@ describe("a project's pages while the browser has no connection", () => {
     expect(await screen.findByRole("link", { name: "Quay" })).toBeDefined();
   });
 
+  it("keep a page of the server's that was shown as the connection went, hidden, with what the user typed in it, until it is back", async () => {
+    serve();
+    const user = userEvent.setup();
+    renderApp(`/projects/${testProject.id}/settings`, {
+      session: testSession,
+      offline: { online: () => navigator.onLine },
+    });
+    const description = (await screen.findByLabelText(
+      "Description",
+    )) as HTMLTextAreaElement;
+    await user.type(description, "A harbour at dusk.");
+    goOffline();
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "This page needs a connection",
+      }),
+    ).toBeDefined();
+    expect(
+      screen.queryByRole("button", { name: "Save the details" }),
+    ).toBeNull();
+    goOnline();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Save the details" }),
+      ).toBeDefined(),
+    );
+    expect(
+      screen.queryByRole("heading", {
+        level: 1,
+        name: "This page needs a connection",
+      }),
+    ).toBeNull();
+    expect(screen.getByLabelText("Description")).toBe(description);
+    expect(description.value).toBe("A harbour at dusk.");
+  });
+
   it("say that a board that the device's copy does not have needs a connection, rather than that there is none", async () => {
     serve();
     const { offline, router } = renderApp(`/projects/${testProject.id}`, {

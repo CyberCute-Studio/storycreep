@@ -1523,6 +1523,57 @@ describe("the canvas's jumpers", () => {
     });
   });
 
+  // A board that the document holds for the device's copy of the project
+  // alone, as the keeper's download read it, is asked for once the
+  // inspector offers its nodes, so that a reading anew of the project reads
+  // it again, rather than let it go (ProjectDocument.load's kept).
+  it("offers the nodes of a jumper's target board that the document held for the device's copy alone after the project is read anew", async () => {
+    flowProject({
+      nodes: [
+        testNode("nd_j", 0, 0, {
+          type: "jumper",
+          kind: undefined,
+          title: "To the lamp",
+          target: { board_id: "bd_b", node_id: "nd_lamp" },
+        }),
+        testNode("nd_lamp", 0, 0, { board_id: "bd_b", title: "The lamp" }),
+        testNode("nd_stair", 0, 300, { board_id: "bd_b", title: "The stair" }),
+      ],
+    });
+    const { documents, router } = renderApp(
+      `/projects/${testProject.id}/boards/bd_a`,
+      { session: testSession },
+    );
+    const canvas = await screen.findByRole("application", {
+      name: "Nodes of Harbour",
+    });
+    await waitFor(() => expect(canvas.dataset.ready).toBe("true"));
+    const doc = documents.get(testProject.id);
+    await act(() => doc.load("board:bd_b", true));
+    await act(() =>
+      router.navigate({
+        to: "/projects/$projectId/boards/$boardId",
+        params: { projectId: testProject.id, boardId: "bd_a" },
+        search: { node: "nd_j" },
+      }),
+    );
+    const inspector = await screen.findByRole("region", {
+      name: "To the lamp",
+    });
+    const stair = () =>
+      within(within(inspector).getByLabelText("Node")).queryByRole("option", {
+        name: "The stair (Narration)",
+      });
+    await waitFor(() => expect(stair()).not.toBeNull());
+    // As once the channel could not send what the document missed.
+    await act(() => doc.refresh());
+    expect(doc.hasRead("board:bd_b")).toBe(true);
+    expect(stair()).not.toBeNull();
+    expect(
+      within(inspector).queryByText("Reading the board's nodes…"),
+    ).toBeNull();
+  });
+
   it("reads no nodes of a board that the project no longer has, of a jumper whose target was on it", async () => {
     const { calls } = flowProject({
       nodes: [

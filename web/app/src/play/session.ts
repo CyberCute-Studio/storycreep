@@ -704,6 +704,17 @@ export class PlaySession {
     if (!current()) {
       return;
     }
+    // Each board whose content the document has read already, as one that
+    // it holds for the device's copy of the project alone, is asked for as
+    // the boards that play reads are (load), so that a reading anew of the
+    // project reads it again with them, rather than let it go, which would
+    // take it from the draft that play projected (ProjectDocument.load's
+    // kept, offline/keeper.ts).
+    for (const b of doc.store.getState().view.boards.values()) {
+      if (b.deleted_at === undefined && doc.hasRead(boardPart(b.id))) {
+        void doc.load(boardPart(b.id)).catch(() => undefined);
+      }
+    }
     const reads: (() => Promise<void>)[] = [];
     // addUnread adds the reads of what the document holds now and has not
     // read: each board's content, and each component whole.

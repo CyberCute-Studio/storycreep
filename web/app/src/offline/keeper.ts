@@ -230,8 +230,6 @@ export class OfflineKeeper {
   private writer = false;
   /** The account whose records the device keeps, null once the page is signed out, undefined until the session is known. */
   private followed: string | null | undefined;
-  /** The project, and its name, that opened last pinned as the last opened. */
-  private lastOpened: string | undefined;
   /** The changes of the records under way, one at a time, in order. */
   private queue: Promise<void> = Promise.resolve();
   /** The steps of the copies' keeping under way (Kept), which may still write after the keeper has stopped, until they are done (idle). */
@@ -436,25 +434,22 @@ export class OfflineKeeper {
    * (OfflineDatabase.dropBeforeLast): a project opened that the device
    * cannot download, as offline, on a flight's network without the
    * internet, or where its quota refuses the copy, leaves the copy of the
-   * one before on the device.
+   * one before on the device. Each opening marks it anew, though the tab
+   * opened it last already, as its pin may have gone since, as by Remove
+   * from this device, or once another tab opened another project, whose
+   * copy was written.
    */
   opened(projectId: string, name: string): void {
     if (!this.options.secure) {
       return;
     }
-    const opened = `${projectId}:${name}`;
     // The session's account is known once the changes before it are done,
     // as the page's first change follows the session (follow).
     this.enqueue(async () => {
       const userId = this.store.getState().userId;
-      if (
-        this.lastOpened === opened ||
-        userId === undefined ||
-        !(await this.ready())
-      ) {
+      if (userId === undefined || !(await this.ready())) {
         return;
       }
-      this.lastOpened = opened;
       await this.db.markOpened(
         userId,
         projectId,
@@ -548,7 +543,13 @@ export class OfflineKeeper {
     };
   }
 
-  /** Changes the pin of projectId, as change returns it, once the changes before it are done, of the account of, if set, alone. */
+  /**
+   * Changes the pin of projectId, as change returns it, once the changes
+   * before it are done, of the account of, if set, alone; after which the
+   * automatic pins of the projects opened before the one opened last go,
+   * where its copy is written, as the change may leave one that the user
+   * no longer chose (OfflineDatabase.dropBeforeLast).
+   */
   private change(
     projectId: string,
     change: (pin: PinRecord | undefined) => PinRecord | undefined,
@@ -567,6 +568,7 @@ export class OfflineKeeper {
         return;
       }
       await this.db.changePin(userId, projectId, change);
+      await this.db.dropBeforeLast(userId);
       await this.changed();
     });
   }
@@ -584,7 +586,13 @@ export class OfflineKeeper {
     return run;
   }
 
-  /** Follows the page's session: once it is of another account, or of none, the device's records of every other are taken out. */
+  /**
+   * Follows the page's session: once it is of another account, or of none,
+   * the device's records of every other are taken out. Where the device's
+   * database does not open, the session is followed again at its next
+   * change, or read, as the database is opened again then
+   * (OfflineDatabase.open).
+   */
   private follow(): void {
     const session = this.options.queryClient.getQueryData(
       sessionQuery.queryKey,
@@ -597,7 +605,6 @@ export class OfflineKeeper {
       return;
     }
     this.followed = userId;
-    this.lastOpened = undefined;
     this.enqueue(async () => {
       for (const kept of this.kept.values()) {
         kept.stop();
@@ -606,6 +613,9 @@ export class OfflineKeeper {
       this.failures.clear();
       this.store.setState({ userId: undefined, pins: new Map() });
       if (!(await this.ready())) {
+        if (this.followed === userId) {
+          this.followed = undefined;
+        }
         return;
       }
       await this.db.deleteAllBut(userId ?? undefined);
@@ -615,14 +625,17 @@ export class OfflineKeeper {
     });
   }
 
-  /** Resolves to whether the database opens. */
+  /** Resolves to whether the database opens, which the page can keep projects offline once it has (available), though it did not at first. */
   private async ready(): Promise<boolean> {
     try {
       await this.db.open();
-      return true;
     } catch {
       return false;
     }
+    if (this.store.getState().available !== true) {
+      this.store.setState({ available: true });
+    }
+    return true;
   }
 
   /** Reads the pins and the copies again, tells the other tabs, and keeps what is pinned. */
@@ -934,9 +947,10 @@ class Kept {
       // those that a stopped Kept has yet to begin are not made. A board's
       // content is read for the copy alone, which a reading anew of the
       // project leaves to this pace (ProjectDocument.load's kept); a board
-      // that went to the trash as it was read, by an operation that the
-      // document has yet to apply, which takes it out, is no failure: the
-      // next pass finds it gone, or reads it again.
+      // that went to the trash as it was read is no failure: the tree is
+      // read again, where the channel would not bring the operation that
+      // takes it out, as while it is not live (ProjectDocument.refresh), and
+      // the next pass finds it gone, or reads it again.
       const paced = (read: () => Promise<void>) => async () => {
         await this.keeper.turn();
         if (!this.stopped) {
@@ -944,10 +958,11 @@ class Kept {
         }
       };
       const readPart = (part: Part) =>
-        doc.load(part, true).catch((error: unknown) => {
+        doc.load(part, true).catch(async (error: unknown) => {
           if (!(part.startsWith("board:") && notFoundBy(error))) {
             throw error;
           }
+          await doc.refresh("tree").catch(() => undefined);
         });
       try {
         await inTurns(

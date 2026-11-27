@@ -601,6 +601,30 @@ describe("a play session", () => {
     expect([...flow.traversed]).toEqual([id("cn", "1"), id("cn", "3")]);
   });
 
+  // A board whose content the document has read already, as one that it
+  // holds for the device's copy of the project alone, is asked for as the
+  // others that play reads, so that a reading anew of the project reads it
+  // again, rather than let it go from the draft that play projected.
+  test("asks the document for the boards that it has read already, which it reads none of again", async () => {
+    const { doc, reads } = documentOf(draft);
+    reads.push(`board:${harbour.id}`, `board:${elara.id}`);
+    const asked: Part[] = [];
+    const load = doc.load.bind(doc);
+    (doc as { load: unknown }).load = (part: Part) => {
+      asked.push(part);
+      return reads.includes(part) ? Promise.resolve() : load(part);
+    };
+    const s = new PlaySession(doc);
+    await s.start({ board: harbour.id, node: "" });
+    expect(asked).toEqual(
+      expect.arrayContaining([`board:${harbour.id}`, `board:${elara.id}`]),
+    );
+    expect(reads.filter((r) => r.startsWith("board:")).sort()).toEqual(
+      [`board:${harbour.id}`, `board:${elara.id}`].sort(),
+    );
+    expect(playing(s).flow.node).toBe(id("nd", "A"));
+  });
+
   test("reads no more once a read has failed", async () => {
     const boards = Array.from({ length: 12 }, (_, i) =>
       testBoard(id("bd", `${i + 10}`), `Board ${i}`),

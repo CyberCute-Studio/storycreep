@@ -117,13 +117,15 @@ const page = <T>(items: T[]) => ({ items, next_cursor: null });
 
 /**
  * Serves the test projects: each with boards bd_a and bd_b of two nodes and
- * one, a variable, and a component, which reads whole; an operation that
- * fail returns an error for throws it, as the server's answer would be.
+ * one, or those that boards returns, a variable, and a component, which
+ * reads whole; an operation that fail returns an error for throws it, as
+ * the server's answer would be.
  */
 function serve(
   options: {
     fail?: (operation: string, input: unknown) => Error | undefined;
     component?: () => unknown;
+    boards?: (projectId: string) => Board[] | undefined;
   } = {},
 ) {
   const calls: string[] = [];
@@ -154,10 +156,12 @@ function serve(
       case "listFolders":
         return page([]);
       case "listBoards":
-        return page([
-          board(project ?? "", `bd_a${project}`),
-          board(project ?? "", `bd_b${project}`),
-        ]);
+        return page(
+          options.boards?.(project ?? "") ?? [
+            board(project ?? "", `bd_a${project}`),
+            board(project ?? "", `bd_b${project}`),
+          ],
+        );
       case "listBoardNodes":
         return page(
           path.board_id?.startsWith("bd_a")
@@ -195,6 +199,8 @@ function setup(
     retryDelay?: number;
     writeDelay?: number;
     pace?: { burst: number; interval: number };
+    /** Called with the device's database before the keeper starts. */
+    beforeStart?: (db: OfflineDatabase) => void;
   } = {},
 ) {
   const log = createErrorLog();
@@ -240,6 +246,7 @@ function setup(
     retryDelay: options.retryDelay ?? 20,
     pace: options.pace ?? { burst: 1, interval: 0 },
   });
+  options.beforeStart?.(db);
   keeper.start();
   onTestFinished(async () => {
     keeper.stop();
@@ -552,6 +559,82 @@ describe("the last opened project", () => {
       ),
     ).toMatchObject({ auto: false });
   });
+
+  it("is pinned again each time that it is opened, as once its pin went meanwhile, here or in another tab", async () => {
+    serve();
+    const { keeper, db, hear } = setup();
+    keeper.opened(testProject.id, testProject.name);
+    await statusOf(keeper, testProject.id, "ready");
+    // Removed from this device, and opened again.
+    await keeper.unpin(testProject.id);
+    expect(keeper.store.getState().pins.has(testProject.id)).toBe(false);
+    keeper.opened(testProject.id, testProject.name);
+    await statusOf(keeper, testProject.id, "ready");
+    // Another tab opens the lighthouse, whose copy it writes, which takes
+    // the harbour's pin out, and this tab opens the harbour again.
+    const now = new Date().toISOString();
+    await db.markOpened(
+      testSession.user_id,
+      lighthouse.id,
+      () => ({
+        user_id: testSession.user_id,
+        project_id: lighthouse.id,
+        name: lighthouse.name,
+        chosen: false,
+        auto: true,
+        pinned_at: now,
+        status: "ready",
+      }),
+      now,
+    );
+    await db.dropBeforeLast(testSession.user_id);
+    hear();
+    await vi.waitFor(() =>
+      expect(keeper.store.getState().pins.has(testProject.id)).toBe(false),
+    );
+    keeper.opened(testProject.id, testProject.name);
+    await statusOf(keeper, testProject.id, "ready");
+    expect(keeper.store.getState().pins.get(testProject.id)?.auto).toBe(true);
+  });
+
+  it("drops the copy of one opened before it that the user switches off, once its own copy is written", async () => {
+    serve();
+    const { keeper, db, hear, setOnline } = setup();
+    keeper.opened(lighthouse.id, lighthouse.name);
+    await keeper.pin(lighthouse.id, lighthouse.name);
+    await statusOf(keeper, lighthouse.id, "ready");
+    // The tower, opened after it, has its copy written, but the pins
+    // opened before it are still there, as of a page that closed in
+    // between, whose next keeper has nothing to write of the tower.
+    setOnline(false);
+    const now = new Date().toISOString();
+    await db.markOpened(
+      testSession.user_id,
+      tower.id,
+      () => ({
+        user_id: testSession.user_id,
+        project_id: tower.id,
+        name: tower.name,
+        chosen: false,
+        auto: true,
+        pinned_at: now,
+        status: "ready",
+      }),
+      now,
+    );
+    hear();
+    await vi.waitFor(() =>
+      expect(keeper.store.getState().pins.get(lighthouse.id)).toMatchObject({
+        chosen: true,
+        openedBefore: true,
+      }),
+    );
+    await keeper.unchoose(lighthouse.id);
+    expect(keeper.store.getState().pins.has(lighthouse.id)).toBe(false);
+    expect(
+      await db.readCopy(testSession.user_id, lighthouse.id),
+    ).toBeUndefined();
+  });
 });
 
 describe("a project that the account can no longer read", () => {
@@ -585,6 +668,33 @@ describe("the device's records of the account", () => {
     await vi.waitFor(() =>
       expect(keeper.store.getState().userId).toBeUndefined(),
     );
+  });
+
+  it("are followed once the device's database opens, though it did not as the page started", async () => {
+    serve();
+    const { keeper, queryClient } = setup({
+      beforeStart: (db) => {
+        const refused = new Error("The database could not be opened.");
+        vi.spyOn(db, "open")
+          .mockRejectedValueOnce(refused)
+          .mockRejectedValueOnce(refused);
+      },
+    });
+    await keeper.idle();
+    expect(keeper.store.getState()).toMatchObject({
+      available: false,
+      userId: undefined,
+    });
+    // The session read again, as at the page's next read of it.
+    queryClient.setQueryData(sessionQuery.queryKey, { ...testSession });
+    await vi.waitFor(() =>
+      expect(keeper.store.getState()).toMatchObject({
+        available: true,
+        userId: testSession.user_id,
+      }),
+    );
+    await keeper.pin(testProject.id, testProject.name);
+    await statusOf(keeper, testProject.id, "ready");
   });
 
   it("keeps nothing on a page that is not a secure context", async () => {
@@ -765,6 +875,7 @@ describe("a project's download", () => {
   it("is no failure where a board goes to the trash as it is read, which the next pass finds gone", async () => {
     const id = testProject.id;
     let send = () => {};
+    let trashed = false;
     const calls = serve({
       fail: (operation, input) => {
         if (
@@ -777,10 +888,13 @@ describe("a project's download", () => {
         }
         // The operation that took the board to the trash, which the
         // channel brings as the board's read is refused.
+        trashed = true;
         send();
         send = () => {};
         return refused(404, { code: "not_found" });
       },
+      boards: (project) =>
+        trashed ? [board(project, `bd_a${project}`)] : undefined,
     });
     // Nothing is tried again of itself within the test.
     const { keeper, realtime } = setup({ retryDelay: 60_000 });
@@ -799,6 +913,40 @@ describe("a project's download", () => {
     expect(calls.filter((c) => c === "listBoardNodes")).toHaveLength(2);
     expect(statuses).not.toContain("failed");
     expect(keeper.store.getState().pins.get(id)?.failure).toBeUndefined();
+  });
+
+  it("reads the tree again where a board goes to the trash as it is read while the channel is not live, and writes the copy without it", async () => {
+    const id = testProject.id;
+    let trashed = false;
+    const calls = serve({
+      fail: (operation, input) => {
+        if (
+          operation !== "listBoardNodes" ||
+          !(input as { path: { board_id: string } }).path.board_id.startsWith(
+            "bd_b",
+          )
+        ) {
+          return undefined;
+        }
+        // No operation comes, as behind a proxy that refuses the socket.
+        trashed = true;
+        return refused(404, { code: "not_found" });
+      },
+      boards: (project) =>
+        trashed ? [board(project, `bd_a${project}`)] : undefined,
+    });
+    // Nothing is tried again of itself within the test.
+    const { keeper, db } = setup({ retryDelay: 60_000 });
+    const statuses: string[] = [];
+    keeper.store.subscribe((state) => {
+      statuses.push(state.pins.get(id)?.status ?? "none");
+    });
+    await keeper.pin(id, testProject.name);
+    await statusOf(keeper, id, "ready");
+    expect(statuses).not.toContain("failed");
+    expect(calls.filter((c) => c === "listBoards")).toHaveLength(2);
+    const copy = await db.readCopy(testSession.user_id, id);
+    expect([...(copy?.doc.boards.keys() ?? [])]).toEqual([`bd_a${id}`]);
   });
 
   it("says that the copy could not be written where the project's tree cannot be read", async () => {

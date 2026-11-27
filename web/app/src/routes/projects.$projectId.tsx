@@ -8,7 +8,7 @@ import {
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { Activity, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { requireSession } from "../auth/session";
 import { useCommandHandlers } from "../commands/registry";
@@ -131,11 +131,21 @@ function ProjectPages({ projectId }: { projectId: string }) {
   // A page of the server's that loaded offline, whose loader read nothing,
   // reads once the browser is online again, and is shown once it has read,
   // rather than before, as its loader's checks would not have run yet: the
-  // page says that it needs a connection meanwhile.
+  // page says that it needs a connection meanwhile. One that was shown as
+  // the connection went is kept, hidden, while it is the page asked for,
+  // and shown again as it was, with what the user typed in it, as a
+  // project's description in its settings, rather than made anew (held).
+  const pathname = useLocation({ select: (l) => l.pathname });
   const [readOffline, setReadOffline] = useState(!connected);
+  const [held, setHeld] = useState<string>();
   if (!connected && !readOffline) {
     setReadOffline(true);
+    setHeld(offlinePage ? undefined : pathname);
   }
+  if (held !== undefined && held !== pathname) {
+    setHeld(undefined);
+  }
+  const shown = offlinePage || (connected && !readOffline);
   useEffect(() => {
     if (!connected || !readOffline) {
       return;
@@ -148,6 +158,7 @@ function ProjectPages({ projectId }: { projectId: string }) {
     const done = () => {
       if (current) {
         setReadOffline(false);
+        setHeld(undefined);
       }
     };
     void router.invalidate().then(done, done);
@@ -358,10 +369,11 @@ function ProjectPages({ projectId }: { projectId: string }) {
         )}
         {!connected && <OfflineNotice projectId={projectId} />}
       </div>
-      {offlinePage || (connected && !readOffline) ? (
-        <Outlet />
-      ) : (
-        <NeedsConnection />
+      {!shown && <NeedsConnection />}
+      {(shown || held === pathname) && (
+        <Activity mode={shown ? "visible" : "hidden"}>
+          <Outlet />
+        </Activity>
       )}
     </div>
   );

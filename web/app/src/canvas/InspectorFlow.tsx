@@ -929,7 +929,16 @@ export function JumperTarget({
   const [attempt, setAttempt] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt reads the board's nodes again, as the user asks for it.
   useEffect(() => {
-    if (board === "" || !listed || doc.hasRead(boardPart(board))) {
+    if (board === "" || !listed) {
+      setRead(undefined);
+      return;
+    }
+    if (doc.hasRead(boardPart(board))) {
+      // The board's nodes that the list offers are asked for, as one that
+      // the document holds for the device's copy of the project alone, so
+      // that a reading anew of the project reads them again, rather than
+      // let them go (ProjectDocument.load's kept).
+      void doc.load(boardPart(board)).catch(() => undefined);
       setRead(undefined);
       return;
     }
