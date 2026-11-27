@@ -8,10 +8,18 @@ import { onlineManager } from "@tanstack/react-query";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { IDBFactory } from "fake-indexeddb";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import { renderApp, testSession } from "../test/app";
 import { fakeApi, refused, startPage, testProject } from "../test/fake";
-import type { QueueRecord } from "./db";
+import type { OfflineDatabase, QueueRecord } from "./db";
 import { syncStateOf } from "./pending";
 
 // The sync indicator of a project's pages and its panel (PRD FR-OFF-06,
@@ -147,6 +155,11 @@ describe("the sync indicator", () => {
       state: "offline",
       pending: 2,
     });
+    // A comment's batch on its way, which the device does not keep.
+    expect(syncStateOf({ ...base, sending: 2, queued: 1 }, false)).toEqual({
+      state: "offline",
+      pending: 1,
+    });
     expect(
       syncStateOf({ ...base, sending: 2, queued: 2, holding: true }, true),
     ).toEqual({ state: "offline", pending: 2 });
@@ -194,6 +207,11 @@ describe("the sync panel", () => {
     ).toBeDefined();
     expect(within(waiting).getByText("board.rename")).toBeDefined();
     let saved: Blob | undefined;
+    const { createObjectURL, revokeObjectURL } = URL;
+    onTestFinished(() => {
+      URL.createObjectURL = createObjectURL;
+      URL.revokeObjectURL = revokeObjectURL;
+    });
     URL.createObjectURL = vi.fn((blob: Blob) => {
       saved = blob;
       return "blob:pending";
@@ -267,6 +285,25 @@ describe("the sync panel", () => {
         within(panel).queryByRole("region", { name: "Not available offline" }),
       ).toBeNull(),
     );
+  });
+
+  it("lists nothing as needing the server while the page reaches it, though a change needs review", async () => {
+    serve(() => {
+      throw refused(422, { code: "validation_failed" });
+    });
+    const user = userEvent.setup();
+    const { doc } = await openProject();
+    setOnline(false);
+    await act(() => doc.send([renameQuay("Pier")]));
+    setOnline(true);
+    await user.click(await indicator("1 change needs review"));
+    const panel = await screen.findByRole("dialog", { name: "Sync status" });
+    expect(
+      within(panel).getByRole("region", { name: "Needs your review" }),
+    ).toBeDefined();
+    expect(
+      within(panel).queryByRole("region", { name: "Not available offline" }),
+    ).toBeNull();
   });
 });
 
@@ -372,5 +409,39 @@ describe("signing out", () => {
     await waitFor(async () =>
       expect(await offlineDb?.queued(testSession.user_id)).toEqual([]),
     );
+  });
+
+  it("stays asking while it reads the device again as the user signs out anyway, which then signs out", async () => {
+    serve();
+    const user = userEvent.setup();
+    const { doc, offlineDb } = await openProject();
+    const db = offlineDb as OfflineDatabase;
+    setOnline(false);
+    await act(() => doc.send([renameQuay("Pier")]));
+    await indicator("Offline, 1 change on this device");
+    setOnline(true);
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    const asked = await screen.findByRole("alertdialog", {
+      name: "Sign out and lose a change not yet sent?",
+    });
+    // The device is slow to read as the user signs out anyway.
+    const queued = db.queued.bind(db);
+    let read = () => {};
+    vi.spyOn(db, "queued").mockImplementationOnce(async (...args) => {
+      await new Promise<void>((resolve) => {
+        read = resolve;
+      });
+      return queued(...args);
+    });
+    await user.click(
+      within(asked).getByRole("button", { name: "Sign out anyway" }),
+    );
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("alertdialog")).toBeDefined();
+    read();
+    await waitFor(async () =>
+      expect(await queued(testSession.user_id)).toEqual([]),
+    );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 });

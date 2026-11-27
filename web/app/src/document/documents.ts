@@ -198,6 +198,11 @@ export class Documents {
     );
   }
 
+  /** Whether the page keeps the changes that it cannot send in the device's queue, as it does not over plain HTTP, nor in a browser without Web Locks. */
+  get keepsQueue(): boolean {
+    return this.options.queue !== undefined;
+  }
+
   /**
    * Takes every change of userId's that the device's queue keeps off the
    * device, as signing out does once the user decided (QueueStore.discard),

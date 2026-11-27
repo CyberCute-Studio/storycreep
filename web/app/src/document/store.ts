@@ -968,6 +968,14 @@ export class ProjectDocument {
    * or to undefined where the page keeps none, or the lock was not given.
    */
   private readonly ownerLock: Promise<(() => void) | undefined>;
+  /**
+   * Whether the browser refused the document its lock, as for a page that
+   * is not fully active, after which it keeps no queue (queue), as in a
+   * browser without Web Locks: another tab's document would take the
+   * batches that it kept for a closed tab's, and send them while this one
+   * does.
+   */
+  private lockRefused = false;
   /** The queue's order of the latest batch that the document made, or took (nextOrder). */
   private lastOrder = 0;
   /** The writes of the device's queue under way, one at a time, in order. */
@@ -1075,7 +1083,11 @@ export class ProjectDocument {
     this.ownerLock =
       queue === undefined
         ? Promise.resolve(undefined)
-        : queue.hold(this.owner).catch(() => undefined);
+        : queue.hold(this.owner).catch(() => {
+            this.lockRefused = true;
+            this.show();
+            return undefined;
+          });
     if (queue !== undefined) {
       // The queue is sent once the browser is online again, and once the
       // page has its own session, as one that started offline asks for it.
@@ -1108,9 +1120,11 @@ export class ProjectDocument {
     this.starting = this.begin();
   }
 
-  /** The device's queue of the batches that the server has yet to answer, where the page keeps one, and knows its account. */
+  /** The device's queue of the batches that the server has yet to answer, where the page keeps one, knows its account, and holds the document's lock (lockRefused). */
   private get queue(): QueueStore | undefined {
-    return this.userId === undefined ? undefined : this.options.queue;
+    return this.userId === undefined || this.lockRefused
+      ? undefined
+      : this.options.queue;
   }
 
   /** Settles once the project has been read, and the document follows it. */
@@ -3966,7 +3980,8 @@ export class ProjectDocument {
    * server has answered, which the page shows until the document has its
    * operation (settle), is the queue's no longer, and not written again. A
    * document dropped that has let go of its lock refuses to write, as
-   * another tab's may hold its batches since (letGo).
+   * another tab's may hold its batches since (letGo), and so does one that
+   * the browser refused its lock (lockRefused).
    */
   private persist(remove: readonly string[] = []): Promise<void> {
     const queue = this.queue;
@@ -4000,8 +4015,16 @@ export class ProjectDocument {
     }
     this.saves++;
     const write = this.saving.then(async () => {
-      await this.ownerLock;
-      await queue.save(userId, this.projectId, put, remove);
+      if ((await this.ownerLock) === undefined) {
+        throw new Error("The browser refused the document its lock.");
+      }
+      // A batch written before is written again only where the device still
+      // keeps it, so that one that signing out took off it meanwhile, in
+      // this tab or another, is not put back (QueueStore.save).
+      const created = put
+        .filter((_, i) => writing[i]?.stored !== true)
+        .map((batch) => batch.id);
+      await queue.save(userId, this.projectId, put, remove, created);
       // Each is the queue's from now on, which a reload keeps.
       const fresh = writing.filter((e) => e.stored !== true);
       for (const entry of fresh) {
@@ -4162,13 +4185,19 @@ export class ProjectDocument {
    * refused for want of a connection, or else sent before the batches that
    * the queue keeps, which change nothing that it changes. A document that
    * has been dropped sends none of the queue's, which another tab's, or the
-   * project's next, takes.
+   * project's next, takes, and keeps the page's batches that it has yet to
+   * send as it would before, until it lets go of its lock (dispose), but for
+   * one dropped as the page signed out, which keeps none (signedOutOf): each
+   * is tried, and refused, as without a queue (ownSession), rather than left
+   * unsent, its caller waiting, and the lock held, for as long as the page
+   * is open.
    */
   private async pump(): Promise<void> {
     // A batch made while a try that no answer may come to is under way is
     // kept at once, as one made before it (unreachable).
     const reason = this.holdReason();
-    if (reason !== undefined && !this.disposed) {
+    const signedOut = this.signedOutOf();
+    if (reason !== undefined && !signedOut) {
       this.keep(
         reason === "offline" || reason === "unanswered"
           ? new NetworkError(new TypeError("The server cannot be reached."))
@@ -4181,7 +4210,7 @@ export class ProjectDocument {
     const entry = this.entries.find(
       (e) =>
         !e.sent &&
-        (reason === undefined || !this.keepable(e)) &&
+        (reason === undefined || signedOut || !this.keepable(e)) &&
         !(this.disposed && e.held !== undefined),
     );
     if (entry === undefined) {
@@ -4232,7 +4261,13 @@ export class ProjectDocument {
           }
         });
         if (this.disposed) {
+          // Not sent after all: the device keeps it as it was, which the
+          // next page may take out of the queue by an undo, before this
+          // document lets go of its lock (whenIdle).
           entry.sent = false;
+          entry.held = this.batchOf(entry, { sent: false });
+          entry.dirty = true;
+          this.persistLater();
           return;
         }
       }
@@ -4517,7 +4552,7 @@ export class ProjectDocument {
   /**
    * Reports whether the document was dropped as the page signed out, or
    * found its session ended, after which it keeps no batch in the device's
-   * queue that it does not already (queueKept).
+   * queue that it does not already (queueKept, pump).
    */
   private signedOutOf(): boolean {
     return (

@@ -833,21 +833,33 @@ export class OfflineDatabase {
     return inQueueOrder(taken) as QueueRecord[];
   }
 
-  /** Writes put and removes the batches of the IDs of remove, of userId's projectId, in one transaction. */
+  /**
+   * Writes put and removes the batches of the IDs of remove, of userId's
+   * projectId, in one transaction: a batch of put written before, whose ID
+   * created does not hold, as it holds every one's unless given, is written
+   * only where the device still keeps it, as signing out may have taken it
+   * off the device meanwhile, in another tab too (deleteQueued).
+   */
   async saveQueued(
     userId: string,
     projectId: string,
     put: readonly QueuedBatch[],
     remove: readonly string[],
+    created: readonly string[] = put.map((batch) => batch.id),
   ): Promise<void> {
     const db = await this.open();
     const tx = db.transaction("queue", "readwrite");
     const store = tx.objectStore("queue");
+    const fresh = new Set(created);
     await Promise.all([
       ...remove.map((id) => store.delete([userId, projectId, id])),
-      ...put.map((batch) =>
-        store.put({ ...batch, user_id: userId, project_id: projectId }),
-      ),
+      ...put.map(async (batch) => {
+        const key: [string, string, string] = [userId, projectId, batch.id];
+        if (!fresh.has(batch.id) && (await store.count(key)) === 0) {
+          return;
+        }
+        await store.put({ ...batch, user_id: userId, project_id: projectId });
+      }),
       tx.done,
     ]);
   }
@@ -855,14 +867,11 @@ export class OfflineDatabase {
   /**
    * Takes every batch of userId's that the device keeps for the server off
    * it, in one transaction, as once the user signs out, having been asked
-   * (plan note N98), and resolves to their IDs.
+   * (plan note N98).
    */
-  async deleteQueued(userId: string): Promise<string[]> {
+  async deleteQueued(userId: string): Promise<void> {
     const db = await this.open();
     const tx = db.transaction("queue", "readwrite");
-    const store = tx.objectStore("queue");
-    const keys = await store.getAllKeys(under(userId));
-    await Promise.all([store.delete(under(userId)), tx.done]);
-    return keys.map(([, , id]) => id);
+    await Promise.all([tx.objectStore("queue").delete(under(userId)), tx.done]);
   }
 }

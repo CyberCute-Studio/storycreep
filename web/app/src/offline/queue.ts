@@ -12,7 +12,8 @@
 // one batch, each with IDs of its own once a refusal had them sent again,
 // would apply it twice. Signing out takes the account's batches off the
 // device (discard), after which no tab writes one of them there again, as
-// of an answer to it that comes after.
+// of an answer to it that comes after, since a batch written before is
+// written again only where the device still keeps it (save).
 
 import type { QueuedBatch, QueueStore } from "../document/queue";
 import { type OfflineDatabase, opensWithin, openWait } from "./db";
@@ -67,16 +68,10 @@ export interface QueueNews {
   owner: string;
 }
 
-/** What a tab tells the others as signing out takes the batches of user's account off the device: their IDs. */
-export interface QueueDiscard {
-  user: string;
-  discarded: string[];
-}
-
-/** The channel that tells the browser's other tabs which documents keep batches, and whose batches signing out took off the device. */
+/** The channel that tells the browser's other tabs which documents keep batches. */
 export interface QueueBroadcast {
-  post(news: QueueNews | QueueDiscard): void;
-  listen(listener: (news: QueueNews | QueueDiscard) => void): () => void;
+  post(news: QueueNews): void;
+  listen(listener: (news: QueueNews) => void): () => void;
 }
 
 /** Returns the queue's channel of the browser's tabs, or none where it has no BroadcastChannel. */
@@ -89,20 +84,9 @@ export function queueBroadcast(): QueueBroadcast | undefined {
     post: (news) => channel.postMessage(news),
     listen: (listener) => {
       const on = (event: MessageEvent) => {
-        const news = event.data as Partial<
-          QueueNews & { discarded: unknown }
-        > | null;
-        if (typeof news?.user !== "string") {
-          return;
-        }
-        if (Array.isArray(news.discarded)) {
-          listener({
-            user: news.user,
-            discarded: news.discarded.filter(
-              (id): id is string => typeof id === "string",
-            ),
-          });
-        } else if (
+        const news = event.data as Partial<QueueNews> | null;
+        if (
+          typeof news?.user === "string" &&
           typeof news.project === "string" &&
           typeof news.owner === "string"
         ) {
@@ -150,31 +134,11 @@ export function deviceQueue(
     return undefined;
   }
   const wait = options.wait ?? openWait;
-  // The IDs of the batches that signing out took off the device, by
-  // account, in this tab or another, which no write puts there again, as
-  // of an answer to one that comes after (discard), while a batch made
-  // since, as once the account signed in again, is written; and the writes
-  // under way, which the removal waits for.
-  const discarded = new Map<string, Set<string>>();
-  const drop = (userId: string, ids: readonly string[]) => {
-    const dropped = discarded.get(userId) ?? new Set<string>();
-    for (const id of ids) {
-      dropped.add(id);
-    }
-    discarded.set(userId, dropped);
-  };
+  // The writes under way, which signing out's removal waits for (discard).
   const writes = new Set<Promise<void>>();
-  broadcast?.listen((news) => {
-    if ("discarded" in news) {
-      drop(news.user, news.discarded);
-    }
-  });
   return {
     hold: (owner) => locks.hold(lockOf(owner)),
     adopt: async (userId, projectId, owner, found) => {
-      if (!(await opensWithin(db, wait))) {
-        return { batches: [], stop: () => {} };
-      }
       // A document takes batches under a lock of the project's, so that two
       // that start at once do not both take those of a tab that closed, and
       // reads which documents are open inside it, so that one that starts
@@ -185,17 +149,6 @@ export function deviceQueue(
         locks.run(takeLock, () =>
           db.takeQueued(userId, projectId, owner, from),
         );
-      const first = await locks
-        .run(takeLock, async () => {
-          const held = await locks.held();
-          return db.takeQueued(
-            userId,
-            projectId,
-            owner,
-            (other) => !held.has(lockOf(other)),
-          );
-        })
-        .catch(() => [] as QueuedBatch[]);
       // The batches of an open tab's document are taken once its lock is let
       // go, as the tab closes, or the document is dropped; and those that
       // it wrote since, if any, as the next news of it tells.
@@ -225,38 +178,63 @@ export function deviceQueue(
           },
         );
       };
-      const unlisten = broadcast?.listen((news) => {
-        if (
-          !("discarded" in news) &&
-          news.user === userId &&
-          news.project === projectId
-        ) {
-          watch(news.owner);
-        }
-      });
-      for (const record of await db
-        .queued(userId, projectId)
-        .catch(() => [] as QueuedBatch[])) {
-        watch(record.owner);
-      }
-      return {
-        batches: first,
-        stop: () => {
-          stopped.abort();
-          unlisten?.();
-        },
+      let unlisten: (() => void) | undefined;
+      const stop = () => {
+        stopped.abort();
+        unlisten?.();
       };
-    },
-    save: async (userId, projectId, put, remove) => {
-      const dropped = discarded.get(userId);
-      const kept =
-        dropped === undefined
-          ? put
-          : put.filter((batch) => !dropped.has(batch.id));
-      if (kept.length === 0 && remove.length === 0) {
-        return;
+      // Takes those of no open tab's document, and then watches those of
+      // the open tabs', resolving to the first.
+      const begin = async () => {
+        const first = await locks
+          .run(takeLock, async () => {
+            const held = await locks.held();
+            return db.takeQueued(
+              userId,
+              projectId,
+              owner,
+              (other) => !held.has(lockOf(other)),
+            );
+          })
+          .catch(() => [] as QueuedBatch[]);
+        if (stopped.signal.aborted) {
+          return first;
+        }
+        unlisten = broadcast?.listen((news) => {
+          if (news.user === userId && news.project === projectId) {
+            watch(news.owner);
+          }
+        });
+        for (const record of await db
+          .queued(userId, projectId)
+          .catch(() => [] as QueuedBatch[])) {
+          watch(record.owner);
+        }
+        return first;
+      };
+      if (await opensWithin(db, wait)) {
+        return { batches: await begin(), stop };
       }
-      const write = db.saveQueued(userId, projectId, kept, remove);
+      // A database that does not open within wait, as one that another tab
+      // blocks, leaves the document to start without them, which it is given
+      // once the database has opened, as those of a tab that closes are
+      // (found), rather than never.
+      db.open().then(
+        async () => {
+          if (stopped.signal.aborted) {
+            return;
+          }
+          const first = await begin();
+          if (first.length > 0 && !stopped.signal.aborted) {
+            found(first);
+          }
+        },
+        () => {},
+      );
+      return { batches: [], stop };
+    },
+    save: async (userId, projectId, put, remove, created) => {
+      const write = db.saveQueued(userId, projectId, put, remove, created);
       writes.add(write);
       try {
         await write;
@@ -266,20 +244,15 @@ export function deviceQueue(
       // Every write that keeps batches tells the other tabs, as one that
       // opened since the document's last write found none of its batches,
       // and so waits for no lock of its yet (adopt).
-      for (const owner of new Set(kept.map((b) => b.owner))) {
+      for (const owner of new Set(put.map((b) => b.owner))) {
         broadcast?.post({ user: userId, project: projectId, owner });
       }
     },
     discard: async (userId) => {
-      // Those that the device keeps now, and those that the writes under
-      // way kept, which the removal takes too.
-      const tell = (ids: string[]) => {
-        drop(userId, ids);
-        broadcast?.post({ user: userId, discarded: ids });
-      };
-      tell((await db.queued(userId)).map((batch) => batch.id));
+      // The writes under way, which may keep batches, are taken too; one
+      // that comes after writes none of them there again (save).
       await Promise.allSettled([...writes]);
-      tell(await db.deleteQueued(userId));
+      await db.deleteQueued(userId);
     },
   };
 }

@@ -26,6 +26,7 @@ import {
   type SyncState,
   saveJson,
   syncStateOf,
+  useServerReachable,
 } from "./pending";
 
 /** Returns the sync indicator's state of the document of projectId, as it changes. */
@@ -192,7 +193,9 @@ function SyncPanel({
   const batches = useMemo(() => doc.pendingBatches(), [doc, version, sending]);
   const review = batches.filter((b) => b.state === "review");
   const pending = batches.filter((b) => b.state !== "review");
-  const offline = state.state === "offline" || state.state === "review";
+  // What needs the server is listed while the page cannot reach it, whether
+  // or not a change needs review meanwhile.
+  const offline = !useServerReachable(doc);
   const exportPending = () => {
     const now = new Date().toISOString();
     const session = queryClient.getQueryData(sessionQuery.queryKey);

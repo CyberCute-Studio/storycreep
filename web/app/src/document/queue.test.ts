@@ -23,7 +23,6 @@ import { OfflineDatabase } from "../offline/db";
 import {
   deviceQueue,
   type QueueBroadcast,
-  type QueueDiscard,
   type QueueLocks,
   type QueueNews,
 } from "../offline/queue";
@@ -71,10 +70,10 @@ afterEach(() => {
  * channel hears what the others post, and not what it posts itself.
  */
 function fakeBroadcast() {
-  const listeners = new Set<(news: QueueNews | QueueDiscard) => void>();
+  const listeners = new Set<(news: QueueNews) => void>();
   return {
     tab(): QueueBroadcast {
-      const own = new Set<(news: QueueNews | QueueDiscard) => void>();
+      const own = new Set<(news: QueueNews) => void>();
       return {
         post: (news) => {
           for (const listener of listeners) {
@@ -1160,6 +1159,150 @@ describe("the device's queue of the page's batches", () => {
     expect((await db.queued(user)).map((b) => nameOf(b.commands))).toEqual([
       "Pier",
     ]);
+    await db.close();
+  });
+
+  it("keeps a batch that waited behind a try once dropped, as the try's answer leaves the page unable to send it, and refuses it once the page signed out", async () => {
+    for (const after of [{ ...testSession, user_id: "usr_other" }, null]) {
+      let fail: () => void = () => {};
+      const batches = serve(
+        () =>
+          new Promise<CommandResultBody>((_, reject) => {
+            fail = () =>
+              reject(new NetworkError(new TypeError("Failed to fetch")));
+          }),
+      );
+      const net = connection(true);
+      const locks = fakeLocks();
+      const db = new OfflineDatabase();
+      const { doc, queryClient } = await open(db, locks, net);
+      const first = doc.send([rename("bd_a", "Quay", 3)]);
+      const second = doc.send([rename("bd_a", "Pier", 3)]);
+      await vi.waitFor(() => expect(batches).toHaveLength(1));
+      queryClient.setQueryData(sessionQuery.queryKey, after);
+      doc.dispose();
+      // The browser goes offline as the first is on its way, which no answer
+      // comes to.
+      net.set(false);
+      fail();
+      if (after === null) {
+        await expect(first).rejects.toBeInstanceOf(NetworkError);
+        await expect(second).rejects.toThrow();
+        expect(await db.queued(user)).toEqual([]);
+      } else {
+        await expect(first).resolves.toEqual({ status: "queued" });
+        await expect(second).resolves.toEqual({ status: "queued" });
+        // And the document lets go of its lock, after which the project's
+        // next takes both.
+        const next = await open(db, locks, net);
+        await until(next.doc, (s) => s.queued === 2);
+        expect(shownName(next.doc)).toBe("Pier");
+        next.doc.dispose();
+        await db.deleteQueued(user);
+      }
+      await db.close();
+    }
+  });
+
+  it("takes the batches kept before once the device's database opens, where it opened too late for the document's start", async () => {
+    serve(() => applied(2, [{ id: "bd_a", rev: 4 }]));
+    const net = connection(false);
+    const db = new OfflineDatabase();
+    const first = await open(db, fakeLocks(), net);
+    await first.doc.send([rename("bd_a", "Quay", 3)]);
+    first.doc.dispose();
+    await db.close();
+    // The browser restarts, and its database is slow to open, as one that
+    // another tab blocks.
+    const again = new OfflineDatabase();
+    const opening = again.open.bind(again);
+    let unblock = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      unblock = resolve;
+    });
+    vi.spyOn(again, "open").mockImplementation(async () => {
+      await blocked;
+      return opening();
+    });
+    const locks = fakeLocks();
+    const second = await open(
+      again,
+      locks,
+      net,
+      testSession,
+      deviceQueue(again, { secure: true, locks, wait: 10 }),
+    );
+    expect(second.doc.store.getState().queued).toBe(0);
+    expect(shownName(second.doc)).toBe("Harbour");
+    unblock();
+    await until(second.doc, (s) => s.queued === 1);
+    expect(shownName(second.doc)).toBe("Quay");
+    await again.close();
+  });
+
+  it("keeps no queue where the browser refuses the document its lock, as without Web Locks, so that another tab's takes none of its batches for a closed one's", async () => {
+    serve(() => {
+      throw new NetworkError(new TypeError("Failed to fetch"));
+    });
+    const db = new OfflineDatabase();
+    let refuse: () => void = () => {};
+    const locks: QueueLocks = {
+      ...fakeLocks(),
+      hold: () =>
+        new Promise((_, reject) => {
+          refuse = () =>
+            reject(new DOMException("Not active.", "InvalidStateError"));
+        }),
+    };
+    const log = createErrorLog();
+    const queryClient = createQueryClient(log);
+    queryClient.setQueryData(sessionQuery.queryKey, testSession);
+    const doc = new ProjectDocument(testProject.id, {
+      queryClient,
+      log,
+      now: () => clock,
+      online: () => false,
+      queue: deviceQueue(db, { secure: true, locks }),
+    });
+    onTestFinished(() => doc.dispose());
+    // A batch kept before the browser refused the lock is not written.
+    const before = doc.send([rename("bd_a", "Quay", 3)]);
+    refuse();
+    await expect(before).rejects.toBeInstanceOf(NetworkError);
+    await doc.ready;
+    await doc.load("tree");
+    // One made after is refused as without a queue.
+    await expect(doc.send([rename("bd_a", "Pier", 3)])).rejects.toBeInstanceOf(
+      NetworkError,
+    );
+    expect(doc.store.getState()).toMatchObject({ queued: 0, holding: false });
+    expect(await db.queued(user)).toEqual([]);
+    await db.close();
+  });
+
+  it("keeps a queued batch as not sent where the document was dropped as it recorded it as sent, before it sent it", async () => {
+    const batches = serve(() => applied(2, [{ id: "bd_a", rev: 4 }]));
+    const net = connection(false);
+    const db = new OfflineDatabase();
+    const locks = fakeLocks();
+    const { doc } = await open(db, locks, net);
+    await doc.send([rename("bd_a", "Quay", 3)]);
+    const save = db.saveQueued.bind(db);
+    let write = () => {};
+    vi.spyOn(db, "saveQueued").mockImplementationOnce(async (...args) => {
+      await new Promise<void>((resolve) => {
+        write = resolve;
+      });
+      return save(...args);
+    });
+    net.set(true);
+    await vi.waitFor(() => expect(db.saveQueued).toHaveBeenCalledOnce());
+    doc.dispose();
+    write();
+    // Once its writes are done, the document lets go of its lock.
+    await vi.waitFor(async () => expect((await locks.held()).size).toBe(0));
+    expect((await db.queued(user)).map((b) => b.sent)).toEqual([false]);
+    expect(batches).toEqual([]);
     await db.close();
   });
 

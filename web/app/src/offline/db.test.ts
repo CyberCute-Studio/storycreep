@@ -569,6 +569,29 @@ describe("the device's queue of changes", () => {
     expect(await db.queued("usr_other")).toHaveLength(1);
   });
 
+  it("writes a batch written before again only where it still keeps it, as signing out may have taken it off the device since", async () => {
+    await db.saveQueued(user, testProject.id, [batch("b1", 1)], []);
+    await db.saveQueued(
+      user,
+      testProject.id,
+      [{ ...batch("b1", 1), sent: true }],
+      [],
+      [],
+    );
+    expect((await db.queued(user)).map((b) => [b.id, b.sent])).toEqual([
+      ["b1", true],
+    ]);
+    await db.deleteQueued(user);
+    await db.saveQueued(
+      user,
+      testProject.id,
+      [{ ...batch("b1", 1), sent: false }, batch("b2", 2)],
+      [],
+      ["b2"],
+    );
+    expect((await db.queued(user)).map((b) => b.id)).toEqual(["b2"]);
+  });
+
   it("gives a document the batches of the owners that it may take, as its own, and none of another format", async () => {
     await db.saveQueued(
       user,

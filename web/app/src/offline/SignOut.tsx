@@ -132,7 +132,9 @@ export function SignOutButton({
       <AlertDialog.Root
         open={asked !== undefined}
         onOpenChange={(open) => {
-          if (!open && !signOut.isPending) {
+          // Not while signing out anyway reads the device again, which signs
+          // out next, as the buttons say (pending).
+          if (!open && !signOut.isPending && !reading) {
             setAsked(undefined);
           }
         }}

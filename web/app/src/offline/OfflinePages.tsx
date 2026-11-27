@@ -15,6 +15,7 @@
 
 import { formatDateTime } from "@storycreep/shared/i18n";
 import { useTranslation } from "react-i18next";
+import { useDocuments } from "../document/react";
 import { TextLink } from "../ui/Page";
 import { useOnline } from "./online";
 import { useOffline } from "./react";
@@ -56,9 +57,10 @@ function KeptLink() {
 export function OfflineNotice({ projectId }: { projectId: string }) {
   const { t, i18n } = useTranslation();
   const copy = useOffline((s) => s.pins.get(projectId)?.copy);
-  // The device keeps the changes made meanwhile, where it can keep anything
-  // (PRD FR-OFF-03).
-  const keeps = useOffline((s) => s.available === true);
+  // The device keeps the changes made meanwhile, where the page keeps a
+  // queue and the device can keep anything (PRD FR-OFF-03).
+  const available = useOffline((s) => s.available === true);
+  const keeps = useDocuments().keepsQueue && available;
   return (
     <div role="status">
       <p className="rounded-md border border-border bg-surface px-4 py-3">

@@ -47,8 +47,11 @@ export function syncStateOf(
   if (state.review > 0) {
     return { state: "review", pending, review: state.review };
   }
+  // Offline, the changes that the device keeps, once it has written them,
+  // and not those on their way meanwhile, as a comment's, which it does
+  // not keep, nor any over plain HTTP, where it keeps no queue.
   if (!online || state.holding) {
-    return { state: "offline", pending };
+    return { state: "offline", pending: state.queued };
   }
   if (pending > 0) {
     return { state: "syncing", pending };
@@ -126,6 +129,8 @@ export function saveJson(name: string, exported: PendingExport): void {
   document.body.append(link);
   link.click();
   link.remove();
-  // The browser has read the file once the click's download has begun.
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  // A browser reads the object's URL as the download starts, which is after
+  // the click returns, and WebKit may still be reading it a while after,
+  // whose download fails once it is revoked (saveDownload, of a release).
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }

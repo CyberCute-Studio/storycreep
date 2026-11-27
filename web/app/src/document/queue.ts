@@ -126,13 +126,17 @@ export interface QueueStore {
   /**
    * Writes put and removes the batches of the IDs of remove, of userId's
    * projectId, in one transaction, which the browser applies whole or not
-   * at all, rejecting where the device refused it, as for the quota.
+   * at all, rejecting where the device refused it, as for the quota. A
+   * batch of put whose ID created does not hold, written before, is written
+   * only where the device still keeps it, so that one that signing out took
+   * off the device is not put back by a write that comes after (discard).
    */
   save(
     userId: string,
     projectId: string,
     put: readonly QueuedBatch[],
     remove: readonly string[],
+    created: readonly string[],
   ): Promise<void>;
   /**
    * Takes every batch of userId's off the device, as signing out does once
