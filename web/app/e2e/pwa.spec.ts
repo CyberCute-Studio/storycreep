@@ -192,14 +192,15 @@ test("the worker keeps every file of the build, and answers the app's pages from
   expect(missing?.fromServiceWorker()).toBe(false);
   expect(missing?.status()).toBe(404);
 
-  // Offline, the shell still loads, and runs: the app says that it could
-  // not reach the server, once its requests have been tried again.
+  // Offline, the shell still loads, and runs: the app says that the page
+  // needs a connection, once its requests have been tried again, as one
+  // that the device keeps no session for (PRD FR-OFF-02).
   await context.setOffline(true);
   try {
     const res = await page.goto("/app/");
     expect(res?.fromServiceWorker()).toBe(true);
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-      en["route_error.title"],
+      en["offline.needs_connection.title"],
       { timeout: 30_000 },
     );
   } finally {

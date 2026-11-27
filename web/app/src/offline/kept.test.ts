@@ -121,6 +121,41 @@ describe("a page that the server does not answer", () => {
   });
 });
 
+describe("the instance that the device keeps", () => {
+  it("is read anew once the browser is online, rather than kept for the page's life as the server's is", async () => {
+    let answers = false;
+    let calls = 0;
+    fakeApi(() => {
+      calls++;
+      if (!answers) {
+        throw new NetworkError(new TypeError("Failed to fetch"));
+      }
+      return { ...testInstance, default_locale: "de" };
+    });
+    const queryClient = createQueryClient(createErrorLog());
+    queryClient.setDefaultOptions({ queries: { retry: false } });
+    keepReads(queryClient, {
+      ...reads,
+      session: async () => ({ ...kept, instance: { ...testInstance } }),
+    });
+    const onLine = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    expect((await queryClient.fetchQuery(instanceQuery)).default_locale).toBe(
+      "en",
+    );
+    // Offline, the device's is what there is.
+    await queryClient.fetchQuery(instanceQuery);
+    expect(calls).toBe(1);
+    onLine.mockReturnValue(true);
+    answers = true;
+    expect((await queryClient.fetchQuery(instanceQuery)).default_locale).toBe(
+      "de",
+    );
+    // The server's is kept for the page's life.
+    await queryClient.fetchQuery(instanceQuery);
+    expect(calls).toBe(2);
+  });
+});
+
 describe("a page's session, where a request of it gets no answer", () => {
   it("is asked for once more a moment after, while the browser says that it is online, before the device's is taken", async () => {
     vi.useFakeTimers();

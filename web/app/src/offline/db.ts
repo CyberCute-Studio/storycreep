@@ -71,7 +71,7 @@ export interface CopyRecord {
   /** The project's workspace, with the role that the account acts with in it. */
   workspace: Workspace;
   parts: Part[];
-  /** About how many bytes its records take, as JSON. */
+  /** About how many bytes its records take, as JSON in UTF-8. */
   bytes: number;
   saved_at: string;
 }
@@ -112,9 +112,12 @@ function under(...key: string[]): IDBKeyRange {
   return IDBKeyRange.bound(key, [...key, []]);
 }
 
-/** Returns the size of entity as JSON, which the copy's bytes count. */
+/** Encodes text as UTF-8, which sizeOf counts the bytes of. */
+const utf8 = new TextEncoder();
+
+/** Returns the size of entity as JSON, in UTF-8 bytes, which the copy's bytes count. */
 function sizeOf(entity: unknown): number {
-  return JSON.stringify(entity).length;
+  return utf8.encode(JSON.stringify(entity)).byteLength;
 }
 
 /** Reports whether error is the browser's refusal of a write beyond its quota. */
@@ -256,10 +259,21 @@ export class OfflineDatabase {
     return all.sort((a, b) => b.saved_at.localeCompare(a.saved_at))[0];
   }
 
-  /** Keeps session, the account's, in place of what the device kept of it. */
+  /**
+   * Keeps session, the account's, in place of what the device kept of it,
+   * while the device pins a project of the account's, in one transaction,
+   * so that a session is never kept after the account's last pin has gone,
+   * as one removed meanwhile, here or in another tab, whose session goes
+   * with it (OfflineKeeper.read).
+   */
   async putSession(session: KeptSession): Promise<void> {
     const db = await this.open();
-    await db.put("sessions", session);
+    const tx = db.transaction(["sessions", "pins"], "readwrite");
+    const pinned = await tx.objectStore("pins").count(under(session.user_id));
+    if (pinned > 0) {
+      await tx.objectStore("sessions").put(session);
+    }
+    await tx.done;
   }
 
   /** Takes out the session that the device keeps of userId. */

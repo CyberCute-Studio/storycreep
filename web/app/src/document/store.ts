@@ -948,9 +948,14 @@ export class ProjectDocument {
     // (PRD FR-OFF-02), read while the project is, which the document starts
     // from, holding every part that it holds as of its seq, whose
     // operations since the channel brings, as it does those of a document
-    // that the socket missed, rather than have the parts read anew. A copy
-    // of a seq past the project's is of what the server no longer has, as a
-    // database restored from an older backup, and is passed over.
+    // that the socket missed, rather than have the parts read anew: where
+    // the copy is as of the project's seq, as of a project that has not
+    // changed since it was written, and, while the browser has no
+    // connection, of any seq before. Online, a copy behind the project's
+    // seq is not used: the document reads the project from the server, as
+    // without a copy, rather than bring the copy up to it. A copy of a seq
+    // past the project's is of what the server no longer has, as a database
+    // restored from an older backup, and is passed over.
     const copying =
       this.userId === undefined || this.options.copies === undefined
         ? undefined
@@ -977,8 +982,9 @@ export class ProjectDocument {
     }
     if (
       copy !== undefined &&
-      copy.doc.seq <= body.seq &&
-      copy.doc.project?.id === this.projectId
+      copy.doc.project?.id === this.projectId &&
+      (copy.doc.seq === body.seq ||
+        (copy.doc.seq < body.seq && !this.isOnline()))
     ) {
       this.startedFrom = copy;
       this.confirmed = copy.doc;
@@ -1084,28 +1090,10 @@ export class ProjectDocument {
     // An undo that waits for the document to have the operations up to the
     // batch that it undoes, as of a history kept over a reload, has them.
     this.settle();
-    // A copy behind what the server has is brought up to it by the
-    // channel, once it is live; where it is not live a while after, as
-    // behind a proxy that refuses the socket, or does not bring them, the
-    // project is read anew, rather than shown as the copy has it.
+    // A part's reading anew waits for the channel once, which brings what
+    // changed since the copy's seq (refresh).
     if (this.startedFrom !== undefined) {
-      const liveWait = this.whenLive(confirmWait);
-      this.liveWait = liveWait;
-      if (body.seq > this.confirmed.seq) {
-        const behind = body.seq;
-        void liveWait
-          .then(() => this.whenConfirmed(behind, confirmWait))
-          .then(() => {
-            if (
-              !this.disposed &&
-              this.confirmed.seq < behind &&
-              !this.store.getState().live &&
-              this.buffer === undefined
-            ) {
-              void this.resync(behind);
-            }
-          });
-      }
+      this.liveWait = this.whenLive(confirmWait);
     }
   }
 

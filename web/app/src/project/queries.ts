@@ -110,16 +110,19 @@ export async function loadParts(
  * before it says that there is none, and rejects with what that read failed
  * with, rather than say so after a read that failed. Where current says so,
  * as the start page's, which opens the board that the device showed last,
- * a document that started from the device's copy of the project is brought
- * up to date first, while the browser is online, as the copy may hold a
- * board deleted since, which the page would otherwise open, until the
- * channel had brought its deletion (PRD FR-OFF-02); the board's own page
- * shows the copy at once, and says that the board is gone once the channel
- * has brought that. While the browser has no connection, the document
- * reads nothing anew, and a board that it does not have may be one made
- * since its copy was written, which the device cannot tell from one that is
- * gone: it rejects with a NetworkError then, as a read that got no answer,
- * rather than say that there is none.
+ * the project is read anew, and a document that started from the device's
+ * copy of the project, and is behind that read, is brought up to date
+ * first, while the browser is online, as the copy may hold a board deleted
+ * since, which the page would otherwise open, until the channel had
+ * brought its deletion (PRD FR-OFF-02); one that started as of that read
+ * is the server's, as a document starts from a copy behind the project's
+ * seq only offline. The board's own page shows the copy at once, and says
+ * that the board is gone once the channel has brought that. While the
+ * browser has no connection, the document reads nothing anew, and a board
+ * that it does not have may be one made since its copy was written, which
+ * the device cannot tell from one that is gone: it rejects with a
+ * NetworkError then, as a read that got no answer, rather than say that
+ * there is none.
  */
 export async function readBoard(
   context: ProjectReads,
@@ -129,11 +132,16 @@ export async function readBoard(
   current = false,
 ): Promise<ProjectDocument | undefined> {
   const project = await read(
-    context.queryClient.ensureQueryData(projectQuery(projectId)),
+    current
+      ? context.queryClient.fetchQuery({
+          ...projectQuery(projectId),
+          staleTime: 0,
+        })
+      : context.queryClient.ensureQueryData(projectQuery(projectId)),
   );
   const doc = context.documents.get(project.id);
   await read(doc.load("tree"));
-  if (current && doc.copy !== undefined) {
+  if (current && doc.copy !== undefined && doc.doc.seq < project.seq) {
     await doc.refresh("tree").catch(() => undefined);
   }
   const has = () => doc.store.getState().view.boards.has(boardId);

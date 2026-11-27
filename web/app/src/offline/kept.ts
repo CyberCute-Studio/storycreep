@@ -31,6 +31,20 @@ export interface KeptReads {
 /** What the device keeps, of each page's query client that has one (keepReads). */
 const kept = new WeakMap<QueryClient, KeptReads>();
 
+/** What the device answered in place of the server (orKept). */
+const answeredByDevice = new WeakSet<object>();
+
+/**
+ * Reports whether data is what the device answered in place of the server
+ * (orKept), as a query that the page reads once, as the instance, reads
+ * anew once the browser is online, rather than keep what the device had.
+ */
+export function fromDevice(data: unknown): boolean {
+  return (
+    typeof data === "object" && data !== null && answeredByDevice.has(data)
+  );
+}
+
 /** Has client's queries read reads once the server does not answer them, from now on. */
 export function keepReads(client: QueryClient, reads: KeptReads): void {
   kept.set(client, reads);
@@ -99,6 +113,9 @@ export async function orKept<T>(
           throw second;
         }
       }
+    }
+    if (typeof found === "object" && found !== null) {
+      answeredByDevice.add(found);
     }
     return found;
   }

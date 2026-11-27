@@ -9,6 +9,7 @@ import type { Workspace } from "../workspace/queries";
 import {
   type CopyRecord,
   copySource,
+  type KeptSession,
   OfflineDatabase,
   overQuota,
   type PinRecord,
@@ -181,6 +182,18 @@ describe("the device's copies", () => {
     expect([...(copy?.doc.boards.keys() ?? [])]).toEqual(["bd_a"]);
   });
 
+  it("counts the bytes of its records as their JSON takes in UTF-8", async () => {
+    await pin();
+    // A board named in a script of three bytes a character in UTF-8.
+    const named = { ...board("bd_a"), name: "港".repeat(1000) };
+    const written = await db.writeCopy(
+      recordOf(1),
+      docOf(1, [named], []),
+      undefined,
+    );
+    expect(written?.bytes).toBeGreaterThan(3000);
+  });
+
   it("writes nothing of a project that is not pinned", async () => {
     const doc = docOf(1, [board("bd_a")], []);
     expect(await db.writeCopy(recordOf(1), doc, undefined)).toBeUndefined();
@@ -296,6 +309,27 @@ describe("the device's pins", () => {
   });
 });
 
+/** Returns the session that the device keeps of u, saved at savedAt. */
+function sessionOf(u: string, savedAt = "2026-11-26T10:00:00Z"): KeptSession {
+  return {
+    user_id: u,
+    session: { user_id: u, csrf_token: "", session: {} as never },
+    account: {
+      id: u,
+      email: `${u}@example.com`,
+      display_name: u,
+      email_verified: true,
+    },
+    instance: {
+      email_configured: false,
+      setup_pending: false,
+      signup_policy: "open",
+      default_locale: "en",
+    },
+    saved_at: savedAt,
+  };
+}
+
 describe("the device's records of each account", () => {
   it("takes out every account's records but the one kept, or every one's", async () => {
     for (const u of ["usr_jo", "usr_kim"]) {
@@ -305,24 +339,12 @@ describe("the device's records of each account", () => {
         docOf(1, [board("bd_a")], []),
         undefined,
       );
-      await db.putSession({
-        user_id: u,
-        session: { user_id: u, csrf_token: "", session: {} as never },
-        account: {
-          id: u,
-          email: `${u}@example.com`,
-          display_name: u,
-          email_verified: true,
-        },
-        instance: {
-          email_configured: false,
-          setup_pending: false,
-          signup_policy: "open",
-          default_locale: "en",
-        },
-        saved_at:
+      await db.putSession(
+        sessionOf(
+          u,
           u === "usr_jo" ? "2026-11-26T10:00:00Z" : "2026-11-26T11:00:00Z",
-      });
+        ),
+      );
     }
     expect((await db.session())?.user_id).toBe("usr_kim");
     await db.deleteAllBut("usr_jo");
@@ -335,6 +357,16 @@ describe("the device's records of each account", () => {
     expect(await db.pins("usr_jo")).toEqual([]);
     const tx = (await db.open()).transaction("entities");
     expect(await tx.store.count()).toBe(0);
+  });
+
+  it("keeps an account's session only while the account pins a project", async () => {
+    // As a write whose session follows the removal of the account's last
+    // pin, in this tab or another.
+    await db.putSession(sessionOf(user));
+    expect(await db.session()).toBeUndefined();
+    await pin();
+    await db.putSession(sessionOf(user));
+    expect((await db.session())?.user_id).toBe(user);
   });
 });
 

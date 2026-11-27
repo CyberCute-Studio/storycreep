@@ -111,8 +111,9 @@ export interface KeeperOptions {
   reachable?: () => Promise<boolean>;
   /**
    * How many of the parts and components of the projects that the keeper
-   * downloads it reads at once, at most, and how long, in milliseconds, it
-   * waits between reads after (Pace): readBurst and readInterval, if not set.
+   * downloads it reads in a burst, at most, and how long, in milliseconds,
+   * it waits between reads after (Pace): readBurst and readInterval, if not
+   * set.
    */
   pace?: { burst: number; interval: number };
 }
@@ -122,18 +123,18 @@ const readsAtOnce = 6;
 
 /**
  * How many of the parts and the components of the projects that the keeper
- * downloads it reads at once, at most, as the boards of a project of the
- * `medium` fixture, before it reads one each readInterval: a board's
- * content is two requests, or more for one of more than 200 nodes, and a
- * component one, so that the download of a project of the `large` fixture,
- * of 100 boards and 100 components, which is in the background, makes about
- * 200 of the 600 reads a minute that the server lets the account make (PRD
- * NFR-SEC-06) in its first minute, and about 120 at most in each after,
- * leaving the rest to the pages that the user reads.
+ * downloads it reads in a burst, at most, readsAtOnce at a time, as the
+ * boards of a project of the `medium` fixture, before it reads one each
+ * readInterval: a board's content is two requests, or more for one of more
+ * than 200 nodes, and a component one, so that the download of a project of
+ * the `large` fixture, of 100 boards and 100 components, which is in the
+ * background, makes about 200 of the 600 reads a minute that the server
+ * lets the account make (PRD NFR-SEC-06) in its first minute, and about 120
+ * at most in each after, leaving the rest to the pages that the user reads.
  */
 const readBurst = 40;
 
-/** How long, in milliseconds, the keeper waits between the reads of its downloads, once it has made readBurst at once (Pace). */
+/** How long, in milliseconds, the keeper waits between the reads of its downloads, once it has made readBurst (Pace). */
 const readInterval = 1_000;
 
 /**
@@ -349,6 +350,12 @@ export class OfflineKeeper {
     this.options.lock(
       () =>
         new Promise<void>((resolve) => {
+          // A keeper that stopped before the browser gave it the lock lets
+          // it go at once, for another tab's.
+          if (this.stopped) {
+            resolve();
+            return;
+          }
           this.stopWriting = resolve;
           this.writer = true;
           this.enqueue(async () => this.reconcile());
@@ -889,12 +896,14 @@ class Kept {
         return;
       }
       // A project that the account can no longer read, as one in the trash,
-      // is kept no more; another failure is tried again a while after, but
-      // one of a connection that went meanwhile, once it is back (start).
+      // is kept no more; another failure, which the pin says, as of a copy
+      // that could not be written, is tried again a while after, but one of
+      // a connection that went meanwhile, once it is back (start).
       if (notFoundBy(error)) {
         await this.keeper.forget(this.userId, this.projectId);
       } else if (this.keeper.options.online()) {
         this.failedNow();
+        await this.keeper.failed(this.userId, this.projectId, "error");
       }
       return;
     }

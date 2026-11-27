@@ -17,8 +17,9 @@ import { ProjectDocument, type StartingCopy } from "./store";
 // A project's document that starts from the copy of the project that the
 // device keeps (PRD FR-OFF-02, plan note N97): it reads none of the parts
 // that the copy holds, and follows the project from the copy's seq, which
-// the channel brings it up from, or the project read anew where the
-// channel is not live, and passes over a copy of a seq past the server's.
+// the channel brings it up from: a copy as of the project's seq, or, while
+// the browser has no connection, of one before; online, it passes over a
+// copy behind the project's seq, and one of a seq past the server's.
 // Offline, it reads nothing anew.
 
 afterEach(() => {
@@ -71,14 +72,16 @@ function copyOf(seq: number): StartingCopy {
 
 const page = <T>(items: T[]) => ({ items, next_cursor: null });
 
-/** Serves the test project as of seq, with the board of the copy renamed, and returns what it was asked. */
+/** Serves the test project as of seq, with the board of the copy renamed, and returns what it answered, and what it was asked, which once fail is called gets no answer. */
 function serve(seq: number, project = () => ({ ...testProject, seq })) {
   const calls: string[] = [];
+  const asked: string[] = [];
   let failing = false;
   const fail = () => {
     failing = true;
   };
   fakeApi((operation) => {
+    asked.push(operation);
     if (failing) {
       throw new NetworkError(new TypeError("Failed to fetch"));
     }
@@ -97,7 +100,7 @@ function serve(seq: number, project = () => ({ ...testProject, seq })) {
     }
     throw new Error(`unexpected ${operation}`);
   });
-  return { calls, fail };
+  return { calls, asked, fail };
 }
 
 function open(
@@ -155,11 +158,41 @@ describe("a document that starts from the device's copy", () => {
     expect(calls).toEqual(["getProject"]);
   });
 
-  it("is brought up to the server's seq by the channel", async () => {
-    const { calls } = serve(4);
-    const { doc, realtime } = open(copyOf(3));
+  it("is passed over while the browser has a connection where its seq is behind the project's, which the document reads from the server", async () => {
+    vi.useFakeTimers();
+    const { calls } = serve(5);
+    const { doc } = open(copyOf(3));
+    await vi.advanceTimersByTimeAsync(0);
     await doc.ready;
+    expect(doc.copy).toBeUndefined();
+    expect(doc.doc.seq).toBe(5);
+    expect(doc.hasRead("tree")).toBe(false);
+    await doc.load("tree");
+    expect(doc.doc.boards.get("bd_a")?.name).toBe("Server's");
+    // Nothing reads the project anew after, as the channel is not live.
+    const before = calls.length;
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(calls).toHaveLength(before);
+  });
+
+  it("starts from a copy behind the project's seq while the browser has no connection, which the channel brings up once it has", async () => {
+    vi.useFakeTimers();
+    let connected = false;
+    const { calls, asked, fail } = serve(4);
+    fail();
+    // The project as the page read it before the connection went.
+    const { doc, realtime } = open(copyOf(3), {
+      online: () => connected,
+      cached: 4,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await doc.ready;
+    expect(doc.copy?.version).toBe("v1");
     expect(doc.doc.seq).toBe(3);
+    // Offline, nothing reads the project anew, however long.
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(asked).toEqual([]);
+    connected = true;
     realtime.hold(testProject.id, 4);
     realtime.send(
       testProject.id,
@@ -168,24 +201,9 @@ describe("a document that starts from the device's copy", () => {
     );
     expect(doc.doc.seq).toBe(4);
     expect(doc.doc.boards.get("bd_a")?.name).toBe("Later");
-    // A page that shows the board, which reads it anew where the document
-    // had it already, waits for the channel, which has brought what changed.
-    await doc.refresh(boardPart("bd_a"));
-    expect(calls).toEqual(["getProject"]);
-  });
-
-  it("reads the project anew where the channel does not bring it up to the server's seq", async () => {
-    vi.useFakeTimers();
-    const { calls } = serve(5);
-    const { doc } = open(copyOf(3));
-    await vi.advanceTimersByTimeAsync(0);
-    await doc.ready;
-    expect(doc.doc.seq).toBe(3);
-    await vi.advanceTimersByTimeAsync(10_000);
-    await vi.waitFor(() => expect(doc.doc.seq).toBe(5));
-    expect(doc.doc.boards.get("bd_a")?.name).toBe("Server's");
-    expect(calls).toContain("listBoards");
-    expect(calls).toContain("listBoardNodes");
+    expect(doc.settled).toBe(true);
+    expect(asked).toEqual([]);
+    expect(calls).toEqual([]);
   });
 
   it("waits for the channel once, rather than at each reading anew, where it is never live", async () => {
@@ -228,7 +246,7 @@ describe("a document that starts from the device's copy", () => {
 
   it("reads the project anew, rather than pass the copy over, where the query client's read of it is older than the copy", async () => {
     // As a read kept from before another tab wrote the copy.
-    const { calls } = serve(4);
+    const { calls } = serve(3);
     const { doc } = open(copyOf(3), { cached: 2 });
     await doc.ready;
     expect(doc.copy?.version).toBe("v1");

@@ -659,6 +659,21 @@ describe("a project's download", () => {
     await statusOf(keeper, testProject.id, "ready");
   });
 
+  it("says that the copy could not be written where the project's tree cannot be read", async () => {
+    serve({
+      fail: (operation) =>
+        operation === "listBoards"
+          ? refused(500, { code: "internal" })
+          : undefined,
+    });
+    const { keeper } = setup({ retryDelay: 60_000 });
+    await keeper.pin(testProject.id, testProject.name);
+    await statusOf(keeper, testProject.id, "failed");
+    expect(keeper.store.getState().pins.get(testProject.id)?.failure).toBe(
+      "error",
+    );
+  });
+
   it("says that the copy could not be written where the project's workspace cannot be read", async () => {
     serve({
       fail: (operation) =>
@@ -785,6 +800,38 @@ describe("a kept project's copy", () => {
     full = false;
     await statusOf(keeper, testProject.id, "ready");
     expect((await db.session())?.user_id).toBe(testSession.user_id);
+  });
+});
+
+describe("the lock of the writer of the copies", () => {
+  it("is let go at once by a keeper that stopped before the browser gave it the lock", async () => {
+    const log = createErrorLog();
+    const queryClient = createQueryClient(log);
+    let write: (() => Promise<void>) | undefined;
+    const db = new OfflineDatabase();
+    onTestFinished(() => db.close());
+    const keeper = new OfflineKeeper({
+      queryClient,
+      documents: new Documents({ queryClient, log }),
+      log,
+      db,
+      secure: true,
+      online: () => true,
+      onConnection: () => () => {},
+      // As while another tab holds the lock.
+      lock: (granted) => {
+        write = granted;
+      },
+    });
+    keeper.start();
+    keeper.stop();
+    await keeper.idle();
+    // The other tab is gone, and the browser gives it the lock.
+    let released = false;
+    void write?.().then(() => {
+      released = true;
+    });
+    await vi.waitFor(() => expect(released).toBe(true));
   });
 });
 

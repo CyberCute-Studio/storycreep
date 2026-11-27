@@ -5,6 +5,7 @@
 // too, so that no console could show it, while what they leave to run later
 // runs after this file has run.
 
+import { NetworkError } from "@storycreep/shared/api";
 import { onlineManager } from "@tanstack/react-query";
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import { setNonce } from "get-nonce";
@@ -184,8 +185,17 @@ if (container === null) {
 }
 createRoot(
   container,
-  // The router throws these to its boundaries to show a page, not as errors.
-  rootErrorOptions(errorLog, (error) => isNotFound(error) || isRedirect(error)),
+  // The router throws these to its boundaries to show a page, not as
+  // errors, and a request that got no answer while the browser has no
+  // connection, which the error page shows as a page that needs one
+  // (RouteError), is no error of the app's either (PRD FR-OFF-02).
+  rootErrorOptions(
+    errorLog,
+    (error) =>
+      isNotFound(error) ||
+      isRedirect(error) ||
+      (error instanceof NetworkError && !online()),
+  ),
 ).render(
   <StrictMode>
     <App i18n={i18n} queryClient={queryClient} router={router} log={errorLog} />

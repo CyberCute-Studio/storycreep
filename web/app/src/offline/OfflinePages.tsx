@@ -1,15 +1,33 @@
-// What a project's pages show while the browser has no connection (PRD
-// FR-OFF-02, plan note N97): a notice that the page is offline, and of the
-// copy of the project that the device keeps, as of when, and, in place of a
-// page that reads the server alone, as the search, the statistics, the
-// releases, the comments, the trash, the access, and the settings, that it
-// needs a connection. The boards, the variables, the components, and their
-// types read the project's document, which the device's copy holds; the
+// What the pages show while the browser has no connection (PRD FR-OFF-02,
+// plan note N97): of the app's, the start page, which opens the board that
+// the device showed last, a project's pages, and the storage panel, every
+// other saying that it needs a connection (offlineRoutes); and, of a
+// project's, a notice that the page is offline, and of the copy of the
+// project that the device keeps, as of when, and, in place of a page that
+// reads the server alone, as the search, the statistics, the releases, the
+// comments, the trash, the access, and the settings, that it needs a
+// connection. The boards, the variables, the components, and their types
+// read the project's document, which the device's copy holds; the
 // validation and the dependency view go offline with plan item 93.
 
 import { formatDateTime } from "@storycreep/shared/i18n";
 import { useTranslation } from "react-i18next";
 import { useOffline } from "./react";
+
+/**
+ * The routes of the app that a page shows while the browser has no
+ * connection, as the root route reads them before any page's loader: the
+ * start page, which opens the board that the device showed last, or else
+ * goes to the project list; a project's pages, which say themselves which
+ * need a connection (offlinePages); and the storage panel. Every other, as
+ * the project list, a workspace's pages, the account's other screens, and
+ * the notifications, which read the server alone, says that it needs one.
+ */
+export const offlineRoutes: ReadonlySet<string> = new Set([
+  "/",
+  "/projects/$projectId",
+  "/account/offline",
+]);
 
 /** The routes of a project's pages that read its document alone, which the device's copy holds. */
 export const offlinePages: ReadonlySet<string> = new Set([

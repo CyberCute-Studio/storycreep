@@ -1,3 +1,4 @@
+import { NetworkError } from "@storycreep/shared/api";
 import { useQuery } from "@tanstack/react-query";
 import {
   createRootRouteWithContext,
@@ -9,6 +10,8 @@ import { useTranslation } from "react-i18next";
 import { accountQuery, instanceQuery, sessionQuery } from "../api";
 import { loadSessionState } from "../auth/session";
 import { applyLocale } from "../i18n";
+import { offlineRoutes } from "../offline/OfflinePages";
+import { online } from "../offline/online";
 import type { RouterContext } from "../router";
 import { NotFound } from "../shell/NotFound";
 import { RouteError } from "../shell/RouteError";
@@ -20,7 +23,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
   // shows anything (PRD FR-I18N-02). An instance whose first-run setup is
   // pending has no account to sign in to, so every page leads to setup
   // (FR-ADMIN-02).
-  beforeLoad: async ({ context, location }) => {
+  beforeLoad: async ({ context, location, matches }) => {
     const { instance, session, account } = await loadSessionState(
       context.queryClient,
     );
@@ -30,6 +33,12 @@ export const Route = createRootRouteWithContext<RouterContext>()({
     });
     if (instance.setup_pending && location.pathname !== "/setup") {
       throw redirect({ to: "/setup" });
+    }
+    // While the browser has no connection, a page that reads the server
+    // alone says that it needs one (RouteError), before its loader would
+    // wait for the connection (PRD FR-OFF-02, offlineRoutes).
+    if (!online() && !matches.some((m) => offlineRoutes.has(m.routeId))) {
+      throw new NetworkError(new Error("The page needs a connection."));
     }
     // The account that the page loaded for, or null if it loaded signed
     // out, which Root keys the page on.

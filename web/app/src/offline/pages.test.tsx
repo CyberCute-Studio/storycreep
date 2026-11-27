@@ -1,12 +1,12 @@
 import "fake-indexeddb/auto";
-import type { Board } from "@storycreep/shared/api";
+import { type Board, NetworkError } from "@storycreep/shared/api";
 import { onlineManager } from "@tanstack/react-query";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderApp, testSession } from "../test/app";
-import { fakeApi, startPage, testProject } from "../test/fake";
+import { fakeApi, startPage, testProject, testWorkspace } from "../test/fake";
 
 // What the pages show of the projects that the device keeps offline (PRD
 // FR-OFF-02, plan note N97): the project's switch, and what it says of the
@@ -41,9 +41,12 @@ const quay: Board = {
 
 const page = <T,>(items: T[]) => ({ items, next_cursor: null });
 
-/** Serves the test project, of one board without nodes, and what a signed-in page reads besides. */
+/** Serves the test project, of one board without nodes, and what a signed-in page reads besides, while the browser has a connection. */
 function serve() {
   return fakeApi((operation) => {
+    if (!navigator.onLine) {
+      throw new NetworkError(new TypeError("Failed to fetch"));
+    }
     switch (operation) {
       case "getProject":
         return testProject;
@@ -70,6 +73,14 @@ function goOffline() {
   vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
   act(() => {
     window.dispatchEvent(new Event("offline"));
+  });
+}
+
+/** Makes the browser say that it has a connection again. */
+function goOnline() {
+  vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+  act(() => {
+    window.dispatchEvent(new Event("online"));
   });
 }
 
@@ -176,6 +187,86 @@ describe("a project's pages while the browser has no connection", () => {
         name: "This page needs a connection",
       }),
     ).toBeDefined();
+  });
+});
+
+describe("the app's other pages while the browser has no connection", () => {
+  it("say that they need a connection, as the project list, and read once the browser is online again", async () => {
+    serve();
+    const { offline, router, log } = renderApp(`/projects/${testProject.id}`, {
+      session: testSession,
+      offline: { online: () => navigator.onLine },
+    });
+    await waitFor(() =>
+      expect(offline?.store.getState().pins.get(testProject.id)?.status).toBe(
+        "ready",
+      ),
+    );
+    goOffline();
+    // As the link of the project's pages back to its workspace's projects.
+    await act(() =>
+      router.navigate({
+        to: "/workspaces/$workspaceId",
+        params: { workspaceId: testWorkspace.id },
+      }),
+    );
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "This page needs a connection",
+      }),
+    ).toBeDefined();
+    // The storage panel shows what the device keeps.
+    await act(() => router.navigate({ to: "/account/offline" }));
+    expect(await screen.findByRole("link", { name: "Harbour" })).toBeDefined();
+    await act(() =>
+      router.navigate({
+        to: "/workspaces/$workspaceId",
+        params: { workspaceId: testWorkspace.id },
+      }),
+    );
+    await screen.findByRole("heading", {
+      level: 1,
+      name: "This page needs a connection",
+    });
+    goOnline();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("heading", {
+          level: 1,
+          name: "This page needs a connection",
+        }),
+      ).toBeNull(),
+    );
+    expect(await screen.findByText(testWorkspace.name)).toBeDefined();
+    expect(log.entries()).toEqual([]);
+  });
+
+  it("say so of a project that the device does not keep, rather than show the error page", async () => {
+    serve();
+    const { offline, router, log } = renderApp(`/projects/${testProject.id}`, {
+      session: testSession,
+      offline: { online: () => navigator.onLine },
+    });
+    await waitFor(() =>
+      expect(offline?.store.getState().pins.get(testProject.id)?.status).toBe(
+        "ready",
+      ),
+    );
+    goOffline();
+    await act(() =>
+      router.navigate({
+        to: "/projects/$projectId",
+        params: { projectId: "prj_other" },
+      }),
+    );
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "This page needs a connection",
+      }),
+    ).toBeDefined();
+    expect(log.entries()).toEqual([]);
   });
 });
 
