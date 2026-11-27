@@ -111,15 +111,18 @@ export function queueBroadcast(): QueueBroadcast | undefined {
   return {
     post: (news) => channel.postMessage(news),
     signedOut: (user) => channel.postMessage({ user, signedOut: true }),
+    // On the channel object that tells it, which never hears what it posts
+    // itself, so that the other tabs alone hear it, as the tab that signed
+    // out knows already.
     listenSignedOut: (listener) => {
-      const own = new BroadcastChannel(name);
-      own.addEventListener("message", (event: MessageEvent) => {
+      const heard = (event: MessageEvent) => {
         const news = event.data as { user?: unknown; signedOut?: unknown };
         if (news?.signedOut === true && typeof news.user === "string") {
           listener(news.user);
         }
-      });
-      return () => own.close();
+      };
+      channel.addEventListener("message", heard);
+      return () => channel.removeEventListener("message", heard);
     },
     // Each listener on a channel object of its own, which hears what the
     // tab's posts, as a BroadcastChannel never hears what it posts itself.
@@ -369,6 +372,12 @@ export function deviceQueue(
       const locked = removals.some((d) => d?.lock !== undefined)
         ? await locks.held()
         : new Set<string>();
+      // A removal forgotten as the page is still signed in, before its lock
+      // was let go (intend), which the locks read after it no longer show,
+      // is read anew, rather than made as one whose tab closed.
+      if (keys.some((key, i) => storedAt(storage, key) !== read[i])) {
+        continue;
+      }
       const under = removals.map(
         (d) => d?.lock !== undefined && locked.has(d.lock),
       );

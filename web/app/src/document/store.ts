@@ -349,6 +349,9 @@ function retryAfterOf(answer: ApiError): number {
  */
 const refusedForWhen = [401, 403, 408, 429];
 
+/** Why a document keeps a batch in the device's queue rather than send it now (ProjectDocument.holdReasons). */
+type HoldReason = "review" | "offline" | "unanswered" | "session" | "refused";
+
 /**
  * How long, in milliseconds, a try waits for its answer before the
  * document takes it for one that no answer comes to, as on a network whose
@@ -377,6 +380,22 @@ function refusedForGood(error: unknown): boolean {
     !refusedForWhen.includes(status) &&
     body?.code !== "project_archived"
   );
+}
+
+/**
+ * The undo or the redo under way (ProjectDocument.step), which settles as
+ * done does, and, of one sent to the server, which the page's batches made
+ * meanwhile wait for (sendAfterSteps), what they wait for no longer, once
+ * its read of the server, or its try, has had no answer for answerWait
+ * (givingWayAfter, stalled): that it gave way (gaveWay), as it says (given),
+ * which giveWay gives.
+ */
+interface StepUnderWay {
+  which: "undo" | "redo";
+  done: Promise<boolean>;
+  gaveWay?: Promise<void>;
+  given?: boolean;
+  giveWay?: () => void;
 }
 
 /**
@@ -913,9 +932,7 @@ export class ProjectDocument {
   /** The account that the document is of, as the page's session was once it was made, whose batches it sends as no other's (post). */
   private readonly userId: string | undefined;
   /** The undo or the redo under way, which another of the same asked for meanwhile settles as, and one of the other follows (step). */
-  private stepUnderWay:
-    | { which: "undo" | "redo"; done: Promise<boolean> }
-    | undefined;
+  private stepUnderWay: StepUnderWay | undefined;
   /**
    * The page's batches that send has yet to settle, those that wait for a
    * step of the history under way too (send), which the document is busy
@@ -1123,6 +1140,14 @@ export class ProjectDocument {
    * (holdReason); undefined once the server has answered since.
    */
   private retryReason: "unanswered" | "refused" | undefined;
+  /**
+   * Whether the try under way has had no answer for answerWait (stalled),
+   * after which the page cannot reach the server until the try settles
+   * (unreachable): its own, which neither the channel live again nor an
+   * answer to another try ends, nor a wait after a refusal that it has
+   * (retryReason), which goes on.
+   */
+  private stalledTry = false;
   /** How many tries in a row the server gave no answer to, which spaces the next (backoff). */
   private retryFailures = 0;
   /** Counts the changes of what the sync panel lists (DocumentState.queueVersion), and of what undo and redo would take out of the queue, or put back. */
@@ -1525,7 +1550,10 @@ export class ProjectDocument {
         // answer, is sent at once, rather than once its next try is due, and
         // the page reaches it; not one that waits after a refusal for when
         // it was sent, as of too many requests, which was an answer, and
-        // which a try at once would meet again.
+        // which a try at once would meet again; nor through a try under way
+        // that no answer came to for answerWait, as on the connection that a
+        // network change left behind, after which the batches made meanwhile
+        // are kept still (stalledTry).
         if (live && this.retryReason === "unanswered") {
           this.retryReason = undefined;
           this.tryAgainNow();
@@ -3363,7 +3391,16 @@ export class ProjectDocument {
    * meanwhile, as they are among themselves (step), and the page shows it
    * at once all the same, on top of what is queued (waiting), as a board
    * dropped in the tree where it was dropped, rather than where it was
-   * until the step has settled.
+   * until the step has settled. A step whose read of the server, or whose
+   * try, has had no answer for answerWait, which the browser may take
+   * minutes to give up on, gives way (givingWayAfter, stalled): the batch is
+   * queued now, before the step, which is then not sent (stepped), or behind
+   * its try, and so is kept in the device's queue, as are the batches after
+   * any try that no answer comes to, rather than in the page alone, which a
+   * tab that closes meanwhile would lose (PRD FR-OFF-03); but for those of a
+   * step that the server refuses as too large, which it sends in parts, and
+   * whose parts after then come after the batch, which may change what they
+   * undo.
    */
   private sendAfterSteps(
     commands: readonly Command[],
@@ -3371,15 +3408,27 @@ export class ProjectDocument {
     options: SendOptions,
   ): Promise<SendResult> {
     const underWay = this.stepUnderWay;
-    if (underWay !== undefined) {
+    if (underWay !== undefined && underWay.given !== true) {
       let held = waiting;
       if (held === undefined) {
         held = { commands, time: this.now() };
         this.waiting.push(held);
         this.show();
       }
-      const after = () => this.sendAfterSteps(commands, held, options);
-      return underWay.done.then(after, after);
+      // Once the step has settled, in the order that what waits for it was
+      // asked for, as a step of the other asked for after it (step), or
+      // once it gives way, whichever comes first.
+      return new Promise<SendResult>((resolve) => {
+        let gone = false;
+        const after = () => {
+          if (!gone) {
+            gone = true;
+            resolve(this.sendAfterSteps(commands, held, options));
+          }
+        };
+        underWay.done.then(after, after);
+        void underWay.gaveWay?.then(after);
+      });
     }
     if (waiting !== undefined) {
       // The batch is queued now, which the page shows in its place, as of
@@ -3756,7 +3805,20 @@ export class ProjectDocument {
         this.idleChanged();
       }
     });
-    this.stepUnderWay = { which, done };
+    let give = () => {};
+    const gaveWay = new Promise<void>((resolve) => {
+      give = resolve;
+    });
+    const sent: StepUnderWay = {
+      which,
+      done,
+      gaveWay,
+      giveWay: () => {
+        sent.given = true;
+        give();
+      },
+    };
+    this.stepUnderWay = sent;
     return done;
   }
 
@@ -3830,9 +3892,16 @@ export class ProjectDocument {
       if (
         !this.store.getState().live &&
         this.restores === restores &&
-        !(await this.seqChecked())
+        !(await this.givingWayAfter(this.seqChecked()))
       ) {
         // The project can no longer be read, which its pages show.
+        return false;
+      }
+      // The page's batches made meanwhile went on, as the read had no answer
+      // for a while (givingWayAfter), and are the latest changes once they
+      // apply: the step is not sent after them, as it is not after one that
+      // the device's queue kept (holdsQueued).
+      if (this.stepUnderWay?.given === true) {
         return false;
       }
       if (this.restores !== restores) {
@@ -3932,6 +4001,29 @@ export class ProjectDocument {
     } finally {
       this.store.setState({ stepping: false });
       this.show();
+    }
+  }
+
+  /**
+   * Resolves as reading does, the step under way's read of the server,
+   * which has the page's batches made meanwhile wait for the step no longer
+   * once it has had no answer for answerWait, as on a network whose
+   * connection stalls, where the page keeps a queue, so that they are kept
+   * there, as are those after any try that no answer comes to, rather than
+   * in the page alone (sendAfterSteps).
+   */
+  private async givingWayAfter<T>(reading: Promise<T>): Promise<T> {
+    const timer =
+      this.queue === undefined
+        ? undefined
+        : setTimeout(
+            () => this.stepUnderWay?.giveWay?.(),
+            this.options.answerWait ?? answerWait,
+          );
+    try {
+      return await reading;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -4129,50 +4221,54 @@ export class ProjectDocument {
     );
   }
 
+  /** Returns why the document sends none of the queue's batches now, or undefined where it sends them (holdReasons). */
+  private holdReason(): HoldReason | undefined {
+    return this.holdReasons()();
+  }
+
   /**
-   * Returns why the document keeps entry in the device's queue, where it
-   * can, rather than send it now, or undefined where it sends it: a queued
-   * batch that needs review before it, or itself, in the order that the
-   * document sends them, which every batch after it waits for, but none
-   * before it, as one of a tab that closed made before it, which the
-   * document took with it (plan item 92); a page that cannot reach the
-   * server (unreachable); or a try that the server refused for when or by
-   * whom it was sent, until the next (retryTimer). Given no entry, it
-   * returns why the document sends none of the queue's batches now: for
-   * review, once none is left before the first that needs it.
+   * Returns, as of now, why the document keeps the entry at the index of
+   * entries that it is given in the device's queue, where it can, rather
+   * than send it now, or undefined where it sends it: a queued batch that
+   * needs review before it, or itself, in the order that the document sends
+   * them, which every batch after it waits for, but none before it, as one
+   * of a tab that closed made before it, which the document took with it
+   * (plan item 92); a page that cannot reach the server (unreachable); or a
+   * try that the server refused for when or by whom it was sent, until the
+   * next (retryTimer). Given no index, it returns why the document sends
+   * none of the queue's batches now: for review, once none is left before
+   * the first that needs it. It reads the queue once, as a pass over every
+   * entry asks of each (keep, pump), rather than once for each of them.
    */
-  private holdReason(
-    entry?: Entry,
-  ): "review" | "offline" | "unanswered" | "session" | "refused" | undefined {
+  private holdReasons(): (at?: number) => HoldReason | undefined {
     if (this.queue === undefined) {
-      return undefined;
+      return () => undefined;
     }
     const review = this.entries.findIndex((e) => e.held?.state === "review");
-    if (
+    const first =
       review !== -1 &&
-      (entry === undefined
-        ? !this.entries
-            .slice(0, review)
-            .some((e) => e.held !== undefined && e.answer === undefined)
-        : !this.entries.slice(0, review).includes(entry))
-    ) {
-      return "review";
-    }
-    return (
+      !this.entries
+        .slice(0, review)
+        .some((e) => e.held !== undefined && e.answer === undefined);
+    const other =
       this.unreachable() ??
-      (this.retryTimer === undefined ? undefined : "refused")
-    );
+      (this.retryTimer === undefined ? undefined : "refused");
+    return (at) =>
+      review !== -1 && (at === undefined ? first : at === -1 || at >= review)
+        ? "review"
+        : other;
   }
 
   /**
    * Returns why the page cannot reach the server now, where it keeps a
    * queue, or undefined where it can, as far as it knows: a browser that has
-   * no connection; a try that no answer came to, or none for answerWait
-   * (stalled), until the next (retryTimer), and through the next, until it
-   * is answered, so that what needs the server is not offered at each try
-   * only to be taken back as it fails; or a page that holds the session
-   * that the device kept, without its CSRF token, which no change can be
-   * sent with, until the page has its own (PRD FR-OFF-02).
+   * no connection; a try that no answer came to, until the next
+   * (retryTimer), and through the next, until it is answered, so that what
+   * needs the server is not offered at each try only to be taken back as it
+   * fails; a try that none came to for answerWait, until it settles, though
+   * the channel is live again meanwhile (stalledTry); or a page that holds
+   * the session that the device kept, without its CSRF token, which no
+   * change can be sent with, until the page has its own (PRD FR-OFF-02).
    */
   private unreachable(): "offline" | "unanswered" | "session" | undefined {
     if (this.queue === undefined) {
@@ -4182,8 +4278,9 @@ export class ProjectDocument {
       return "offline";
     }
     if (
-      this.retryReason === "unanswered" &&
-      (this.retryTimer !== undefined || this.inflight)
+      this.stalledTry ||
+      (this.retryReason === "unanswered" &&
+        (this.retryTimer !== undefined || this.inflight))
     ) {
       return "unanswered";
     }
@@ -4209,10 +4306,11 @@ export class ProjectDocument {
    */
   private keep(): void {
     const errors = new Map<Entry, Error | undefined>();
-    for (const entry of this.entries) {
+    const reasonOf = this.holdReasons();
+    for (const [at, entry] of this.entries.entries()) {
       const reason =
         !entry.sent && entry.held === undefined && this.keepable(entry)
-          ? this.holdReason(entry)
+          ? reasonOf(at)
           : undefined;
       if (reason !== undefined) {
         errors.set(
@@ -4518,7 +4616,8 @@ export class ProjectDocument {
   /**
    * Records that the server answered a try, after which the page reaches it:
    * the wait for want of an answer is over, the queue being sent next, while
-   * one after a refusal for when a batch was sent goes on.
+   * one after a refusal for when a batch was sent goes on, as its Retry-After
+   * asks, though the try answered had none for answerWait (stalledTry).
    */
   private reached(): void {
     if (this.retryReason === "unanswered") {
@@ -4571,10 +4670,11 @@ export class ProjectDocument {
     if (this.inflight) {
       return;
     }
+    const reasonOf = this.holdReasons();
     const entry = this.entries.find(
-      (e) =>
+      (e, at) =>
         !e.sent &&
-        (signedOut || !this.keepable(e) || this.holdReason(e) === undefined) &&
+        (signedOut || !this.keepable(e) || reasonOf(at) === undefined) &&
         !(this.disposed && e.held !== undefined),
     );
     if (entry === undefined) {
@@ -4780,6 +4880,12 @@ export class ProjectDocument {
     } finally {
       clearTimeout(stall);
       this.inflight = false;
+      // The try has settled, which its want of an answer held the page to
+      // (stalled), as what it met says now, as a wait after it.
+      if (this.stalledTry) {
+        this.stalledTry = false;
+        this.show();
+      }
       void this.pump();
       this.idleChanged();
     }
@@ -4794,15 +4900,21 @@ export class ProjectDocument {
    * rather than in the page alone, which a tab that closes before the
    * browser gives up on the try would lose; its caller hears that it is
    * queued once it is written. The try goes on, and its answer, or its
-   * failure, settles the batch as one of the queue's (queueKept).
+   * failure, settles the batch as one of the queue's (queueKept). The try
+   * of a step of the history, which is never kept, has the page's batches
+   * that wait for the step wait no longer, which are queued behind it, and
+   * kept, as the batches after any try are (giveWay).
    */
   private stalled(entry: Entry): void {
     if (this.queue === undefined || !this.inflight || !entry.sent) {
       return;
     }
-    this.retryReason = "unanswered";
+    this.stalledTry = true;
     // A document dropped as the page signed out keeps nothing anew (pump).
     const signedOut = this.signedOutOf();
+    if (entry.step && !signedOut) {
+      this.stepUnderWay?.giveWay?.();
+    }
     if (
       entry.held === undefined &&
       this.keepable(entry) &&

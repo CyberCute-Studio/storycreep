@@ -71,14 +71,15 @@ afterEach(() => {
 /**
  * A fake of the browser's BroadcastChannel between tabs, as the queue's
  * channel uses it (queueBroadcast): each listener, on a channel object of
- * its own, hears what any tab posts, its own tab's too.
+ * its own, hears what any tab posts, its own tab's too, but for a sign-out,
+ * which the other tabs alone hear.
  */
 function fakeBroadcast() {
   const listeners = new Set<(news: QueueNews) => void>();
-  const signedOut = new Set<(user: string) => void>();
+  const signedOut = new Map<(user: string) => void, QueueBroadcast>();
   return {
     tab(): QueueBroadcast {
-      return {
+      const tab: QueueBroadcast = {
         post: (news) => {
           for (const listener of [...listeners]) {
             listener(structuredClone(news));
@@ -92,18 +93,21 @@ function fakeBroadcast() {
           };
         },
         signedOut: (user) => {
-          for (const listener of [...signedOut]) {
-            listener(user);
+          for (const [listener, of] of [...signedOut]) {
+            if (of !== tab) {
+              listener(user);
+            }
           }
         },
         listenSignedOut: (listener) => {
           const own = (user: string) => listener(user);
-          signedOut.add(own);
+          signedOut.set(own, tab);
           return () => {
             signedOut.delete(own);
           };
         },
       };
+      return tab;
     },
   };
 }
@@ -1064,6 +1068,50 @@ describe("the device's queue of the page's batches", () => {
     await db.close();
   });
 
+  it("keeps what a sign-out under way names once the page is still signed in, though a take read it before, and the locks after", async () => {
+    const batches = serve(() => new Promise<never>(() => {}));
+    const net = connection(false);
+    const locks = fakeLocks();
+    const db = new OfflineDatabase();
+    const queue = deviceQueue(db, {
+      secure: true,
+      locks,
+      storage: window.localStorage,
+    }) as QueueStore;
+    // The server answers that the page is still signed in as another tab's
+    // take, which has read the removal, reads which locks are held.
+    let answers = () => {};
+    const other = deviceQueue(db, {
+      secure: true,
+      locks: {
+        ...locks,
+        held: async () => {
+          answers();
+          answers = () => {};
+          return await locks.held();
+        },
+      },
+      storage: window.localStorage,
+    }) as QueueStore;
+    const first = await open(db, locks, net, testSession, queue);
+    await first.doc.send([rename("bd_a", "Quay", 3)]);
+    const [named] = await db.queued(user, testProject.id);
+    first.doc.dispose();
+    await first.doc.lettingGo();
+    const settle = await queue.intend(user, named ? [named] : []);
+    answers = () => settle(false);
+    const next = await open(db, locks, net, testSession, other);
+    expect(next.doc.store.getState().queued).toBe(1);
+    expect(
+      (await db.queued(user, testProject.id)).map((b) => nameOf(b.commands)),
+    ).toEqual(["Quay"]);
+    expect(window.localStorage.length).toBe(0);
+    expect(batches).toEqual([]);
+    next.doc.dispose();
+    await next.doc.lettingGo();
+    await db.close();
+  });
+
   it("keeps a batch whose try no answer comes to for a while on the device, as sent, with those after it, and settles it once the answer comes", async () => {
     let answer = (_: unknown) => {};
     const batches = serve(
@@ -1107,6 +1155,179 @@ describe("the device's queue of the page's batches", () => {
     await until(doc, (s) => s.queued === 0 && !s.holding);
     expect(await db.queued(user, testProject.id)).toEqual([]);
     expect(shownName(doc)).toBe("Dock");
+    doc.dispose();
+    await doc.lettingGo();
+    await db.close();
+  });
+
+  it("keeps the batches made while a try has had no answer for a while, though the channel is live again meanwhile, until the try settles", async () => {
+    let answer = (_: unknown) => {};
+    const batches = serve(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const db = new OfflineDatabase();
+    const locks = fakeLocks();
+    const realtime = fakeRealtime();
+    const { doc } = await open(
+      db,
+      locks,
+      connection(true),
+      testSession,
+      deviceQueue(db, { secure: true, locks }),
+      { realtime, answerWait: 20 },
+    );
+    expect(await doc.send([rename("bd_a", "Quay", 3)])).toEqual({
+      status: "queued",
+    });
+    // As on a network that changed, whose socket is back on the new one,
+    // while the try goes on over the old.
+    realtime.hold(testProject.id);
+    expect(doc.store.getState().live).toBe(true);
+    expect(doc.store.getState().holding).toBe(true);
+    expect(await doc.send([rename("bd_a", "Dock", 3)])).toEqual({
+      status: "queued",
+    });
+    expect(
+      (await db.queued(user, testProject.id)).map((b) => nameOf(b.commands)),
+    ).toEqual(["Quay", "Dock"]);
+    expect(batches).toHaveLength(1);
+    answer(applied(testProject.seq + 1, [{ id: "bd_a", rev: 4 }]));
+    await vi.waitFor(() => expect(batches).toHaveLength(2));
+    answer(applied(testProject.seq + 2, [{ id: "bd_a", rev: 5 }]));
+    await until(doc, (s) => s.queued === 0 && !s.holding);
+    doc.dispose();
+    await doc.lettingGo();
+    await db.close();
+  });
+
+  it("keeps a batch made while an undo has had no answer for a while, which waits for it no longer, and sends it after it", async () => {
+    let seq = testProject.seq;
+    const answers: ((value: CommandResultBody) => void)[] = [];
+    const batches = serve(
+      () => {
+        if (batches.length === 1) {
+          seq++;
+          return applied(
+            seq,
+            [{ id: "bd_a", rev: 4 }],
+            [renameBack("bd_a", "Harbour", 4)],
+          );
+        }
+        return new Promise<CommandResultBody>((resolve) => {
+          answers.push(resolve);
+        });
+      },
+      () => seq,
+    );
+    const db = new OfflineDatabase();
+    const locks = fakeLocks();
+    const { doc } = await open(
+      db,
+      locks,
+      connection(true),
+      testSession,
+      deviceQueue(db, { secure: true, locks }),
+      { answerWait: 20 },
+    );
+    await doc.send([rename("bd_a", "Quay", 3)]);
+    const undo = doc.undo();
+    // Made as the undo is under way, which it waits for until its try has
+    // had no answer for a while.
+    const pier = doc.send([rename("bd_a", "Pier", 4)]);
+    expect(await pier).toEqual({ status: "queued" });
+    expect(
+      (await db.queued(user, testProject.id)).map((b) => nameOf(b.commands)),
+    ).toEqual(["Pier"]);
+    expect(batches.map(nameOf)).toEqual(["Quay", "Harbour"]);
+    seq++;
+    answers[0]?.(
+      applied(seq, [{ id: "bd_a", rev: 5 }], [renameBack("bd_a", "Quay", 5)]),
+    );
+    expect(await undo).toBe(true);
+    await vi.waitFor(() => expect(batches).toHaveLength(3));
+    expect(nameOf(batches[2] ?? [])).toBe("Pier");
+    expect(batches[2]?.[0]?.expected_rev).toEqual({ bd_a: 5 });
+    seq++;
+    answers[1]?.(applied(seq, [{ id: "bd_a", rev: 6 }]));
+    await until(doc, (s) => s.queued === 0 && !s.holding);
+    expect(await db.queued(user, testProject.id)).toEqual([]);
+    expect(shownName(doc)).toBe("Pier");
+    doc.dispose();
+    await doc.lettingGo();
+    await db.close();
+  });
+
+  it("keeps a batch made while an undo's read of the project has had no answer for a while, which goes on before it, and sends no undo after it", async () => {
+    let seq = testProject.seq;
+    // The next read of the project gets no answer until read is called.
+    let hang = false;
+    let read = () => {};
+    let answer = (_: CommandResultBody) => {};
+    const batches: CommandBody[][] = [];
+    fakeApi((operation, input) => {
+      switch (operation) {
+        case "getProject":
+          if (hang) {
+            hang = false;
+            return new Promise((resolve) => {
+              read = () => resolve({ ...testProject, seq });
+            });
+          }
+          return { ...testProject, seq };
+        case "listFolders":
+          return { items: [], next_cursor: null };
+        case "listBoards":
+          return { items: [board("bd_a", "Harbour")], next_cursor: null };
+        case "applyCommands": {
+          batches.push(
+            structuredClone(
+              (input as { body: { commands: CommandBody[] } }).body.commands,
+            ),
+          );
+          if (batches.length === 1) {
+            seq++;
+            return applied(
+              seq,
+              [{ id: "bd_a", rev: 4 }],
+              [renameBack("bd_a", "Harbour", 4)],
+            );
+          }
+          return new Promise((resolve) => {
+            answer = resolve;
+          });
+        }
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const db = new OfflineDatabase();
+    const locks = fakeLocks();
+    const { doc } = await open(
+      db,
+      locks,
+      connection(true),
+      testSession,
+      deviceQueue(db, { secure: true, locks }),
+      { answerWait: 20 },
+    );
+    await doc.send([rename("bd_a", "Quay", 3)]);
+    await vi.waitFor(() => expect(doc.busy).toBe(false));
+    hang = true;
+    const undo = doc.undo();
+    const pier = doc.send([rename("bd_a", "Pier", 4)]);
+    expect(await pier).toEqual({ status: "queued" });
+    expect(
+      (await db.queued(user, testProject.id)).map((b) => nameOf(b.commands)),
+    ).toEqual(["Pier"]);
+    read();
+    expect(await undo).toBe(false);
+    seq++;
+    answer(applied(seq, [{ id: "bd_a", rev: 5 }]));
+    await until(doc, (s) => s.queued === 0 && !s.holding);
+    expect(batches.map(nameOf)).toEqual(["Quay", "Pier"]);
+    expect(shownName(doc)).toBe("Pier");
     doc.dispose();
     await doc.lettingGo();
     await db.close();
@@ -1761,6 +1982,51 @@ describe("the device's queue of the page's batches", () => {
     net.set(true);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(batches).toHaveLength(1);
+    doc.dispose();
+    await db.close();
+  });
+
+  it("waits out a refusal for when a batch was sent, as of too many requests, though a try sent meanwhile is answered after it had no answer for a while", async () => {
+    let answer = (_: unknown) => {};
+    const batches = serve((commands) => {
+      if (commands[0]?.type === "comment.delete") {
+        return new Promise((resolve) => {
+          answer = resolve;
+        });
+      }
+      throw refused(429, { code: "rate_limited" }, { "Retry-After": "60" });
+    });
+    const net = connection(false);
+    const db = new OfflineDatabase();
+    const locks = fakeLocks();
+    const { doc } = await open(
+      db,
+      locks,
+      net,
+      testSession,
+      deviceQueue(db, { secure: true, locks }),
+      { answerWait: 20 },
+    );
+    await doc.send([rename("bd_a", "Quay", 3)]);
+    net.set(true);
+    await vi.waitFor(async () => {
+      const [kept] = await db.queued(user, testProject.id);
+      expect(kept?.refusal?.status).toBe(429);
+    });
+    // A comment's batch, which the queue does not keep, is sent before it.
+    const comment = doc.send(
+      [{ type: "comment.delete", payload: { id: "cmt_a" } }],
+      { history: false },
+    );
+    await until(doc, (s) => s.holding);
+    answer(applied(testProject.seq + 1, []));
+    await comment;
+    await until(doc, (s) => !s.holding);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(batches.map((b) => b[0]?.type)).toEqual([
+      "board.rename",
+      "comment.delete",
+    ]);
     doc.dispose();
     await db.close();
   });
