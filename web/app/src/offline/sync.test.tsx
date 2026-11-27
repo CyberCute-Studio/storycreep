@@ -354,6 +354,29 @@ describe("the sync panel", () => {
     ).toBeDefined();
   });
 
+  it("says of a change of the device's that the server failed on as it was sent that the server may have it already", async () => {
+    serve(() => {
+      throw refused(500, {
+        code: "internal_error",
+        message: "Something went wrong on the server.",
+      });
+    });
+    const user = userEvent.setup();
+    const { doc } = await openProject();
+    setOnline(false);
+    await act(() => doc.send([renameQuay("Pier")]));
+    setOnline(true);
+    await user.click(await indicator("Saving 1 change…"));
+    const panel = await screen.findByRole("dialog", { name: "Sync status" });
+    expect(
+      await within(panel).findByText(
+        /The server refused it when it was last sent \(.+\), but may have it already, so it is sent again later as it was\.$/,
+        {},
+        { timeout: 2_000 },
+      ),
+    ).toBeDefined();
+  });
+
   it("lists nothing as needing the server while the page reaches it, though a change needs review", async () => {
     serve(() => {
       throw refused(422, { code: "validation_failed" });
@@ -704,6 +727,73 @@ describe("signing out", () => {
         (await offlineDb?.queued(testSession.user_id))?.map((r) => r.id),
       ).toEqual(["another"]),
     );
+  });
+
+  it("takes off the device none of the changes kept as the page signs out where it could not read it as the user clicked, and reads none as the user signs out anyway", async () => {
+    let signingOut = false;
+    let signedOut = () => {};
+    serve(
+      () => ({
+        status: "applied",
+        seq: 2,
+        revisions: [{ id: "bd_quay", rev: 2 }],
+        not_reconnected: [],
+        undo: [],
+      }),
+      () => {
+        signingOut = true;
+        return new Promise<void>((resolve) => {
+          signedOut = resolve;
+        });
+      },
+    );
+    const user = userEvent.setup();
+    const { doc, offlineDb } = await openProject();
+    const db = offlineDb as OfflineDatabase;
+    setOnline(false);
+    await act(() => doc.send([renameQuay("Pier")]));
+    await indicator("Offline, 1 change on this device");
+    const [kept] = await db.queued(testSession.user_id);
+    setOnline(true);
+    await indicator("All changes saved");
+    await waitFor(async () =>
+      expect(await db.queued(testSession.user_id)).toEqual([]),
+    );
+    // The device cannot be read as the user clicks, and keeps none as the
+    // user signs out anyway.
+    const queued = db.queued.bind(db);
+    let unreadable = true;
+    vi.spyOn(db, "queued").mockImplementation((...args) => {
+      if (unreadable && args.length === 1) {
+        unreadable = false;
+        return Promise.reject(new Error("Unreadable."));
+      }
+      return queued(...args);
+    });
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    const asked = await screen.findByRole("alertdialog", {
+      name: "Sign out and lose any changes not yet sent?",
+    });
+    await user.click(
+      within(asked).getByRole("button", { name: "Sign out anyway" }),
+    );
+    await waitFor(() => expect(signingOut).toBe(true));
+    // Another tab's document keeps a change as the page signs out.
+    await db.saveQueued(
+      testSession.user_id,
+      testProject.id,
+      [{ ...(kept as QueueRecord), id: "another", owner: "another-tab" }],
+      [],
+    );
+    const deletes = vi.spyOn(db, "deleteQueued");
+    signedOut();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    // Nothing is taken off the device after, which it would be by now.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(deletes).not.toHaveBeenCalled();
+    expect((await queued(testSession.user_id)).map((r) => r.id)).toEqual([
+      "another",
+    ]);
   });
 
   it("stays asking while it reads the device again as the user signs out anyway, which then signs out", async () => {

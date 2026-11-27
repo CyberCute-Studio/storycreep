@@ -133,9 +133,14 @@ function useBatchState(batch: PendingBatch): string {
       return t("sync.batch.sending");
     case "queued":
       // One that the server refused for when or by whom it was sent, as for
-      // a role that no longer allows it, waits to be tried again, with why.
+      // a role that no longer allows it, waits to be tried again, with why,
+      // and says too where the server may have it all the same, as one
+      // sent before with no answer, or that failed on the server's side
+      // after it may have committed, which the export says too (sent).
       if (batch.refusal !== undefined) {
-        return t("sync.batch.queued_refused", { reason });
+        return batch.sent
+          ? t("sync.batch.queued_sent_refused", { reason })
+          : t("sync.batch.queued_refused", { reason });
       }
       return batch.sent ? t("sync.batch.queued_sent") : t("sync.batch.queued");
     case "review":

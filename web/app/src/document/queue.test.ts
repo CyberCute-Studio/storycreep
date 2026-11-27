@@ -2097,6 +2097,34 @@ describe("the device's queue of the page's batches", () => {
     await db.close();
   });
 
+  it("tries a queued batch that the server refused as it was not ready yet again no sooner than its Retry-After asks, as a date", async () => {
+    let failures = 1;
+    const batches = serve(() => {
+      if (failures-- > 0) {
+        throw refused(
+          503,
+          { code: "not_ready" },
+          { "Retry-After": new Date(Date.now() + 2_000).toUTCString() },
+        );
+      }
+      return applied(2, [{ id: "bd_a", rev: 4 }]);
+    });
+    const net = connection(false);
+    const db = new OfflineDatabase();
+    const { doc } = await open(db, fakeLocks(), net);
+    await doc.send([rename("bd_a", "Quay", 3)]);
+    const refusedAt = Date.now();
+    net.set(true);
+    await vi.waitFor(() => expect(batches).toHaveLength(1));
+    await vi.waitFor(() => expect(doc.store.getState().queued).toBe(0), {
+      timeout: 4_000,
+    });
+    expect(batches).toHaveLength(2);
+    // An HTTP date has whole seconds: a second at least.
+    expect(Date.now() - refusedAt).toBeGreaterThanOrEqual(900);
+    await db.close();
+  });
+
   it("lets a read go on once the device's database does not open in time as the document takes the batches let go while it took none, and takes them once it opens", async () => {
     serve(() => applied(2, [{ id: "bd_a", rev: 4 }]));
     const net = connection(false);
@@ -2393,6 +2421,92 @@ describe("the device's queue of the page's batches", () => {
     await writing;
     expect(await db.queued(user)).toHaveLength(1);
     await expect(sending).resolves.toEqual({ status: "queued" });
+    await db.close();
+  });
+
+  it("holds the content of a board that a queued batch creates, which the server does not have yet, as none, which the batches on top give it, read anew or not", async () => {
+    let seq = testProject.seq;
+    let created = false;
+    const lists = { nodes: 0 };
+    const batches: CommandBody[][] = [];
+    fakeApi((operation, input) => {
+      switch (operation) {
+        case "getProject":
+          return { ...testProject, seq };
+        case "listFolders":
+          return { items: [], next_cursor: null };
+        case "listBoards":
+          return {
+            items: [
+              board("bd_a", "Harbour"),
+              ...(created ? [board("bd_new", "Quay", 1)] : []),
+            ],
+            next_cursor: null,
+          };
+        case "listBoardNodes":
+        case "listBoardConnections":
+          lists.nodes++;
+          if (!created) {
+            throw refused(404, { code: "not_found" });
+          }
+          return { items: [], next_cursor: null };
+        case "applyCommands": {
+          const commands = (input as { body: { commands: CommandBody[] } }).body
+            .commands;
+          batches.push(structuredClone(commands));
+          seq++;
+          if (commands[0]?.type === "board.create") {
+            created = true;
+            return applied(seq, [{ id: "bd_new", rev: 1 }]);
+          }
+          return applied(seq, [{ id: "nd_new", rev: 1 }]);
+        }
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const net = connection(false);
+    const db = new OfflineDatabase();
+    const { doc, log, queryClient } = await open(db, fakeLocks(), net);
+    await doc.send([
+      { type: "board.create", payload: { id: "bd_new", name: "Quay" } },
+    ]);
+    // Its page opens it offline, with no read of the server, which has none
+    // of it, and the nodes made on it show.
+    await expect(doc.load("board:bd_new")).resolves.toBeUndefined();
+    expect(lists.nodes).toBe(0);
+    await doc.send([
+      {
+        type: "node.create",
+        payload: {
+          board_id: "bd_new",
+          id: "nd_new",
+          type: "branch",
+          position: { x: 0, y: 0 },
+        },
+      },
+    ]);
+    expect(doc.store.getState().view.nodes.get("nd_new")?.board_id).toBe(
+      "bd_new",
+    );
+    // Online, a reading anew of the project while the queue is held still,
+    // as while the page has the device's session without its CSRF token,
+    // keeps it, as the server has none of it yet, and so does a page that
+    // reads it anew.
+    const kept: SignedInBody = { ...testSession, csrf_token: "" };
+    queryClient.setQueryData(sessionQuery.queryKey, kept);
+    net.set(true);
+    await doc.refresh();
+    expect(lists.nodes).toBeGreaterThan(0);
+    await doc.refresh("board:bd_new");
+    expect(doc.hasRead("board:bd_new")).toBe(true);
+    expect(doc.store.getState().view.nodes.has("nd_new")).toBe(true);
+    expect(batches).toEqual([]);
+    expect(log.entries()).toEqual([]);
+    queryClient.setQueryData(sessionQuery.queryKey, testSession);
+    await until(doc, (s) => s.queued === 0 && s.sending === 0);
+    expect(batches).toHaveLength(2);
+    expect(doc.doc.nodes.get("nd_new")?.board_id).toBe("bd_new");
+    expect(doc.hasRead("board:bd_new")).toBe(true);
     await db.close();
   });
 });

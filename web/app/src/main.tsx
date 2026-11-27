@@ -117,13 +117,16 @@ const reloadWait = 10_000;
 
 // The app's service worker, which the build has, and the browser's offer
 // to install the app (PRD FR-OFF-01). Its reload for a new version waits a
-// while for the batches that the page is sending, and for the saves of its
-// forms, as of a project's settings.
+// while for the batches that the page is sending, for the writes of the
+// device's queue that the documents dropped make until they let go of it,
+// as of a try under way as another account signed in (FR-OFF-03), and for
+// the saves of its forms, as of a project's settings.
 const pwa = startShell(window, {
   register: import.meta.env.PROD,
   beforeReload: async () => {
     await Promise.all([
       documents.whenSent(reloadWait),
+      documents.whenLetGo(reloadWait),
       whenSaved(queryClient, reloadWait),
     ]);
   },

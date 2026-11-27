@@ -1877,6 +1877,7 @@
   "sync.batch.queued": "On this device, waiting for the server.",
   "sync.batch.queued_refused": "On this device. The server refused it when it was last sent ({reason}), so it is sent again later.",
   "sync.batch.queued_sent": "On this device. It was sent once and no answer came, so the server may have it already; it is sent again as it was.",
+  "sync.batch.queued_sent_refused": "On this device. The server refused it when it was last sent ({reason}), but may have it already, so it is sent again later as it was.",
   "sync.batch.review": "Refused by the server: {reason}",
   "sync.batch.sending": "Being sent.",
   "sync.batch.status": "the answer had status {status}",

@@ -59,6 +59,7 @@ import {
   signedOutBy,
 } from "../api";
 import { csrfHeaders } from "../auth/session";
+import { retryAfter } from "../authoring/importUpload";
 import { commentsKey } from "../comments/queries";
 import { dependenciesKey } from "../dependencies/queries";
 import type { ErrorLog } from "../errors/log";
@@ -327,21 +328,16 @@ function proxyFailure(error: unknown): boolean {
 const retryAfterMax = 300_000;
 
 /**
- * Returns how long, in milliseconds, the Retry-After of answer, a refusal
- * of too many requests (429), has the page wait before it asks again, at
- * most retryAfterMax, or 0 where it gives none.
+ * Returns how long, in milliseconds, the Retry-After of answer, as of a
+ * refusal of too many requests (429), or a server that is not ready to
+ * serve yet (503), has the page wait before it asks again, in seconds or
+ * as a date, at most retryAfterMax, or 0 where it gives none.
  */
 function retryAfterOf(answer: ApiError): number {
-  if (answer.status !== 429) {
-    return 0;
-  }
-  const seconds = Number.parseInt(
-    answer.response.headers.get("Retry-After") ?? "",
-    10,
+  return Math.min(
+    retryAfter(answer.response.headers.get("Retry-After")) ?? 0,
+    retryAfterMax,
   );
-  return Number.isFinite(seconds) && seconds > 0
-    ? Math.min(seconds * 1000, retryAfterMax)
-    : 0;
 }
 
 /**
@@ -1857,6 +1853,15 @@ export class ProjectDocument {
         if (this.copied && this.confirmed.parts.has(part)) {
           return;
         }
+        // A board that the server does not have yet, as one that a batch
+        // made offline creates, has no content as of what the document
+        // holds, which the batches on top give it: the page shows it with
+        // no read, which would fail, offline, or find none.
+        if (this.createdUnanswered(part)) {
+          this.confirmed = withParts(this.confirmed, [part], []);
+          this.show();
+          return;
+        }
         const since = this.confirmed.seq;
         watcher.since = since;
         generation = this.generation;
@@ -2038,6 +2043,30 @@ export class ProjectDocument {
   /** Reports whether the document holds part, read or being read. */
   holds(part: Part): boolean {
     return this.loads.has(part);
+  }
+
+  /**
+   * Reports whether part is the content of a board that the document does
+   * not hold, which a batch of the page's creates that the server has yet
+   * to answer, as one that the device's queue keeps: as of what the server
+   * confirmed, it has none, and a read of it, which the server answers as
+   * of a board that it has not, is none either (load, reload, rereadOnce).
+   */
+  private createdUnanswered(part: Part): boolean {
+    if (!part.startsWith("board:")) {
+      return false;
+    }
+    const id = part.slice("board:".length);
+    return (
+      !this.confirmed.boards.has(id) &&
+      this.entries.some(
+        (e) =>
+          e.answer === undefined &&
+          e.commands.some(
+            (c) => c.type === "board.create" && canonical(c.payload.id) === id,
+          ),
+      )
+    );
   }
 
   /**
@@ -2828,9 +2857,16 @@ export class ProjectDocument {
               lists.set(part, await readPart(this.projectId, part));
             } catch (error) {
               if (part.startsWith("board:") && notFoundBy(error)) {
-                // The board went to the trash, by an operation that the
-                // document has yet to apply, which takes its part out.
-                this.loads.delete(part);
+                // A board that a batch of the page's creates, which the
+                // server has yet to answer, has no content there yet, and
+                // is held with none (createdUnanswered); another went to
+                // the trash, by an operation that the document has yet to
+                // apply, which takes its part out.
+                if (this.createdUnanswered(part)) {
+                  lists.set(part, []);
+                } else {
+                  this.loads.delete(part);
+                }
                 return;
               }
               throw error;
@@ -3016,7 +3052,11 @@ export class ProjectDocument {
         this.show();
       }
     } catch (error) {
-      this.readFailed(error, generation);
+      // A board that the server has none of yet, as one that a batch made
+      // offline creates, has none of its content to read (createdUnanswered).
+      if (!(notFoundBy(error) && this.createdUnanswered(part))) {
+        this.readFailed(error, generation);
+      }
     } finally {
       this.watchers.delete(watcher);
     }
@@ -4393,8 +4433,9 @@ export class ProjectDocument {
    * for when it was asked, which reason says (retryReason), the longer the
    * more tries in a row it did, exponentially, with full jitter, as the
    * channel's socket does (backoff), but no sooner than after atLeast
-   * milliseconds, as a refusal of too many requests asks (Retry-After), or
-   * at once once the browser is online again, or the channel live.
+   * milliseconds, as an answer's Retry-After asks, of too many requests, or
+   * of a server that is not ready yet, or at once once the browser is
+   * online again, or the channel live.
    */
   private tryAgainLater(reason: "unanswered" | "refused", atLeast = 0): void {
     if (this.disposed) {
@@ -4746,11 +4787,12 @@ export class ProjectDocument {
    * queued once it is written, or, where the device refuses, its refusal. A
    * batch of the queue refused for when or by whom it was sent, as a
    * session that ended (401), a role that does not allow it (403), a
-   * request of too many (429), no sooner than it asks (Retry-After), an
-   * archived project, or a failure of the server's own, waits too, and is
-   * tried again later, as is one that met a fault of the page's own, which
-   * the error console records; one refused for what it does, as for what
-   * changed since, needs review, with every batch after it (plan item 92).
+   * request of too many (429), an archived project, or a failure of the
+   * server's own, waits too, and is tried again later, no sooner than the
+   * answer asks (Retry-After), as is one that met a fault of the page's
+   * own, which the error console records; one refused for what it does, as
+   * for what changed since, needs review, with every batch after it (plan
+   * item 92).
    * One that the queue does not keep yet, refused, or that met a fault of
    * the page's own, is refused to its caller, as it would be without a
    * queue, and so is one of a document dropped as the page signed out,
@@ -4828,7 +4870,12 @@ export class ProjectDocument {
         entry.dirty = true;
         this.persistLater();
       }
-      this.tryAgainLater("unanswered");
+      // No sooner than a proxy's page asks, as one that tells when the
+      // server will be back (Retry-After).
+      this.tryAgainLater(
+        "unanswered",
+        answer === undefined ? 0 : retryAfterOf(answer),
+      );
       this.queueChanged();
       return true;
     }
@@ -4872,8 +4919,9 @@ export class ProjectDocument {
         this.options.checkSession?.();
       }
       // A page that a proxy answers for the server, as 502 while it
-      // restarts, does not reach it; a refusal of too many requests is
-      // tried again no sooner than it asks (Retry-After).
+      // restarts, does not reach it; an answer that says when to ask again,
+      // as a refusal of too many requests, or the server's while it is not
+      // ready yet (not_ready), is tried again no sooner (Retry-After).
       this.tryAgainLater(
         proxyFailure(answer) ? "unanswered" : "refused",
         retryAfterOf(answer),

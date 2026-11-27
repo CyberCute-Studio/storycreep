@@ -154,8 +154,10 @@ export function SignOutButton({
     }
   };
   // Signing out anyway takes off the device the changes that the dialog
-  // named, or any, where it could not read them, and asks anew where it
-  // keeps one that it did not name, as one that it reads now.
+  // named, or, where it could not read them, those that it reads now,
+  // which are none where it finds none, as a change kept as the page signs
+  // out stays, or any, where it still cannot, and asks anew where it keeps
+  // one that it did not name, as one that it reads now.
   const confirm = async (named: readonly QueueRecord[] | undefined) => {
     const records = await read();
     const known = new Set((named ?? []).map((r) => `${r.project_id}/${r.id}`));
@@ -163,7 +165,7 @@ export function SignOutButton({
       setAsked(records);
       return;
     }
-    await end(named);
+    await end(named ?? records);
   };
   const named = Array.isArray(asked) ? asked : undefined;
   const count = named?.length ?? 0;

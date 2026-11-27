@@ -316,7 +316,9 @@ export class Documents {
    * Resolves once every document dropped has let go of the device's queue,
    * after which it writes nothing there (ProjectDocument.lettingGo), as one
    * whose try under way was answered since, or once wait milliseconds have
-   * passed, as of a try that no answer comes to, so that a test closes the
+   * passed, as of a try that no answer comes to, so that a reload for a new
+   * version of the app does not cut off a write that keeps a change, as
+   * whenSent waits for those of the documents held, and a test closes the
    * device's database only once no write that would open it again comes.
    */
   async whenLetGo(wait: number): Promise<void> {
