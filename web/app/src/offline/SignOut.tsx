@@ -5,13 +5,17 @@
 // there are, of every project of the account's, and offers them as JSON,
 // for support, before it takes them off the device with the account's
 // copies, once the server has signed the page out. Signing out of a device
-// that keeps none asks nothing.
+// that keeps none asks nothing. The device's database is read as the user
+// clicks, once it has opened, as on a page that has just loaded, and again
+// as the user signs out anyway, which asks anew where the device keeps
+// changes since that the dialog did not name.
 
 import type { SignedInBody } from "@storycreep/shared/api";
 import { AlertDialog } from "radix-ui";
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { useSignOut } from "../auth/signOut";
+import { useDocuments } from "../document/react";
 import { Button } from "../ui/Button";
 import { ConfirmButtons, ConfirmFrame } from "../ui/Dialog";
 import { opensWithin, openWait, type QueueRecord } from "./db";
@@ -53,12 +57,34 @@ export function SignOutButton({
 }) {
   const { t } = useTranslation();
   const keeper = useKeeper();
+  const documents = useDocuments();
   // The account's changes that the device keeps, once the click has found
   // some, while the dialog that asks is open.
   const [asked, setAsked] = useState<QueueRecord[]>();
   const [reading, setReading] = useState(false);
-  const db = keeper?.available ? keeper.db : undefined;
   const userId = session.user_id;
+  // The device's database, unless the page knows that it keeps nothing, as
+  // over plain HTTP, or once it failed to open: one still opening is read
+  // once it has (opensWithin).
+  const dbNow = () =>
+    keeper !== undefined && keeper.store.getState().available !== false
+      ? keeper.db
+      : undefined;
+  /** Resolves to the account's changes that the device keeps, none where it cannot read them. */
+  const read = async (): Promise<QueueRecord[]> => {
+    const db = dbNow();
+    if (db === undefined) {
+      return [];
+    }
+    setReading(true);
+    try {
+      return (await opensWithin(db, openWait))
+        ? await db.queued(userId).catch(() => [])
+        : [];
+    } finally {
+      setReading(false);
+    }
+  };
   const end = async (records: readonly QueueRecord[]) => {
     try {
       await signOut.mutateAsync(session);
@@ -68,29 +94,31 @@ export function SignOutButton({
     }
     setAsked(undefined);
     if (records.length > 0) {
-      // The user decided: the changes go with the account's copies.
-      await db?.deleteQueued(userId).catch(() => undefined);
+      // The user decided: the changes go with the account's copies, and no
+      // document that held them writes one there again.
+      await (
+        documents.discardQueued(userId) ?? dbNow()?.deleteQueued(userId)
+      )?.catch(() => undefined);
     }
   };
   const click = async () => {
-    if (db === undefined) {
-      await end([]);
-      return;
-    }
-    setReading(true);
-    let records: QueueRecord[] = [];
-    try {
-      records = (await opensWithin(db, openWait))
-        ? await db.queued(userId).catch(() => [])
-        : [];
-    } finally {
-      setReading(false);
-    }
+    const records = await read();
     if (records.length === 0) {
       await end([]);
     } else {
       setAsked(records);
     }
+  };
+  // Signing out anyway takes off the device the changes that the dialog
+  // named, and asks anew where it keeps one since that it did not name.
+  const confirm = async (named: readonly QueueRecord[]) => {
+    const records = await read();
+    const known = new Set(named.map((r) => `${r.project_id}/${r.id}`));
+    if (records.some((r) => !known.has(`${r.project_id}/${r.id}`))) {
+      setAsked(records);
+      return;
+    }
+    await end(named);
   };
   const count = asked?.length ?? 0;
   return (
@@ -129,8 +157,8 @@ export function SignOutButton({
           <ConfirmButtons
             cancel={t("sign_out.pending.cancel")}
             confirm={t("sign_out.pending.confirm")}
-            pending={signOut.isPending}
-            onConfirm={() => void end(asked ?? [])}
+            pending={signOut.isPending || reading}
+            onConfirm={() => void confirm(asked ?? [])}
           />
         </ConfirmFrame>
       </AlertDialog.Root>

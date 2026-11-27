@@ -11,6 +11,7 @@ import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderApp, testSession } from "../test/app";
 import { fakeApi, startPage, testProject } from "../test/fake";
+import type { QueueRecord } from "./db";
 import { syncStateOf } from "./pending";
 
 // The sync indicator of a project's pages and its panel (PRD FR-OFF-06,
@@ -273,6 +274,41 @@ describe("signing out", () => {
           name: "Sign out and lose a change not yet sent?",
         }),
       ).getByRole("button", { name: "Sign out anyway" }),
+    );
+    await waitFor(async () =>
+      expect(await offlineDb?.queued(testSession.user_id)).toEqual([]),
+    );
+  });
+
+  it("asks anew, as the user signs out anyway, where the device keeps a change since that the dialog did not name", async () => {
+    serve();
+    const user = userEvent.setup();
+    const { doc, offlineDb } = await openProject();
+    setOnline(false);
+    await act(() => doc.send([renameQuay("Pier")]));
+    await indicator("Offline, 1 change on this device");
+    setOnline(true);
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    const asked = await screen.findByRole("alertdialog", {
+      name: "Sign out and lose a change not yet sent?",
+    });
+    // Another tab's document keeps another change meanwhile.
+    const [kept] = (await offlineDb?.queued(testSession.user_id)) ?? [];
+    await offlineDb?.saveQueued(
+      testSession.user_id,
+      testProject.id,
+      [{ ...(kept as QueueRecord), id: "another", owner: "another-tab" }],
+      [],
+    );
+    await user.click(
+      within(asked).getByRole("button", { name: "Sign out anyway" }),
+    );
+    const again = await screen.findByRole("alertdialog", {
+      name: "Sign out and lose 2 changes not yet sent?",
+    });
+    expect(await offlineDb?.queued(testSession.user_id)).toHaveLength(2);
+    await user.click(
+      within(again).getByRole("button", { name: "Sign out anyway" }),
     );
     await waitFor(async () =>
       expect(await offlineDb?.queued(testSession.user_id)).toEqual([]),

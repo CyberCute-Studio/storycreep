@@ -72,11 +72,12 @@ export interface QueuedBatch {
    */
   known?: number;
   /**
-   * Whether it was sent and no answer came, so that it may have applied:
-   * it is sent again with its commands' IDs, which the server answers as
-   * the batch that it applied, if it did (FR-OFF-04 AC6), and it is not
-   * taken out of the queue by an undo, as one that never reached the server
-   * is.
+   * Whether it was sent and no answer came, so that it may have applied,
+   * which the device records before each try, as the page may close before
+   * the answer comes, and a refusal, which applied nothing, takes back: it
+   * is sent again with its commands' IDs, which the server answers as the
+   * batch that it applied, if it did (FR-OFF-04 AC6), and it is not taken
+   * out of the queue by an undo, as one that never reached the server is.
    */
   sent: boolean;
   /** Whether its undo joins the history once it applies (SendOptions.history). */
@@ -124,6 +125,14 @@ export interface QueueStore {
     put: readonly QueuedBatch[],
     remove: readonly string[],
   ): Promise<void>;
+  /**
+   * Takes every batch of userId's off the device, as signing out does once
+   * the user decided (plan note N98), with those that the writes under way
+   * keep, after which save writes none of them there again, in this tab or
+   * another, as of an answer to one that comes after, but writes a batch
+   * made since.
+   */
+  discard(userId: string): Promise<void>;
 }
 
 /** Returns the queue's order of a batch made at time, the next after last, as a millisecond past it where the clock is not. */

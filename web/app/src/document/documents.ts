@@ -198,6 +198,15 @@ export class Documents {
     );
   }
 
+  /**
+   * Takes every change of userId's that the device's queue keeps off the
+   * device, as signing out does once the user decided (QueueStore.discard),
+   * resolving once it has; undefined where the page keeps no queue.
+   */
+  discardQueued(userId: string): Promise<void> | undefined {
+    return this.options.queue?.discard(userId);
+  }
+
   /** Drops every document. */
   clear(): void {
     for (const projectId of [...this.held.keys()]) {

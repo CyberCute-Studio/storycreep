@@ -240,6 +240,11 @@ export function RenameKeyDialog({
     previewed === key &&
     lists.every((list) => list.isSuccess && !list.isRefetching) &&
     !tooLong;
+  // A preview of the key, read before the page lost the server, that finds
+  // an expression which the rename would make too long refuses the rename
+  // offline too, as the server would once it is sent, which would hold the
+  // changes after it until the user decides.
+  const knownTooLong = previewed === key && tooLong;
   // A preview whose read failed, as once the browser's connection was lost,
   // is read again once the user asks for it again, but for one that the
   // server refused, which it would refuse again; one that it refused for
@@ -277,7 +282,7 @@ export function RenameKeyDialog({
       }
       return;
     }
-    if (!ready && reachable) {
+    if (!ready && (reachable || knownTooLong)) {
       return;
     }
     commands.mutate(
@@ -324,8 +329,11 @@ export function RenameKeyDialog({
             }}
             error={refusal?.fields.key}
           />
-          {!reachable && !unchanged && (
+          {!reachable && !unchanged && !knownTooLong && (
             <p className="text-fg-muted">{t("rename.preview_offline")}</p>
+          )}
+          {!reachable && !unchanged && knownTooLong && (
+            <p className="text-danger">{t("rename.too_long")}</p>
           )}
           {reachable && previewed === key && !unchanged && (
             <div className="space-y-4">
@@ -355,6 +363,7 @@ export function RenameKeyDialog({
               variant="primary"
               disabled={
                 commands.isPending ||
+                (!reachable && !unchanged && knownTooLong) ||
                 (reachable &&
                   previewed === key &&
                   !unchanged &&
