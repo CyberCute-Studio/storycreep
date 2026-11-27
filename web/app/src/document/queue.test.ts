@@ -1938,6 +1938,90 @@ describe("the device's queue of the page's batches", () => {
     await db.close();
   });
 
+  it("refuses a batch, as without a queue, where the device's database does not open in time, and sends a queued batch all the same, rather than wait for it, and every change made meanwhile", async () => {
+    const batches = serve(() =>
+      applied(batches.length + 1, [{ id: "bd_a", rev: batches.length + 3 }]),
+    );
+    const net = connection(false);
+    const db = new OfflineDatabase();
+    const locks = fakeLocks();
+    const { doc } = await open(
+      db,
+      locks,
+      net,
+      testSession,
+      deviceQueue(db, { secure: true, locks, wait: 10 }),
+    );
+    await doc.send([rename("bd_a", "Quay", 3)]);
+    // The database's connection is lost, and its open never settles from
+    // now on, as a browser's may not.
+    vi.spyOn(db, "open").mockReturnValue(new Promise(() => {}));
+    await expect(doc.send([rename("bd_a", "Pier", 3)])).rejects.toBeInstanceOf(
+      NetworkError,
+    );
+    net.set(true);
+    await until(doc, (s) => s.queued === 0 && s.sending === 0);
+    expect(batches.map(nameOf)).toEqual(["Quay"]);
+    // A change made since is sent, rather than kept.
+    await expect(doc.send([rename("bd_a", "Dock", 4)])).resolves.toMatchObject({
+      status: "applied",
+    });
+    expect(batches.map(nameOf)).toEqual(["Quay", "Dock"]);
+    await db.close();
+  });
+
+  it("takes none of the batches of a tab that closed once dropped as the device's database opened, which it would hold, having let go of its lock, and send none of", async () => {
+    serve(() => applied(2, [{ id: "bd_a", rev: 4 }]));
+    const net = connection(false);
+    const locks = fakeLocks();
+    const db = new OfflineDatabase();
+    const closing = await open(db, locks, net);
+    await closing.doc.send([rename("bd_a", "Quay", 3)]);
+    closing.doc.dispose();
+    await vi.waitFor(async () => expect(await locks.held()).toEqual(new Set()));
+    const [kept] = await db.queued(user, testProject.id);
+    await db.close();
+    // The next page's database is slow to open, as one that another tab
+    // blocks, and the page goes before it has.
+    const again = new OfflineDatabase();
+    const opening = again.open.bind(again);
+    let unblock = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      unblock = resolve;
+    });
+    const opens = vi.spyOn(again, "open").mockImplementation(async () => {
+      await blocked;
+      return opening();
+    });
+    const takes = vi.spyOn(again, "takeQueued");
+    const log = createErrorLog();
+    const queryClient = createQueryClient(log);
+    queryClient.setQueryData(sessionQuery.queryKey, testSession);
+    const doc = new ProjectDocument(testProject.id, {
+      queryClient,
+      log,
+      now: () => clock,
+      online: () => net.online,
+      onConnection: (listener) => net.listen(listener),
+      queue: deviceQueue(again, { secure: true, locks, wait: 60_000 }),
+    });
+    // It waits for the database to take the batches of the tab that closed.
+    await vi.waitFor(() => expect(opens).toHaveBeenCalled());
+    doc.dispose();
+    unblock();
+    await again.open();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(takes).not.toHaveBeenCalled();
+    // The project's next document takes it, as of a tab that closed.
+    expect((await again.queued(user, testProject.id))[0]?.owner).toBe(
+      kept?.owner,
+    );
+    const next = await open(again, locks, net);
+    await until(next.doc, (s) => s.queued === 1);
+    expect(shownName(next.doc)).toBe("Quay");
+    await again.close();
+  });
+
   it("tries a queued batch again later that a proxy refused with a page of its own, as for its sign-in, rather than keep it for review", async () => {
     let failures = 1;
     const batches = serve(() => {
@@ -2217,5 +2301,49 @@ describe("the device's queue of the page's batches", () => {
     expect(doc.store.getState().queued).toBe(1);
     await keeperDb.close();
     await tabDb.close();
+  });
+
+  it("waits, as signing out reads the device, for the writes of a document dropped as the project was found gone, which may keep a change still", async () => {
+    serve(() => applied(2, [{ id: "bd_a", rev: 4 }]));
+    const net = connection(false);
+    const db = new OfflineDatabase();
+    const log = createErrorLog();
+    const queryClient = createQueryClient(log);
+    queryClient.setQueryData(sessionQuery.queryKey, testSession);
+    const documents = new Documents({
+      queryClient,
+      log,
+      online: () => net.online,
+      onConnection: (listener) => net.listen(listener),
+      queue: deviceQueue(db, { secure: true, locks: fakeLocks() }),
+    });
+    onTestFinished(() => documents.close());
+    const doc = documents.get(testProject.id);
+    await doc.ready;
+    await doc.load("tree");
+    const save = db.saveQueued.bind(db);
+    let write = () => {};
+    const saves = vi
+      .spyOn(db, "saveQueued")
+      .mockImplementationOnce(async (...args) => {
+        await new Promise<void>((resolve) => {
+          write = resolve;
+        });
+        return save(...args);
+      });
+    const sending = doc.send([rename("bd_a", "Quay", 3)]);
+    await vi.waitFor(() => expect(saves).toHaveBeenCalledOnce());
+    documents.forget(testProject.id);
+    let written = false;
+    const writing = documents.whenWritten(60_000).then(() => {
+      written = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(written).toBe(false);
+    write();
+    await writing;
+    expect(await db.queued(user)).toHaveLength(1);
+    await expect(sending).resolves.toEqual({ status: "queued" });
+    await db.close();
   });
 });

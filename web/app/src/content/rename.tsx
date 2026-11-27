@@ -242,14 +242,16 @@ export function RenameKeyDialog({
     !tooLong;
   // Whether the server refused the read of list for the key, as one that
   // another of its scope has, or that is no identifier, which it would
-  // refuse again, and the rename with it; not for when it was asked, a
-  // request that took too long (408) or one of too many (429), which it may
-  // not refuse later.
+  // refuse again, and the rename with it; not for when or by whom it was
+  // asked, a session that ended or was replaced (401), credentials or a
+  // role that did not allow it (403), a request that took too long (408),
+  // or one of too many (429), which it may not refuse later, as the
+  // document's queue does not take them for a refusal of what a change does
+  // either (store.ts, refusedForWhen).
   const refusedKey = (list: (typeof lists)[number]) =>
     list.error instanceof ApiError &&
     list.error.status < 500 &&
-    list.error.status !== 408 &&
-    list.error.status !== 429;
+    ![401, 403, 408, 429].includes(list.error.status);
   // A preview of the key, read before the page lost the server, that finds
   // an expression which the rename would make too long, or that the server
   // refused, as the field says, refuses the rename offline too, as the

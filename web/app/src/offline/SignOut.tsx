@@ -120,8 +120,10 @@ export function SignOutButton({
     }
   };
   // Signs out, and takes off the device the changes that the user signed
-  // out anyway with, those named, or, of a device that could not be read,
-  // any (undefined).
+  // out anyway with, those named, by their projects and IDs, or, of a
+  // device that could not be read, any (undefined): one that a document
+  // kept as the page signed out, which the dialog did not name, stays, the
+  // account's, as one kept after.
   const end = async (records: readonly QueueRecord[] | undefined) => {
     setFailure(undefined);
     try {
@@ -137,7 +139,8 @@ export function SignOutButton({
       // The user decided: the changes go with the account's copies, and no
       // document that held them writes one there again.
       await (
-        documents.discardQueued(userId) ?? dbNow()?.deleteQueued(userId)
+        documents.discardQueued(userId, records) ??
+        dbNow()?.deleteQueued(userId, records)
       )?.catch(() => undefined);
     }
   };

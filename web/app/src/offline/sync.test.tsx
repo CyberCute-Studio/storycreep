@@ -58,9 +58,13 @@ const page = <T,>(items: T[]) => ({ items, next_cursor: null });
 /**
  * Serves the test project, of one board, while the browser has a
  * connection, and answers each batch once release is called, or with what
- * apply answers, which may throw, if given; returns the batches sent.
+ * apply answers, which may throw, if given, and a sign-out once what
+ * signOut returns resolves, if given; returns the batches sent.
  */
-function serve(apply?: (commands: CommandBody[]) => unknown) {
+function serve(
+  apply?: (commands: CommandBody[]) => unknown,
+  signOut?: () => Promise<void>,
+) {
   const batches: CommandBody[][] = [];
   let release = () => {};
   let held = new Promise<void>((resolve) => {
@@ -81,6 +85,7 @@ function serve(apply?: (commands: CommandBody[]) => unknown) {
       case "listComponents":
         return page([]);
       case "logout":
+        return signOut?.();
       case "revokeSession":
         return undefined;
       case "listSessions":
@@ -555,6 +560,45 @@ describe("signing out", () => {
     );
     await waitFor(async () =>
       expect(await offlineDb?.queued(testSession.user_id)).toEqual([]),
+    );
+  });
+
+  it("takes off the device only the changes that the dialog named as the user signs out anyway, leaving one kept as the page signed out", async () => {
+    let signingOut = false;
+    let signedOut = () => {};
+    serve(undefined, () => {
+      signingOut = true;
+      return new Promise<void>((resolve) => {
+        signedOut = resolve;
+      });
+    });
+    const user = userEvent.setup();
+    const { doc, offlineDb } = await openProject();
+    setOnline(false);
+    await act(() => doc.send([renameQuay("Pier")]));
+    await indicator("Offline, 1 change on this device");
+    setOnline(true);
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    const asked = await screen.findByRole("alertdialog", {
+      name: "Sign out and lose a change not yet sent?",
+    });
+    await user.click(
+      within(asked).getByRole("button", { name: "Sign out anyway" }),
+    );
+    await waitFor(() => expect(signingOut).toBe(true));
+    // Another tab's document keeps another change as the page signs out.
+    const [kept] = (await offlineDb?.queued(testSession.user_id)) ?? [];
+    await offlineDb?.saveQueued(
+      testSession.user_id,
+      testProject.id,
+      [{ ...(kept as QueueRecord), id: "another", owner: "another-tab" }],
+      [],
+    );
+    signedOut();
+    await waitFor(async () =>
+      expect(
+        (await offlineDb?.queued(testSession.user_id))?.map((r) => r.id),
+      ).toEqual(["another"]),
     );
   });
 

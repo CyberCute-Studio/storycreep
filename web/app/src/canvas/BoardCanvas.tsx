@@ -1785,6 +1785,21 @@ function BoardCanvasOf({
   // offered, and the toolbar says why (PRD FR-OFF-03 AC3, plan note N98).
   const waits = useServerCopyWaits(doc);
   const reachable = waits === undefined;
+  // Why, which the toolbar says, and the paste's dialog too, which pastes
+  // nothing meanwhile, as once the browser lost its connection after the
+  // dialog opened.
+  const waitsNote =
+    waits === undefined
+      ? undefined
+      : waits === "offline"
+        ? t("canvas.clipboard_offline")
+        : waits === "review"
+          ? t("canvas.clipboard_waits_for_review")
+          : t("canvas.clipboard_waits_for_queue");
+  const reachableNow = useRef(reachable);
+  useLayoutEffect(() => {
+    reachableNow.current = reachable;
+  });
   const clipboardReady =
     content === "ready" && copied !== undefined && reachable;
   const pastable = editable && clipboardReady && !actions.busy;
@@ -1817,7 +1832,9 @@ function BoardCanvasOf({
         opener: opener ?? (active instanceof HTMLElement ? active : null),
         asked,
       });
-    } else {
+    } else if (reachableNow.current) {
+      // Nothing is pasted where the page lost the server as the report was
+      // read, as the toolbar says (waitsNote).
       void actions.paste(clipboard, point, undefined, asked);
     }
   };
@@ -2258,14 +2275,8 @@ function BoardCanvasOf({
               </LastingButton>
             </>
           )}
-          {waits !== undefined && (
-            <p className="self-center text-fg-muted">
-              {waits === "offline"
-                ? t("canvas.clipboard_offline")
-                : waits === "review"
-                  ? t("canvas.clipboard_waits_for_review")
-                  : t("canvas.clipboard_waits_for_queue")}
-            </p>
+          {waitsNote !== undefined && (
+            <p className="self-center text-fg-muted">{waitsNote}</p>
           )}
         </fieldset>
         {editable && (
@@ -2812,7 +2823,13 @@ function BoardCanvasOf({
             <PasteDialog
               report={pasting.report}
               opener={pasting.opener}
+              unavailable={waitsNote}
               onPaste={(create) => {
+                // Not while the page cannot reach the server, as the dialog
+                // says, which it lost after the dialog opened (waitsNote).
+                if (!reachableNow.current) {
+                  return;
+                }
                 setPasting(undefined);
                 if (editableNow.current) {
                   void actions.paste(

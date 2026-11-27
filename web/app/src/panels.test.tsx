@@ -1225,8 +1225,55 @@ describe("the variables", () => {
     try {
       const rename = within(dialog).getByRole("button", { name: "Rename" });
       expect(rename).toHaveProperty("disabled", true);
+      // Which the dialog says still.
+      expect(
+        within(dialog).getByText(
+          "Another variable of its scope has this key. Choose another, or another scope.",
+        ),
+      ).toBeDefined();
       await user.type(key, "{Enter}");
       expect(batches(calls)).toEqual([]);
+    } finally {
+      vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+      act(() => {
+        window.dispatchEvent(new Event("online"));
+      });
+    }
+  });
+
+  it("renames offline to a key whose preview the server refused for by whom it was asked, rather than for the key, which it may not refuse later", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation, input) => {
+      if (operation === "previewVariableRename") {
+        throw refused(403, { code: "forbidden" });
+      }
+      return expected(contentPages(operation, input, content), operation);
+    });
+    renderApp(`/projects/${testProject.id}/variables?variable=var_rep`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "rep" });
+    await user.click(within(panel).getByRole("button", { name: "Rename…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename rep" });
+    const key = within(dialog).getByLabelText("New key");
+    await user.clear(key);
+    await user.type(key, "trust");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Show what changes" }),
+    );
+    expect(await within(dialog).findByText("forbidden")).toBeDefined();
+    // Online, the preview is read again once the user asks.
+    expect(
+      within(dialog).getByRole("button", { name: "Show what changes" }),
+    ).toHaveProperty("disabled", false);
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    try {
+      expect(
+        within(dialog).getByRole("button", { name: "Rename" }),
+      ).toHaveProperty("disabled", false);
     } finally {
       vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
       act(() => {

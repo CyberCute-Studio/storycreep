@@ -1037,6 +1037,8 @@ export class ProjectDocument {
    * any (persist).
    */
   private letGo = false;
+  /** Settles once the document, dropped, has let go of its lock (letGo, lettingGo). */
+  private released: Promise<void> | undefined;
   /** What waits for the document to have no try of a batch, nor a write of the queue, under way, each until it reports so (whenIdle). */
   private idleWaits: (() => boolean)[] = [];
   /** The taking of the project's batches that the device's queue keeps, once begun (adoptQueue). */
@@ -1547,7 +1549,10 @@ export class ProjectDocument {
       return;
     }
     // A batch is taken as the document's once it holds its lock, so that
-    // another tab's takes none of what it takes.
+    // another tab's takes none of what it takes; and none once it has been
+    // dropped, as while the database opened, which would take them as one
+    // that has let go of its lock, and send none, leaving them to the
+    // project's next document (dispose).
     if ((await this.ownerLock) === undefined || this.disposed) {
       return;
     }
@@ -1557,7 +1562,7 @@ export class ProjectDocument {
         this.projectId,
         this.owner,
         (batches) => this.adoptMore(batches),
-        () => this.takes,
+        () => this.takes && !this.disposed,
       )
       .catch(() => undefined);
     if (taken === undefined) {
@@ -1724,6 +1729,15 @@ export class ProjectDocument {
   }
 
   /**
+   * Resolves once the document, dropped, has let go of its lock, after which
+   * it writes nothing of the device's queue (letGo), or at once where it
+   * was never dropped.
+   */
+  lettingGo(): Promise<void> {
+    return this.released ?? Promise.resolve();
+  }
+
+  /**
    * Stops following the project, and keeping the history in the tab's
    * storage, so that the answer to a batch that comes after, as once the
    * page has signed out, does not write it there again, over what signing
@@ -1746,7 +1760,7 @@ export class ProjectDocument {
     // tab's document takes the batches as they are written, rather than
     // send one while this one does, and none is written after, which no
     // document would take before the project's next.
-    void this.whenIdle()
+    this.released = this.whenIdle()
       .then(() => this.ownerLock)
       .then((release) => {
         this.letGo = true;

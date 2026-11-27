@@ -19,7 +19,7 @@ import type {
 import { Dialog } from "radix-ui";
 import { useTranslation } from "react-i18next";
 import { typeName } from "../content/ValueField";
-import { Button } from "../ui/Button";
+import { Button, LastingButton } from "../ui/Button";
 import { closesBy, DialogFrame, focusBackTo, type Opener } from "../ui/Dialog";
 import { creatable, typesCreated } from "./clipboard";
 
@@ -82,17 +82,22 @@ function Listed({ heading, items }: { heading: string; items: string[] }) {
  * The dialog of a paste whose report lists what the board's project lacks:
  * onPaste pastes, creating what the report lists first where create says
  * so, and onCancel closes it; the focus goes back to opener as it closes.
+ * Where unavailable gives why the paste cannot be made now, as once the
+ * page lost the server after the dialog opened, the dialog says it, and
+ * offers no paste until it can.
  */
 export function PasteDialog({
   report,
   onPaste,
   onCancel,
   opener,
+  unavailable,
 }: {
   report: ClipboardReport;
   onPaste: (create: boolean) => void;
   onCancel: () => void;
   opener: Opener;
+  unavailable?: string;
 }) {
   const { t } = useTranslation();
   const creates = creatable(report);
@@ -144,16 +149,28 @@ export function PasteDialog({
           </ul>
         )}
         {creates && <p className="text-fg-muted">{t("paste.without_hint")}</p>}
+        {unavailable !== undefined && (
+          <p className="text-fg-muted">{unavailable}</p>
+        )}
         <div className="flex flex-wrap justify-end gap-2">
           <Dialog.Close asChild>
             <Button>{t("paste.cancel")}</Button>
           </Dialog.Close>
           {creates && (
-            <Button onClick={() => onPaste(false)}>{t("paste.without")}</Button>
+            <LastingButton
+              unavailable={unavailable !== undefined}
+              onClick={() => onPaste(false)}
+            >
+              {t("paste.without")}
+            </LastingButton>
           )}
-          <Button variant="primary" onClick={() => onPaste(creates)}>
+          <LastingButton
+            variant="primary"
+            unavailable={unavailable !== undefined}
+            onClick={() => onPaste(creates)}
+          >
             {creates ? t("paste.create") : t("paste.paste")}
-          </Button>
+          </LastingButton>
         </div>
       </DialogFrame>
     </Dialog.Root>

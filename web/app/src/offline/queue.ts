@@ -12,10 +12,13 @@
 // without Web Locks, none of those that the app supports, keeps no queue,
 // as it could not tell an open tab's batches from a closed one's, and two
 // tabs that sent one batch, each with IDs of its own once a refusal had
-// them sent again, would apply it twice. Signing out takes the account's batches
-// off the device (discard), after which no tab writes one of them there
-// again, as of an answer to it that comes after, since a batch written
-// before is written again only where the device still keeps it (save).
+// them sent again, would apply it twice. Signing out takes the account's
+// batches that it named off the device (discard), after which no tab writes
+// one of them there again, as of an answer to it that comes after, since a
+// batch written before is written again only where the device still keeps
+// it (save). A database that does not open in time refuses a write, as one
+// that refuses it for its quota does, rather than hold the document's writes,
+// and the tries that wait for them, for as long as the page is open.
 
 import type { QueuedBatch, QueueStore } from "../document/queue";
 import { type OfflineDatabase, opensWithin, openWait } from "./db";
@@ -279,7 +282,17 @@ export function deviceQueue(
       return { batches: [], stop, again };
     },
     save: async (userId, projectId, put, remove, created) => {
-      const write = db.saveQueued(userId, projectId, put, remove, created);
+      // A database whose open does not settle within wait, as a browser's
+      // may never, refuses the write, as a device that refuses it does
+      // (ProjectDocument.persist): a batch made meanwhile is refused to its
+      // caller, as without a queue, and one of the queue's that a try
+      // records as sent is sent all the same.
+      const write = opensWithin(db, wait).then((opened) => {
+        if (!opened) {
+          throw new Error("The device's database did not open in time.");
+        }
+        return db.saveQueued(userId, projectId, put, remove, created);
+      });
       writes.add(write);
       try {
         await write;
@@ -293,11 +306,12 @@ export function deviceQueue(
         broadcast?.post({ user: userId, project: projectId, owner });
       }
     },
-    discard: async (userId) => {
-      // The writes under way, which may keep batches, are taken too; one
-      // that comes after writes none of them there again (save).
+    discard: async (userId, only) => {
+      // The writes under way, which may write the batches again, as a try
+      // that records one as sent, are done first; one that comes after
+      // writes none of them there again (save).
       await Promise.allSettled([...writes]);
-      await db.deleteQueued(userId);
+      await db.deleteQueued(userId, only);
     },
   };
 }

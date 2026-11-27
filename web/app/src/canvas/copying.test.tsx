@@ -1125,4 +1125,48 @@ describe("the canvas's clipboard offline", () => {
     expect(bodiesOf(calls, "resolveClipboard")).toEqual([]);
     expect(batches(calls)).toHaveLength(1);
   });
+
+  it("pastes nothing from the report's dialog once the browser has lost its connection, which the dialog says, and pastes once it is back", async () => {
+    const { nodes, connections } = quayAndDock();
+    const report: ClipboardReport = {
+      ...nothing,
+      variables: [
+        { id: "var_trust", key: "trust", type: "int", scope: "global" },
+      ],
+    };
+    const calls = clipboardPage({ nodes, connections, report: () => report });
+    const { router } = await openHarbour("?node=nd_quay");
+    await userEvent.click(clipboardButton("Copy"));
+    await screen.findByText("1 node on the clipboard");
+    await openLighthouse(router);
+    await userEvent.click(clipboardButton("Paste"));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Some of what the nodes name is missing here",
+    });
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    try {
+      expect(
+        within(dialog).getByText(
+          "Copy, cut, paste, and duplicate need a connection.",
+        ),
+      ).toBeDefined();
+      await userEvent.click(
+        within(dialog).getByRole("button", { name: "Create and paste" }),
+      );
+      expect(batches(calls)).toEqual([]);
+      expect(screen.getByRole("dialog")).toBe(dialog);
+    } finally {
+      vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+      act(() => {
+        window.dispatchEvent(new Event("online"));
+      });
+    }
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Create and paste" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+  });
 });

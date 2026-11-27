@@ -60,6 +60,8 @@ export class Documents {
   readonly clipboard: ClipboardStore = createClipboard();
   private readonly options: DocumentsOptions;
   private readonly held = new Map<string, Held>();
+  /** The documents dropped that have yet to let go of the device's queue, which may write to it still (drop). */
+  private readonly dropped = new Set<ProjectDocument>();
   private readonly stop: () => void;
 
   constructor(options: DocumentsOptions) {
@@ -219,9 +221,7 @@ export class Documents {
         this.unshown(projectId, held);
         return;
       }
-      clearTimeout(held.asked);
-      this.held.delete(projectId);
-      held.doc.dispose();
+      this.drop(projectId, held);
     }, keptUnshown);
   }
 
@@ -229,11 +229,23 @@ export class Documents {
   forget(projectId: string): void {
     const held = this.held.get(projectId);
     if (held !== undefined) {
-      clearTimeout(held.timer);
-      clearTimeout(held.asked);
-      this.held.delete(projectId);
-      held.doc.dispose();
+      this.drop(projectId, held);
     }
+  }
+
+  /**
+   * Drops held, the document of projectId, which writes what it was keeping
+   * of the device's queue still, until it lets go of it, as signing out
+   * waits for (whenWritten).
+   */
+  private drop(projectId: string, held: Held): void {
+    clearTimeout(held.timer);
+    clearTimeout(held.asked);
+    this.held.delete(projectId);
+    held.doc.dispose();
+    const doc = held.doc;
+    this.dropped.add(doc);
+    void doc.lettingGo().then(() => this.dropped.delete(doc));
   }
 
   /**
@@ -255,26 +267,35 @@ export class Documents {
   }
 
   /**
-   * Takes every change of userId's that the device's queue keeps off the
+   * Takes the changes of userId's of only, by their projects and IDs, or,
+   * where it is not given, every one, that the device's queue keeps off the
    * device, as signing out does once the user decided (QueueStore.discard),
    * resolving once it has; undefined where the page keeps no queue.
    */
-  discardQueued(userId: string): Promise<void> | undefined {
-    return this.options.queue?.discard(userId);
+  discardQueued(
+    userId: string,
+    only?: readonly { project_id: string; id: string }[],
+  ): Promise<void> | undefined {
+    return this.options.queue?.discard(userId, only);
   }
 
   /**
    * Resolves once every document's writes of the device's queue begun so
-   * far are done, kept or refused (ProjectDocument.queueWritten), or once
-   * wait milliseconds have passed, as of a database that another tab
-   * blocks, so that signing out, which reads the device after, names a
-   * change that a document was still keeping as the user clicked.
+   * far are done, kept or refused (ProjectDocument.queueWritten), those of
+   * the documents dropped that have yet to let go of the queue too, as of a
+   * project found gone, or once wait milliseconds have passed, as of a
+   * database that another tab blocks, so that signing out, which reads the
+   * device after, names a change that a document was still keeping as the
+   * user clicked.
    */
   async whenWritten(wait: number): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
       Promise.all(
-        [...this.held.values()].map((held) => held.doc.queueWritten()),
+        [
+          ...[...this.held.values()].map((held) => held.doc),
+          ...this.dropped,
+        ].map((doc) => doc.queueWritten()),
       ),
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, wait);

@@ -138,7 +138,8 @@ export interface QueueStore {
   /**
    * Writes put and removes the batches of the IDs of remove, of userId's
    * projectId, in one transaction, which the browser applies whole or not
-   * at all, rejecting where the device refused it, as for the quota. A
+   * at all, rejecting where the device refused it, as for the quota, or
+   * where its database did not open in time, as one may never. A
    * batch of put whose ID created does not hold, written before, is written
    * only where the device still keeps it, so that one that signing out took
    * off the device is not put back by a write that comes after (discard).
@@ -151,13 +152,18 @@ export interface QueueStore {
     created: readonly string[],
   ): Promise<void>;
   /**
-   * Takes every batch of userId's off the device, as signing out does once
-   * the user decided (plan note N98), with those that the writes under way
-   * keep, after which save writes none of them there again, in this tab or
-   * another, as of an answer to one that comes after, but writes a batch
-   * made since.
+   * Takes the batches of userId's of only, by their projects and IDs, or,
+   * where it is not given, every one, off the device, as signing out does
+   * once the user decided of those that it named, or of any, where it could
+   * not read them (plan note N98), once the writes under way are done, after
+   * which save writes none of them there again, in this tab or another, as
+   * of an answer to one that comes after, but writes a batch made since, or
+   * one that it did not name, as one kept as the page signed out.
    */
-  discard(userId: string): Promise<void>;
+  discard(
+    userId: string,
+    only?: readonly { project_id: string; id: string }[],
+  ): Promise<void>;
 }
 
 /**

@@ -865,13 +865,23 @@ export class OfflineDatabase {
   }
 
   /**
-   * Takes every batch of userId's that the device keeps for the server off
+   * Takes the batches of userId's that the device keeps for the server off
    * it, in one transaction, as once the user signs out, having been asked
-   * (plan note N98).
+   * (plan note N98): those of only, by their projects and IDs, as those
+   * that the user was asked of, where it is given, or else every one.
    */
-  async deleteQueued(userId: string): Promise<void> {
+  async deleteQueued(
+    userId: string,
+    only?: readonly Pick<QueueRecord, "project_id" | "id">[],
+  ): Promise<void> {
     const db = await this.open();
     const tx = db.transaction("queue", "readwrite");
-    await Promise.all([tx.objectStore("queue").delete(under(userId)), tx.done]);
+    const store = tx.objectStore("queue");
+    await Promise.all([
+      ...(only === undefined
+        ? [store.delete(under(userId))]
+        : only.map((r) => store.delete([userId, r.project_id, r.id]))),
+      tx.done,
+    ]);
   }
 }
