@@ -19,7 +19,7 @@ import {
 } from "vitest";
 import { createQueryClient, sessionQuery } from "../api";
 import { createErrorLog } from "../errors/log";
-import { OfflineDatabase } from "../offline/db";
+import { OfflineDatabase, type QueueRecord } from "../offline/db";
 import {
   deviceQueue,
   type QueueBroadcast,
@@ -30,10 +30,11 @@ import { testSession } from "../test/app";
 import { fakeApi, refused, testProject } from "../test/fake";
 import { fakeLocks } from "../test/locks";
 import { fakeRealtime } from "../test/realtime";
+import { Documents } from "./documents";
 import type { QueueStore } from "./queue";
 import { whenSent } from "./sent";
 import type { Command, DocumentOptions } from "./store";
-import { ProjectDocument } from "./store";
+import { ConflictError, ProjectDocument } from "./store";
 
 // The device's queue of the page's batches that the server has yet to
 // answer (PRD FR-OFF-03, plan note N98), over the IndexedDB of
@@ -1747,5 +1748,187 @@ describe("the device's queue of the page's batches", () => {
     expect(deviceQueue(new OfflineDatabase(), { secure: true })).toBe(
       undefined,
     );
+  });
+
+  it("leaves another tab's batches, as it closes, to the page that opens the project next, rather than to the keeper's document, which no page shows, until a page shows that", async () => {
+    serve(() => applied(2, [{ id: "bd_a", rev: 4 }]));
+    const net = connection(false);
+    const locks = fakeLocks();
+    const hub = fakeBroadcast();
+    const dbs: OfflineDatabase[] = [];
+    const tab = async () => {
+      const db = new OfflineDatabase();
+      dbs.push(db);
+      const opened = await open(
+        db,
+        locks,
+        net,
+        testSession,
+        deviceQueue(db, { secure: true, locks, broadcast: hub.tab() }),
+      );
+      return opened.doc;
+    };
+    // The tab that keeps the copies holds the project's document, which no
+    // page of it shows.
+    const log = createErrorLog();
+    const queryClient = createQueryClient(log);
+    queryClient.setQueryData(sessionQuery.queryKey, testSession);
+    const keeperDb = new OfflineDatabase();
+    dbs.push(keeperDb);
+    const documents = new Documents({
+      queryClient,
+      log,
+      online: () => net.online,
+      onConnection: (listener) => net.listen(listener),
+      queue: deviceQueue(keeperDb, {
+        secure: true,
+        locks,
+        broadcast: hub.tab(),
+      }),
+    });
+    onTestFinished(() => documents.close());
+    const kept = documents.get(testProject.id, true);
+    documents.acquire(kept, true);
+    await kept.ready;
+    await kept.load("tree");
+    const editing = await tab();
+    await editing.send([rename("bd_a", "Quay", 3)]);
+    // The tab that the user edits in reloads.
+    editing.dispose();
+    await vi.waitFor(async () => {
+      const held = await locks.held();
+      expect(
+        [...held].filter((name) => name.startsWith("storycreep-queue:")),
+      ).toHaveLength(1);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const next = await tab();
+    await until(next, (s) => s.queued === 1);
+    expect(shownName(next)).toBe("Quay");
+    expect(kept.store.getState().queued).toBe(0);
+    // A page of the keeper's tab shows the project too, whose document takes
+    // them once the tab that holds them closes.
+    documents.get(testProject.id);
+    documents.acquire(kept);
+    next.dispose();
+    await until(kept, (s) => s.queued === 1);
+    expect(shownName(kept)).toBe("Quay");
+    for (const db of dbs) {
+      await db.close();
+    }
+  });
+
+  it("refuses a batch that the device refused to keep as no answer came to it, and that was on its way again, as without a queue, rather than keep it for review", async () => {
+    let conflict = () => {};
+    const batches = serve((commands) => {
+      if (batches.length === 1) {
+        throw new NetworkError(new TypeError("Failed to fetch"));
+      }
+      return new Promise<never>((_, reject) => {
+        conflict = () =>
+          reject(
+            refused(409, {
+              code: "revision_conflict",
+              details: {
+                conflicts: [
+                  {
+                    command: 0,
+                    command_id: commands[0]?.command_id,
+                    type: "board.rename",
+                    id: "bd_a",
+                    expected_rev: 3,
+                    exists: true,
+                    current_rev: 4,
+                  },
+                ],
+                states: { bd_a: board("bd_a", "Pier", 4) },
+              },
+            }),
+          );
+      });
+    });
+    const db = new OfflineDatabase();
+    const { doc } = await open(db, fakeLocks(), connection(true));
+    let refuse = () => {};
+    const saves = vi.spyOn(db, "saveQueued").mockImplementationOnce(
+      () =>
+        new Promise<void>((_, reject) => {
+          refuse = () =>
+            reject(new DOMException("Full.", "QuotaExceededError"));
+        }),
+    );
+    const sending = doc.send([rename("bd_a", "Quay", 3)]);
+    await vi.waitFor(() => expect(saves).toHaveBeenCalledOnce());
+    // Tried again as the device writes it, and refused for what it does
+    // once the device has refused to keep it.
+    await vi.waitFor(() => expect(batches).toHaveLength(2));
+    refuse();
+    await doc.queueWritten();
+    conflict();
+    await expect(sending).rejects.toBeInstanceOf(ConflictError);
+    expect(doc.store.getState()).toMatchObject({ queued: 0, review: 0 });
+    await doc.queueWritten();
+    expect(await db.queued(user, testProject.id)).toEqual([]);
+    await db.close();
+  });
+
+  it("sends a queued batch once the device has recorded that it is sent, and tries again later where the device refused to", async () => {
+    const db = new OfflineDatabase();
+    const recorded: (boolean | undefined)[] = [];
+    const batches = serve(async () => {
+      recorded.push((await db.queued(user, testProject.id))[0]?.sent);
+      return applied(2, [{ id: "bd_a", rev: 4 }]);
+    });
+    const net = connection(false);
+    const { doc } = await open(db, fakeLocks(), net);
+    await doc.send([rename("bd_a", "Quay", 3)]);
+    const saves = vi
+      .spyOn(db, "saveQueued")
+      .mockRejectedValueOnce(new DOMException("Full.", "QuotaExceededError"));
+    net.set(true);
+    await until(doc, (s) => s.queued === 0);
+    expect(saves.mock.calls.length).toBeGreaterThan(1);
+    expect(batches).toHaveLength(1);
+    expect(recorded).toEqual([true]);
+    await db.close();
+  });
+
+  it("sends a queued batch made before one that needs review, which holds only those after it", async () => {
+    const batches = serve(() => applied(2, [{ id: "bd_a", rev: 4 }]));
+    const net = connection(false);
+    const locks = fakeLocks();
+    const db = new OfflineDatabase();
+    const closed = await open(db, locks, net);
+    await closed.doc.send([rename("bd_a", "Quay", 3)]);
+    await closed.doc.send([rename("bd_a", "Pier", 3)]);
+    closed.doc.dispose();
+    await vi.waitFor(async () => expect(await locks.held()).toEqual(new Set()));
+    // The later one was refused for what it does, as in a tab that closed.
+    const [first, later] = await db.queued(user, testProject.id);
+    await db.saveQueued(
+      user,
+      testProject.id,
+      [
+        {
+          ...(later as QueueRecord),
+          state: "review",
+          refusal: { status: 422, at: time },
+        },
+      ],
+      [],
+    );
+    net.set(true);
+    const db2 = new OfflineDatabase();
+    const { doc } = await open(db2, locks, net);
+    await until(doc, (s) => s.queued === 1);
+    expect(batches).toHaveLength(1);
+    expect(nameOf(batches[0] ?? [])).toBe("Quay");
+    expect(doc.store.getState()).toMatchObject({ queued: 1, review: 1 });
+    expect((await db.queued(user, testProject.id)).map((b) => b.id)).toEqual([
+      later?.id,
+    ]);
+    expect(first?.id).not.toBe(later?.id);
+    await db.close();
+    await db2.close();
   });
 });

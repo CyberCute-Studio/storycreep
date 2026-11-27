@@ -45,8 +45,13 @@ export interface DocumentsOptions {
 
 interface Held {
   doc: ProjectDocument;
+  /** How many hold it: the pages that show it, and the keeper of the copies (acquire). */
   shown: number;
+  /** How many of those are pages, while which the document takes the batches of other documents of the device's queue (ProjectDocument.takeQueue). */
+  pages: number;
   timer?: ReturnType<typeof setTimeout>;
+  /** The timer after which a document that a page asked for, and none shows, takes none of those (asked). */
+  asked?: ReturnType<typeof setTimeout>;
 }
 
 /** The page's documents. */
@@ -101,9 +106,15 @@ export class Documents {
    * Returns the document of projectId, made now if the page has none, or if
    * the one that it has found the project gone, as to the trash, and no page
    * shows it, so that a page that the user opens again, as once the project
-   * is back, asks anew.
+   * is back, asks anew. Where kept says so, as of the keeper of the copies
+   * (offline/keeper.ts), it is asked for by no page, and a document made for
+   * it takes none of the batches of other documents that the device's queue
+   * keeps, as of a tab that closed, which it would hold where no page shows
+   * them, until a page asks for it (ProjectDocument.takeQueue): one that a
+   * page asks for takes them while a page shows it, and, before one does,
+   * as while a route's loader reads it, for a while (asked).
    */
-  get(projectId: string): ProjectDocument {
+  get(projectId: string, kept = false): ProjectDocument {
     let held = this.held.get(projectId);
     if (
       held !== undefined &&
@@ -115,24 +126,51 @@ export class Documents {
     }
     if (held === undefined) {
       held = {
-        doc: new ProjectDocument(projectId, this.options),
+        doc: new ProjectDocument(
+          projectId,
+          kept ? { ...this.options, takesQueue: false } : this.options,
+        ),
         shown: 0,
+        pages: 0,
       };
       this.held.set(projectId, held);
       this.unshown(projectId, held);
+    }
+    if (!kept) {
+      held.doc.takeQueue(true);
+      if (held.pages === 0) {
+        this.asked(held);
+      }
     }
     return held.doc;
   }
 
   /**
-   * Keeps doc, the document of its project that get returned, while a page
-   * of it is shown, until what it returns is called. One that the page's
-   * documents have dropped since get returned it, as with every other once
-   * the session is of another account, is not kept, and it returns
-   * undefined, so that the page asks for the one that they have now, rather
-   * than show one while another is kept.
+   * Has the document of held, which a page asked for, and none shows, take
+   * none of the batches of other documents a while after, unless a page
+   * shows it by then, as of a page whose loader read it, which the user did
+   * not open, while the keeper of the copies, or the batches that it holds
+   * (busy), keep it.
    */
-  acquire(doc: ProjectDocument): (() => void) | undefined {
+  private asked(held: Held): void {
+    clearTimeout(held.asked);
+    held.asked = setTimeout(() => {
+      if (held.pages === 0) {
+        held.doc.takeQueue(false);
+      }
+    }, keptUnshown);
+  }
+
+  /**
+   * Keeps doc, the document of its project that get returned, while a page
+   * of it is shown, or the keeper of the copies holds it, as kept says,
+   * until what it returns is called. One that the page's documents have
+   * dropped since get returned it, as with every other once the session is
+   * of another account, is not kept, and it returns undefined, so that the
+   * page asks for the one that they have now, rather than show one while
+   * another is kept.
+   */
+  acquire(doc: ProjectDocument, kept = false): (() => void) | undefined {
     const projectId = doc.projectId;
     const held = this.held.get(projectId);
     if (held?.doc !== doc) {
@@ -140,6 +178,11 @@ export class Documents {
     }
     held.shown++;
     clearTimeout(held.timer);
+    if (!kept) {
+      held.pages++;
+      clearTimeout(held.asked);
+      doc.takeQueue(true);
+    }
     let released = false;
     return () => {
       if (released || this.held.get(projectId) !== held) {
@@ -147,6 +190,12 @@ export class Documents {
       }
       released = true;
       held.shown--;
+      if (!kept) {
+        held.pages--;
+        if (held.pages === 0) {
+          held.doc.takeQueue(false);
+        }
+      }
       if (held.shown === 0) {
         this.unshown(projectId, held);
       }
@@ -170,6 +219,7 @@ export class Documents {
         this.unshown(projectId, held);
         return;
       }
+      clearTimeout(held.asked);
       this.held.delete(projectId);
       held.doc.dispose();
     }, keptUnshown);
@@ -180,6 +230,7 @@ export class Documents {
     const held = this.held.get(projectId);
     if (held !== undefined) {
       clearTimeout(held.timer);
+      clearTimeout(held.asked);
       this.held.delete(projectId);
       held.doc.dispose();
     }

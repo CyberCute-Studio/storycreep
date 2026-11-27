@@ -6,11 +6,13 @@
 // a document whose lock no tab holds, as of a tab that closed, or a browser
 // that restarted, at once, and those of an open tab's once its lock is let
 // go, as the tab closes, which it hears of from the other tabs
-// (BroadcastChannel) as they keep batches, or take them. A browser without
-// Web Locks, none of those that the app supports, keeps no queue, as it
-// could not tell an open tab's batches from a closed one's, and two tabs
-// that sent one batch, each with IDs of its own once a refusal had them
-// sent again, would apply it twice. Signing out takes the account's batches
+// (BroadcastChannel) as they keep batches, or take them; it takes them
+// while a page shows it, and not while the keeper of the copies alone holds
+// it, which would hold them where no page shows them (takes). A browser
+// without Web Locks, none of those that the app supports, keeps no queue,
+// as it could not tell an open tab's batches from a closed one's, and two
+// tabs that sent one batch, each with IDs of its own once a refusal had
+// them sent again, would apply it twice. Signing out takes the account's batches
 // off the device (discard), after which no tab writes one of them there
 // again, as of an answer to it that comes after, since a batch written
 // before is written again only where the device still keeps it (save).
@@ -147,7 +149,7 @@ export function deviceQueue(
   const writes = new Set<Promise<void>>();
   return {
     hold: (owner) => locks.hold(lockOf(owner)),
-    adopt: async (userId, projectId, owner, found) => {
+    adopt: async (userId, projectId, owner, found, takes = () => true) => {
       // A document takes batches under a lock of the project's, so that two
       // that start at once do not both take those of a tab that closed, and
       // reads which documents are open inside it, so that one that starts
@@ -169,15 +171,21 @@ export function deviceQueue(
       // the test that from resolves to allows, read inside the lock, and
       // resolves to them: none once owner's document has stopped taking
       // them, as once it was dropped, which sends none of them, and would
-      // leave them to no document.
+      // leave them to no document, nor while it takes none (takes), as one
+      // that no page shows, which leaves them to the next that does.
       const take = (from: () => Promise<(other: string) => boolean>) =>
         locks
           .run(takeLock, async () =>
-            stopped.signal.aborted
+            stopped.signal.aborted || !takes()
               ? []
               : db.takeQueued(userId, projectId, owner, await from()),
           )
           .then(tell);
+      // The owners whose documents no tab holds now.
+      const closed = async () => {
+        const held = await locks.held();
+        return (other: string) => !held.has(lockOf(other));
+      };
       // The batches of an open tab's document are taken once its lock is let
       // go, as the tab closes, or the document is dropped; and those that
       // it wrote since, if any, as the next news of it tells.
@@ -214,10 +222,7 @@ export function deviceQueue(
       // Takes those of no open tab's document, and then watches those of
       // the open tabs', resolving to the first.
       const begin = async () => {
-        const first = await take(async () => {
-          const held = await locks.held();
-          return (other) => !held.has(lockOf(other));
-        }).catch(() => [] as QueuedBatch[]);
+        const first = await take(closed).catch(() => [] as QueuedBatch[]);
         if (stopped.signal.aborted) {
           return first;
         }
@@ -233,8 +238,16 @@ export function deviceQueue(
         }
         return first;
       };
+      // Takes those that no open tab's document holds, as once owner's
+      // takes them again, which it left meanwhile, as of a tab that closed.
+      const again = async () => {
+        const more = await take(closed).catch(() => [] as QueuedBatch[]);
+        if (more.length > 0 && !stopped.signal.aborted) {
+          found(more);
+        }
+      };
       if (await opensWithin(db, wait)) {
-        return { batches: await begin(), stop };
+        return { batches: await begin(), stop, again };
       }
       // A database that does not open within wait, as one that another tab
       // blocks, leaves the document to start without them, which it is given
@@ -252,7 +265,7 @@ export function deviceQueue(
         },
         () => {},
       );
-      return { batches: [], stop };
+      return { batches: [], stop, again };
     },
     save: async (userId, projectId, put, remove, created) => {
       const write = db.saveQueued(userId, projectId, put, remove, created);

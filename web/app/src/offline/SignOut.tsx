@@ -19,9 +19,8 @@ import type { SignedInBody } from "@storycreep/shared/api";
 import { AlertDialog } from "radix-ui";
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { useSignOut } from "../auth/signOut";
 import { useDocuments } from "../document/react";
-import { Button } from "../ui/Button";
+import { Button, type ButtonProps } from "../ui/Button";
 import { ConfirmButtons, ConfirmFrame } from "../ui/Dialog";
 import { opensWithin, openWait, type QueueRecord } from "./db";
 import {
@@ -46,18 +45,31 @@ function exportedOfRecords(records: readonly QueueRecord[]): ExportedBatch[] {
 }
 
 /**
+ * What signs the page out of a session, as the mutation of useSignOut
+ * (auth/signOut.ts), or the revoking of the page's own session on the
+ * sessions page, which resolves once the page is signed out, and rejects
+ * where it is not, which its page says.
+ */
+export interface SignsOut {
+  mutateAsync: (session: SignedInBody) => Promise<unknown>;
+  isPending: boolean;
+}
+
+/**
  * The button that signs session's page out by signOut, which asks first
  * where the device keeps changes of the account's that the server has yet
  * to answer, and then takes them off the device too; children are its
- * label.
+ * label, and variant its look.
  */
 export function SignOutButton({
   signOut,
   session,
+  variant,
   children,
 }: {
-  signOut: ReturnType<typeof useSignOut>;
+  signOut: SignsOut;
   session: SignedInBody;
+  variant?: ButtonProps["variant"];
   children: ReactNode;
 }) {
   const { t } = useTranslation();
@@ -70,10 +82,14 @@ export function SignOutButton({
   const [reading, setReading] = useState(false);
   const userId = session.user_id;
   // The device's database, unless the page knows that it keeps nothing, as
-  // over plain HTTP, or once it failed to open: one still opening is read
-  // once it has (opensWithin).
+  // over plain HTTP, or once it failed to open, where the page keeps no
+  // queue: one still opening is read once it has (opensWithin), and so is
+  // one that the keeper could not open at first, which the queue's
+  // documents open again as they use it (OfflineDatabase.open), and may
+  // have written changes to since.
   const dbNow = () =>
-    keeper !== undefined && keeper.store.getState().available !== false
+    keeper !== undefined &&
+    (documents.keepsQueue || keeper.store.getState().available !== false)
       ? keeper.db
       : undefined;
   /**
@@ -105,7 +121,8 @@ export function SignOutButton({
     try {
       await signOut.mutateAsync(session);
     } catch {
-      // The header says why the page is still signed in (signOutFailure).
+      // The page says why it is still signed in, as the header does
+      // (signOutFailure).
       return;
     }
     setAsked(undefined);
@@ -142,6 +159,7 @@ export function SignOutButton({
   return (
     <>
       <Button
+        variant={variant}
         disabled={signOut.isPending || reading}
         onClick={() => void click()}
       >

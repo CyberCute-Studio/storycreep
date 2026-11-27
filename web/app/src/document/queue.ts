@@ -113,16 +113,25 @@ export interface QueueStore {
    * Resolves to the batches of userId's projectId that no open page's
    * document holds, as of a tab that closed, or a browser that restarted,
    * which are owner's from then on, in their order; to none where the
-   * device keeps none, or cannot be read. Then, until what found returns
-   * is called, calls found with those of another document's that closes
-   * meanwhile, which are owner's too.
+   * device keeps none, or cannot be read. Then, until stop is called,
+   * calls found with those of another document's that closes meanwhile,
+   * which are owner's too. Each is taken only while takes says so, as of a
+   * document that a page shows, those of a document that closes meanwhile
+   * being left to the next that takes them; again takes those that no open
+   * page's document holds, as once takes says so again, and resolves once
+   * found has them.
    */
   adopt(
     userId: string,
     projectId: string,
     owner: string,
     found: (batches: QueuedBatch[]) => void,
-  ): Promise<{ batches: QueuedBatch[]; stop: () => void }>;
+    takes?: () => boolean,
+  ): Promise<{
+    batches: QueuedBatch[];
+    stop: () => void;
+    again: () => Promise<void>;
+  }>;
   /**
    * Writes put and removes the batches of the IDs of remove, of userId's
    * projectId, in one transaction, which the browser applies whole or not

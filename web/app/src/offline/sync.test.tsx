@@ -79,7 +79,10 @@ function serve(apply?: (commands: CommandBody[]) => unknown) {
       case "listComponents":
         return page([]);
       case "logout":
+      case "revokeSession":
         return undefined;
+      case "listSessions":
+        return page([testSession.session]);
       case "applyCommands": {
         const commands = (input as { body: { commands: CommandBody[] } }).body
           .commands;
@@ -495,6 +498,55 @@ describe("signing out", () => {
       expect(await queued(testSession.user_id)).toEqual([]),
     );
     expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("asks first as the user signs out on the sessions page, as the header does, and takes the changes off the device once the user signs out anyway", async () => {
+    serve();
+    const user = userEvent.setup();
+    const { doc, offlineDb, router } = await openProject();
+    setOnline(false);
+    await act(() => doc.send([renameQuay("Pier")]));
+    await indicator("Offline, 1 change on this device");
+    setOnline(true);
+    await act(() => router.navigate({ to: "/account/sessions" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Sign out here" }),
+    );
+    const asked = await screen.findByRole("alertdialog", {
+      name: "Sign out and lose a change not yet sent?",
+    });
+    await user.click(
+      within(asked).getByRole("button", { name: "Sign out anyway" }),
+    );
+    await waitFor(async () =>
+      expect(await offlineDb?.queued(testSession.user_id)).toEqual([]),
+    );
+  });
+
+  it("asks first where the keeper could not open the device's database at first, which the queue opened since", async () => {
+    serve();
+    const user = userEvent.setup();
+    const { doc, offlineDb, offline } = await openProject();
+    setOnline(false);
+    await act(() => doc.send([renameQuay("Pier")]));
+    await indicator("Offline, 1 change on this device");
+    setOnline(true);
+    // The keeper's first open of it failed, and none of the keeper's since
+    // succeeded.
+    const keeper = offline as NonNullable<typeof offline>;
+    act(() => keeper.store.setState({ available: false }));
+    onTestFinished(
+      keeper.store.subscribe((state) => {
+        if (state.available !== false) {
+          keeper.store.setState({ available: false });
+        }
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    await screen.findByRole("alertdialog", {
+      name: "Sign out and lose a change not yet sent?",
+    });
+    expect(await offlineDb?.queued(testSession.user_id)).toHaveLength(1);
   });
 
   it("asks first where it cannot read the device, which may keep changes all the same, and takes any off it once the user signs out anyway", async () => {

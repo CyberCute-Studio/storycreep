@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 import { api, pagedQuery, revoking, sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders, endSession } from "../auth/session";
+import { SignOutButton } from "../offline/SignOut";
 import { Button, MoreButton } from "../ui/Button";
 import { Alert, Page, Status } from "../ui/Page";
 
@@ -125,13 +126,29 @@ function SessionItem({ item }: { item: SessionBody }) {
         </dd>
       </dl>
       <Alert message={refusalOf(revoke.error, t)?.message} />
-      <Button
-        variant="danger"
-        disabled={revoke.isPending}
-        onClick={() => revoke.mutate()}
-      >
-        {item.current ? t("sessions.sign_out_here") : t("sessions.revoke")}
-      </Button>
+      {item.current && session ? (
+        // Signing out here asks first where the device keeps changes that
+        // the server has yet to answer, as the header's does (PRD
+        // FR-OFF-03).
+        <SignOutButton
+          signOut={{
+            mutateAsync: () => revoke.mutateAsync(),
+            isPending: revoke.isPending,
+          }}
+          session={session}
+          variant="danger"
+        >
+          {t("sessions.sign_out_here")}
+        </SignOutButton>
+      ) : (
+        <Button
+          variant="danger"
+          disabled={revoke.isPending}
+          onClick={() => revoke.mutate()}
+        >
+          {item.current ? t("sessions.sign_out_here") : t("sessions.revoke")}
+        </Button>
+      )}
     </li>
   );
 }

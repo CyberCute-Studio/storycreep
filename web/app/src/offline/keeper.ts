@@ -797,14 +797,19 @@ class Kept {
     this.projectId = projectId;
   }
 
-  /** Holds the project's document, and writes its copy once it can. */
+  /**
+   * Holds the project's document, and writes its copy once it can: as the
+   * keeper's, which takes none of the changes that the device keeps of
+   * other tabs that close, which it would hold where no page shows them,
+   * while no page shows it (Documents.get).
+   */
   start(): void {
     if (this.stopped) {
       return;
     }
     const documents = this.keeper.options.documents;
-    const doc = documents.get(this.projectId);
-    const release = documents.acquire(doc);
+    const doc = documents.get(this.projectId, true);
+    const release = documents.acquire(doc, true);
     if (release === undefined) {
       // The page's documents dropped it meanwhile, as once the session was
       // of another account, which the keeper follows too.

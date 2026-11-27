@@ -684,6 +684,13 @@ export interface DocumentOptions {
    * that no answer comes to is refused, as one that the page cannot keep.
    */
   queue?: QueueStore;
+  /**
+   * Whether the document takes the batches of the queue that no open
+   * page's document holds, as of a tab that closed, from its start, as a
+   * page's does; not the keeper's, which no page shows, until a page asks
+   * for it (takeQueue); always, if not set.
+   */
+  takesQueue?: boolean;
   /** Returns a number in [0, 1), which spreads the queue's tries again (backoff); Math.random, if not set. */
   random?: () => number;
 }
@@ -1030,6 +1037,18 @@ export class ProjectDocument {
   /** Stops taking the batches of the documents of other tabs that close (QueueStore.adopt). */
   private stopAdopting: (() => void) | undefined;
   /**
+   * Whether the document takes the batches of other documents, as of a tab
+   * that closed, as it does while a page shows it, or asks for it, but not
+   * while the keeper of the copies alone holds it, which would hold them
+   * where no page shows them, as the tab that the user opens the project
+   * in anew would not (takeQueue).
+   */
+  private takes: boolean;
+  /** Takes the batches that no open page's document holds, which the document left while it took none (QueueStore.adopt's again). */
+  private retake: (() => Promise<void>) | undefined;
+  /** The latest taking of those, once a page asked for the document again, which a read waits for, as for the first (whenReady). */
+  private retaking: Promise<void> | undefined;
+  /**
    * The batches that undo took out of the device's queue, the latest last,
    * which redo puts back, until the page makes another change (AC4); kept
    * by the page alone, as a reload begins anew. Each has how many steps the
@@ -1086,6 +1105,7 @@ export class ProjectDocument {
       commentsPause,
     );
     this.now = options.now ?? (() => new Date().toISOString());
+    this.takes = options.takesQueue ?? true;
     const userId = options.queryClient.getQueryData(
       sessionQuery.queryKey,
     )?.user_id;
@@ -1169,9 +1189,17 @@ export class ProjectDocument {
       : this.options.queue;
   }
 
-  /** Settles once the project has been read, and the document follows it. */
+  /** Settles once the project has been read, and the document follows it, with the batches of the device's queue that it took. */
   get ready(): Promise<void> {
-    return this.starting;
+    return this.withTaken(this.starting);
+  }
+
+  /** Returns starting, settling once the batches that the document takes anew, if any, are taken too (retaking). */
+  private withTaken(starting: Promise<void>): Promise<void> {
+    const retaking = this.retaking;
+    return retaking === undefined
+      ? starting
+      : Promise.all([starting, retaking]).then(() => undefined);
   }
 
   /** The document as the server has confirmed it. */
@@ -1256,7 +1284,7 @@ export class ProjectDocument {
       this.started = false;
       this.starting = this.begin();
     }
-    return this.starting;
+    return this.withTaken(this.starting);
   }
 
   /**
@@ -1515,8 +1543,12 @@ export class ProjectDocument {
       return;
     }
     const taken = await queue
-      .adopt(userId, this.projectId, this.owner, (batches) =>
-        this.adoptMore(batches),
+      .adopt(
+        userId,
+        this.projectId,
+        this.owner,
+        (batches) => this.adoptMore(batches),
+        () => this.takes,
       )
       .catch(() => undefined);
     if (taken === undefined) {
@@ -1527,6 +1559,7 @@ export class ProjectDocument {
       return;
     }
     this.stopAdopting = taken.stop;
+    this.retake = taken.again;
     for (const batch of taken.batches) {
       this.lastOrder = Math.max(this.lastOrder, batch.order);
     }
@@ -1535,6 +1568,28 @@ export class ProjectDocument {
       ...this.entries,
     ];
     this.queueChanged();
+  }
+
+  /**
+   * Has the document take the batches of other documents that the device's
+   * queue keeps, as of a tab that closed, while takes says so, as while a
+   * page shows it, or has asked for it a moment ago, rather than while the
+   * keeper of the copies alone holds it (Documents), which would hold them
+   * where no page shows them, as the page that the user opens the project
+   * in anew, in this tab or another, would not; and, once it does again,
+   * those that it left meanwhile, which a read waits for (whenReady), as it
+   * does for those taken as the document started. Those that it took
+   * before it keeps, and sends.
+   */
+  takeQueue(takes: boolean): void {
+    if (this.takes === takes || this.disposed) {
+      return;
+    }
+    this.takes = takes;
+    if (takes) {
+      const adopting = this.adopting ?? Promise.resolve();
+      this.retaking = adopting.then(() => this.retake?.());
+    }
   }
 
   /**
@@ -3920,24 +3975,32 @@ export class ProjectDocument {
   }
 
   /**
-   * Returns why the document keeps the batches that it can in the device's
-   * queue, rather than send them now, or undefined where it sends them: a
-   * queued batch that needs review, which every batch after it waits for
-   * (plan item 92); a page that cannot reach the server (unreachable); or a
-   * try that the server refused for when or by whom it was sent, until the
-   * next (retryTimer).
+   * Returns why the document keeps entry in the device's queue, where it
+   * can, rather than send it now, or undefined where it sends it: a queued
+   * batch that needs review before it, or itself, in the order that the
+   * document sends them, which every batch after it waits for, but none
+   * before it, as one of a tab that closed made before it, which the
+   * document took with it (plan item 92); a page that cannot reach the
+   * server (unreachable); or a try that the server refused for when or by
+   * whom it was sent, until the next (retryTimer). Given no entry, it
+   * returns why the document sends none of the queue's batches now: for
+   * review, once none is left before the first that needs it.
    */
-  private holdReason():
-    | "review"
-    | "offline"
-    | "unanswered"
-    | "session"
-    | "refused"
-    | undefined {
+  private holdReason(
+    entry?: Entry,
+  ): "review" | "offline" | "unanswered" | "session" | "refused" | undefined {
     if (this.queue === undefined) {
       return undefined;
     }
-    if (this.entries.some((e) => e.held?.state === "review")) {
+    const review = this.entries.findIndex((e) => e.held?.state === "review");
+    if (
+      review !== -1 &&
+      (entry === undefined
+        ? !this.entries
+            .slice(0, review)
+            .some((e) => e.held !== undefined && e.answer === undefined)
+        : !this.entries.slice(0, review).includes(entry))
+    ) {
       return "review";
     }
     return (
@@ -3983,16 +4046,29 @@ export class ProjectDocument {
    * and does not yet, that the document has not sent, as the page cannot
    * send it now (holdReason): its caller is told that it is queued once it
    * is written; one that the device refuses, as for its quota, is refused
-   * with error, as it would be without a queue, or, given none, as while a
+   * as it would be without a queue, for want of the server, or, as while a
    * batch before it needs review, with the device's refusal itself, which
    * the error console records. A change that the queue keeps ends what the
    * history could redo, as its answer would, once the device has written it
    * (persist).
    */
-  private keep(error?: Error): void {
-    const fresh = this.entries.filter(
-      (e) => !e.sent && e.held === undefined && this.keepable(e),
-    );
+  private keep(): void {
+    const errors = new Map<Entry, Error | undefined>();
+    for (const entry of this.entries) {
+      const reason =
+        !entry.sent && entry.held === undefined && this.keepable(entry)
+          ? this.holdReason(entry)
+          : undefined;
+      if (reason !== undefined) {
+        errors.set(
+          entry,
+          reason === "offline" || reason === "unanswered"
+            ? new NetworkError(new TypeError("The server cannot be reached."))
+            : undefined,
+        );
+      }
+    }
+    const fresh = [...errors.keys()];
     if (fresh.length === 0) {
       return;
     }
@@ -4005,11 +4081,12 @@ export class ProjectDocument {
     this.persist().catch((failure: unknown) => {
       if (
         !(failure instanceof SignedOutError) &&
-        (!overQuota(failure) || error === undefined)
+        (!overQuota(failure) || fresh.some((e) => errors.get(e) === undefined))
       ) {
         this.options.log.record("error", failure);
       }
       for (const entry of fresh) {
+        const error = errors.get(entry);
         // The device keeps nothing of it, and no write after writes it
         // there (persist). One on its way meanwhile, as the browser came
         // online again, is settled by its answer, or, where none comes,
@@ -4310,14 +4387,9 @@ export class ProjectDocument {
   private async pump(): Promise<void> {
     // A batch made while a try that no answer may come to is under way is
     // kept at once, as one made before it (unreachable).
-    const reason = this.holdReason();
     const signedOut = this.signedOutOf();
-    if (reason !== undefined && !signedOut) {
-      this.keep(
-        reason === "offline" || reason === "unanswered"
-          ? new NetworkError(new TypeError("The server cannot be reached."))
-          : undefined,
-      );
+    if (!signedOut) {
+      this.keep();
     }
     if (this.inflight) {
       return;
@@ -4325,7 +4397,7 @@ export class ProjectDocument {
     const entry = this.entries.find(
       (e) =>
         !e.sent &&
-        (reason === undefined || signedOut || !this.keepable(e)) &&
+        (signedOut || !this.keepable(e) || this.holdReason(e) === undefined) &&
         !(this.disposed && e.held !== undefined),
     );
     if (entry === undefined) {
@@ -4365,16 +4437,23 @@ export class ProjectDocument {
       // it may apply once it is, whatever becomes of the page meanwhile, as
       // a reload, or a tab that closes: the next page sends it again with
       // its commands' IDs, rather than take it out of the queue by an undo
-      // (withdraws). A device that refuses the write leaves it as it was.
+      // (withdraws). A device that refuses the write, as for its quota,
+      // leaves it as it was, and the batch is not sent, which the next page
+      // would not know of, but tried again later, as after a fault of the
+      // page's own, the record with it.
       sentBefore = entry.held?.sent ?? false;
       if (entry.held !== undefined && !sentBefore) {
         entry.held = this.batchOf(entry, { sent: true });
         entry.dirty = true;
-        await this.persist().catch((failure: unknown) => {
-          if (!overQuota(failure) && !(failure instanceof SignedOutError)) {
-            this.options.log.record("error", failure);
-          }
-        });
+        const recorded = await this.persist().then(
+          () => true,
+          (failure: unknown) => {
+            if (!overQuota(failure) && !(failure instanceof SignedOutError)) {
+              this.options.log.record("error", failure);
+            }
+            return false;
+          },
+        );
         if (this.disposed) {
           // Not sent after all: the device keeps it as it was, which the
           // next page may take out of the queue by an undo, before this
@@ -4387,6 +4466,14 @@ export class ProjectDocument {
             entry.dirty = true;
             this.persistLater();
           }
+          return;
+        }
+        if (!recorded && entry.held !== undefined) {
+          entry.sent = false;
+          entry.held = this.batchOf(entry, { sent: false });
+          entry.dirty = true;
+          this.tryAgainLater("refused");
+          this.queueChanged();
           return;
         }
       }
@@ -4607,15 +4694,18 @@ export class ProjectDocument {
           if (!overQuota(failure) && !(failure instanceof SignedOutError)) {
             this.options.log.record("error", failure);
           }
-          // The device could not keep it: it is refused as it would be
-          // without a queue, unless it is on its way again meanwhile, whose
-          // caller hears of it once a write after keeps it (persist), or its
-          // answer comes, and so if an undo took it out meanwhile, as the
-          // device keeps nothing of it either.
+          // The device could not keep it, and no write after writes it there
+          // (persist): it is refused as it would be without a queue, unless
+          // it is on its way again meanwhile, which its answer, or its
+          // refusal, settles as without a queue, or, where none comes, which
+          // is kept anew, its caller hearing of it then, as keep's; and so
+          // if an undo took it out meanwhile, as the device keeps nothing of
+          // it either.
+          entry.held = undefined;
+          entry.dirty = false;
           if (entry.sent) {
             return;
           }
-          entry.held = undefined;
           if (this.entries.includes(entry)) {
             this.refuse(entry, error, known);
             this.queueChanged();
