@@ -54,6 +54,21 @@ interface Held {
   asked?: ReturnType<typeof setTimeout>;
 }
 
+/** Resolves once every one of waits has settled, or once wait milliseconds have passed, leaving no timer behind. */
+async function within(
+  waits: readonly Promise<unknown>[],
+  wait: number,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    Promise.allSettled(waits),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, wait);
+    }),
+  ]);
+  clearTimeout(timer);
+}
+
 /** The page's documents. */
 export class Documents {
   /** The page's clipboard, of the nodes that the account copied last, on any of its projects' boards. */
@@ -289,19 +304,26 @@ export class Documents {
    * user clicked.
    */
   async whenWritten(wait: number): Promise<void> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      Promise.all(
-        [
-          ...[...this.held.values()].map((held) => held.doc),
-          ...this.dropped,
-        ].map((doc) => doc.queueWritten()),
+    await within(
+      [...[...this.held.values()].map((held) => held.doc), ...this.dropped].map(
+        (doc) => doc.queueWritten(),
       ),
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, wait);
-      }),
-    ]);
-    clearTimeout(timer);
+      wait,
+    );
+  }
+
+  /**
+   * Resolves once every document dropped has let go of the device's queue,
+   * after which it writes nothing there (ProjectDocument.lettingGo), as one
+   * whose try under way was answered since, or once wait milliseconds have
+   * passed, as of a try that no answer comes to, so that a test closes the
+   * device's database only once no write that would open it again comes.
+   */
+  async whenLetGo(wait: number): Promise<void> {
+    await within(
+      [...this.dropped].map((doc) => doc.lettingGo()),
+      wait,
+    );
   }
 
   /** Drops every document. */

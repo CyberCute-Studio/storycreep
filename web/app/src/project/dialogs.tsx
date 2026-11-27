@@ -622,8 +622,11 @@ export function DeleteBoardDialog({
   // The list is the server's, which the page may not reach now, as
   // offline: the dialog lists then the jumpers of the other boards that the
   // page holds, as the device's copy of the project, which is a change
-  // that the device keeps (PRD FR-OFF-03), refused once sent, and kept for
-  // review, where the server knows of one that the copy does not. As the
+  // that the device keeps (PRD FR-OFF-03). Where the copy holds none, the
+  // deletion is not confirmed, and is refused once sent, and kept for
+  // review, where the server knows of one; where it holds some, the
+  // deletion that the user confirms leaves broken those that the server
+  // knows of and the copy does not too, which the dialog says. As the
   // server's, it lists no jumper whose target is in the trash, which the
   // page tells where it holds the board's content without it (FR-PROJ-02).
   const doc = useProjectDocument(projectId);
@@ -710,7 +713,9 @@ export function DeleteBoardDialog({
         <Alert message={refusalOf(referrers.error, t)?.message} />
       )}
       {!reachable && refused === undefined && (
-        <p className="text-fg-muted">{t("boards.jumpers_offline")}</p>
+        <p className="text-fg-muted">
+          {t("boards.jumpers_offline", { count })}
+        </p>
       )}
       {jumpers !== undefined && jumpers.length > 0 && (
         <div className="space-y-2">

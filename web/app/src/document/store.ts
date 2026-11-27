@@ -314,6 +314,37 @@ function unansweredBy(error: unknown): boolean {
 }
 
 /**
+ * Reports whether error is a proxy's page of a failure, without the error
+ * envelope, that answered for the server, as 502 while it restarts, or 504
+ * for one that took too long, which may have applied: the page did not
+ * reach the server, which answered nothing itself.
+ */
+function proxyFailure(error: unknown): boolean {
+  return error instanceof ApiError && !answered(error) && error.status >= 500;
+}
+
+/** The longest that a Retry-After has the queue wait before it tries again, in milliseconds. */
+const retryAfterMax = 300_000;
+
+/**
+ * Returns how long, in milliseconds, the Retry-After of answer, a refusal
+ * of too many requests (429), has the page wait before it asks again, at
+ * most retryAfterMax, or 0 where it gives none.
+ */
+function retryAfterOf(answer: ApiError): number {
+  if (answer.status !== 429) {
+    return 0;
+  }
+  const seconds = Number.parseInt(
+    answer.response.headers.get("Retry-After") ?? "",
+    10,
+  );
+  return Number.isFinite(seconds) && seconds > 0
+    ? Math.min(seconds * 1000, retryAfterMax)
+    : 0;
+}
+
+/**
  * The statuses of the answers that refuse when or by whom a batch was sent,
  * rather than what it does, which may not refuse it later: a session that
  * has ended (401), credentials or a role that do not allow it (403), a
@@ -4361,18 +4392,19 @@ export class ProjectDocument {
    * Has the queue tried again later, as the server gave no answer, or refused
    * for when it was asked, which reason says (retryReason), the longer the
    * more tries in a row it did, exponentially, with full jitter, as the
-   * channel's socket does (backoff), or at once once the browser is online
-   * again, or the channel live.
+   * channel's socket does (backoff), but no sooner than after atLeast
+   * milliseconds, as a refusal of too many requests asks (Retry-After), or
+   * at once once the browser is online again, or the channel live.
    */
-  private tryAgainLater(reason: "unanswered" | "refused"): void {
+  private tryAgainLater(reason: "unanswered" | "refused", atLeast = 0): void {
     if (this.disposed) {
       return;
     }
     this.retryReason = reason;
     clearTimeout(this.retryTimer);
-    const delay = backoff(
-      this.retryFailures,
-      this.options.random ?? Math.random,
+    const delay = Math.max(
+      atLeast,
+      backoff(this.retryFailures, this.options.random ?? Math.random),
     );
     this.retryFailures++;
     this.retryTimer = setTimeout(() => {
@@ -4707,25 +4739,26 @@ export class ProjectDocument {
    * Keeps entry in the device's queue, rather than refuse it to its caller,
    * once error tells that the server did not answer it, or refused a batch
    * that the queue keeps, and reports whether it did (PRD FR-OFF-03). A
-   * batch that no answer came to, posted or not (unansweredBy), which the
-   * queue can keep, is kept, and the queue is tried again later, with its
+   * batch that no answer came to, posted or not (unansweredBy), or that a
+   * proxy's page of a failure answered for the server (proxyFailure), which
+   * the queue can keep, is kept, and the queue is tried again later, with its
    * commands' IDs, as it may have applied; its caller hears that it is
    * queued once it is written, or, where the device refuses, its refusal. A
    * batch of the queue refused for when or by whom it was sent, as a
    * session that ended (401), a role that does not allow it (403), a
-   * request of too many (429), an archived project, or a failure of the
-   * server's own, waits too, and is tried again later, as is one that met a
-   * fault of the page's own, which the error console records; one refused
-   * for what it does, as for what changed since, needs review, with every
-   * batch after it (plan item 92). One that the queue does not keep yet,
-   * refused, or that met a fault of the page's own, is refused to its
-   * caller, as it would be without a queue, and so is one of a document
-   * dropped as the page signed out, which leaves nothing of the account's
-   * on the device that signing out did not ask of (plan note N98), while
-   * one dropped as another account signed in keeps it for its own. A
-   * refusal leaves the batch as the queue kept it before the try
-   * (sentBefore), but where a failure of the server's own may have come
-   * after it committed.
+   * request of too many (429), no sooner than it asks (Retry-After), an
+   * archived project, or a failure of the server's own, waits too, and is
+   * tried again later, as is one that met a fault of the page's own, which
+   * the error console records; one refused for what it does, as for what
+   * changed since, needs review, with every batch after it (plan item 92).
+   * One that the queue does not keep yet, refused, or that met a fault of
+   * the page's own, is refused to its caller, as it would be without a
+   * queue, and so is one of a document dropped as the page signed out,
+   * which leaves nothing of the account's on the device that signing out
+   * did not ask of (plan note N98), while one dropped as another account
+   * signed in keeps it for its own. A refusal leaves the batch as the queue
+   * kept it before the try (sentBefore), but where a failure of the
+   * server's own may have come after it committed.
    */
   private queueKept(
     entry: Entry,
@@ -4735,7 +4768,12 @@ export class ProjectDocument {
   ): boolean {
     const held = entry.held;
     const answer = error instanceof ApiError ? error : undefined;
-    const unanswered = unansweredBy(error);
+    // A batch that the queue does not keep yet, that a proxy's page of a
+    // failure answered for the server, as while it restarts, got no answer
+    // of the server's either, and is kept as one that none came to; one of
+    // the queue's keeps that refusal, which the sync panel says, as below.
+    const unanswered =
+      unansweredBy(error) || (held === undefined && proxyFailure(error));
     if (
       held === undefined &&
       (!unanswered || !this.keepable(entry) || this.signedOutOf())
@@ -4834,9 +4872,11 @@ export class ProjectDocument {
         this.options.checkSession?.();
       }
       // A page that a proxy answers for the server, as 502 while it
-      // restarts, does not reach it.
+      // restarts, does not reach it; a refusal of too many requests is
+      // tried again no sooner than it asks (Retry-After).
       this.tryAgainLater(
-        answered(answer) || answer.status < 500 ? "refused" : "unanswered",
+        proxyFailure(answer) ? "unanswered" : "refused",
+        retryAfterOf(answer),
       );
     }
     this.queueChanged();

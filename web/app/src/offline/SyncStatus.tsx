@@ -183,8 +183,29 @@ const unavailable = [
   "sync.unavailable.settings",
 ] as const;
 
-/** The list of what needs the server, with why. */
-function Unavailable() {
+/**
+ * What of unavailable the project's pages that read the server alone are,
+ * which they do not offer while the browser has no connection (offlinePages),
+ * and offer while it has one, though the page may not reach the server, as
+ * while a try waits after no answer: the others follow whether it does
+ * (useServerReachable).
+ */
+const pagesOffline: ReadonlySet<(typeof unavailable)[number]> = new Set([
+  "sync.unavailable.publish",
+  "sync.unavailable.access",
+  "sync.unavailable.exports",
+  "sync.unavailable.search",
+  "sync.unavailable.analysis",
+  "sync.unavailable.trash",
+  "sync.unavailable.settings",
+]);
+
+/**
+ * The list of what needs the server, with why, which the pages do not offer
+ * now: with those that read the server alone where connected says that the
+ * browser has no connection (pagesOffline).
+ */
+function Unavailable({ connected }: { connected: boolean }) {
   const { t } = useTranslation();
   // Each key as a literal, which extraction reads (i18n.ts's TestCatalogs).
   const names: Record<(typeof unavailable)[number], string> = {
@@ -207,9 +228,11 @@ function Unavailable() {
       </h3>
       <p>{t("sync.unavailable.intro")}</p>
       <ul className="list-disc space-y-1 pl-6">
-        {unavailable.map((key) => (
-          <li key={key}>{names[key]}</li>
-        ))}
+        {unavailable
+          .filter((key) => !connected || !pagesOffline.has(key))
+          .map((key) => (
+            <li key={key}>{names[key]}</li>
+          ))}
       </ul>
     </section>
   );
@@ -231,7 +254,9 @@ function SyncPanel({
   const doc = useProjectDocument(projectId);
   // Offline, the panel says that the changes are kept on the device only
   // where they are, as they are not over plain HTTP, which keeps no queue,
-  // and a change made meanwhile is refused (PRD FR-OFF-03).
+  // and a change made meanwhile is refused (PRD FR-OFF-03), and neither to
+  // a user who cannot change the project, as a viewer, or of one archived,
+  // whose changes kept before it lists all the same.
   const keeps = useKeepsChanges(edits);
   const queryClient = useQueryClient();
   // What the panel lists, read anew as it changes (queueVersion), and as
@@ -250,8 +275,10 @@ function SyncPanel({
     [projectId, batches],
   );
   // What needs the server is listed while the page cannot reach it, whether
-  // or not a change needs review meanwhile.
+  // or not a change needs review meanwhile, as far as the pages do not
+  // offer it then (Unavailable).
   const offline = !useServerReachable(doc);
+  const connected = useOnline();
   const exportPending = () => {
     const now = new Date().toISOString();
     const session = queryClient.getQueryData(sessionQuery.queryKey);
@@ -266,9 +293,11 @@ function SyncPanel({
       : state.state === "syncing"
         ? t("sync.panel.syncing")
         : state.state === "offline"
-          ? keeps
-            ? t("sync.panel.offline")
-            : t("sync.panel.offline_unkept")
+          ? !edits
+            ? t("sync.panel.offline_read_only")
+            : keeps
+              ? t("sync.panel.offline")
+              : t("sync.panel.offline_unkept")
           : t("sync.panel.review");
   return (
     <DialogFrame title={t("sync.panel.title")} description={label}>
@@ -299,7 +328,7 @@ function SyncPanel({
           </ul>
         )}
       </section>
-      {offline && <Unavailable />}
+      {offline && <Unavailable connected={connected} />}
       <div className="flex flex-wrap justify-end gap-2">
         <Button disabled={exported.length === 0} onClick={exportPending}>
           {t("sync.panel.export")}

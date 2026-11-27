@@ -194,12 +194,14 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
     // The keeper's change under way is let finish, and none after it begins,
     // before the database is closed, which a change would else open again;
     // and so are the writes of the device's queue that the documents began,
-    // those of the documents dropped that have yet to let go of it too, as
-    // the documents go first, the hooks running from the last registered.
+    // and those that the documents dropped make until they let go of it, as
+    // once a try under way is answered, the documents going first, the hooks
+    // running from the last registered.
     onTestFinished(async () => {
       offline.stop();
       await offline.idle();
       await documents.whenWritten(openWait);
+      await documents.whenLetGo(openWait);
       await offlineDb?.close();
     });
   }

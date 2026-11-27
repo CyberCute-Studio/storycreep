@@ -2048,6 +2048,55 @@ describe("the device's queue of the page's batches", () => {
     await db.close();
   });
 
+  it("keeps a batch made online that a proxy answers for the server with a page of a failure, as while it restarts, and sends it again with its commands' IDs", async () => {
+    let failures = 1;
+    const batches = serve(() => {
+      if (failures-- > 0) {
+        throw new ApiError(
+          new Response("<html>Bad gateway</html>", {
+            status: 502,
+            headers: { "Content-Type": "text/html" },
+          }),
+          undefined,
+        );
+      }
+      return applied(2, [{ id: "bd_a", rev: 4 }]);
+    });
+    const db = new OfflineDatabase();
+    const { doc } = await open(db, fakeLocks(), connection(true));
+    await expect(doc.send([rename("bd_a", "Quay", 3)])).resolves.toEqual({
+      status: "queued",
+    });
+    await until(doc, (s) => s.queued === 0);
+    expect(batches).toHaveLength(2);
+    expect(batches[1]).toEqual(batches[0]);
+    expect(shownName(doc)).toBe("Quay");
+    await db.close();
+  });
+
+  it("tries a queued batch refused for too many requests again no sooner than the answer asks", async () => {
+    let failures = 1;
+    const batches = serve(() => {
+      if (failures-- > 0) {
+        throw refused(429, { code: "rate_limited" }, { "Retry-After": "1" });
+      }
+      return applied(2, [{ id: "bd_a", rev: 4 }]);
+    });
+    const net = connection(false);
+    const db = new OfflineDatabase();
+    const { doc } = await open(db, fakeLocks(), net);
+    await doc.send([rename("bd_a", "Quay", 3)]);
+    const refusedAt = Date.now();
+    net.set(true);
+    await vi.waitFor(() => expect(batches).toHaveLength(1));
+    await vi.waitFor(() => expect(doc.store.getState().queued).toBe(0), {
+      timeout: 3_000,
+    });
+    expect(batches).toHaveLength(2);
+    expect(Date.now() - refusedAt).toBeGreaterThanOrEqual(900);
+    await db.close();
+  });
+
   it("lets a read go on once the device's database does not open in time as the document takes the batches let go while it took none, and takes them once it opens", async () => {
     serve(() => applied(2, [{ id: "bd_a", rev: 4 }]));
     const net = connection(false);

@@ -304,6 +304,33 @@ describe("the sync panel", () => {
     );
   });
 
+  it("lists, while the browser is online and the page reaches the server no longer, only what the pages do not offer then", async () => {
+    serve(() => {
+      throw new NetworkError(new TypeError("Failed to fetch"));
+    });
+    const user = userEvent.setup();
+    const { doc } = await openProject();
+    await act(() => doc.send([renameQuay("Pier")]));
+    await user.click(await indicator("Offline, 1 change on this device"));
+    const panel = await screen.findByRole("dialog", { name: "Sync status" });
+    const list = within(panel).getByRole("region", {
+      name: "Not available offline",
+    });
+    for (const name of [
+      "Uploading images",
+      "Copying, cutting, pasting, and duplicating nodes",
+      "Comments",
+      "Saved play states",
+    ]) {
+      expect(within(list).getByText(name)).toBeDefined();
+    }
+    // The pages that read the server alone are offered while the browser
+    // has a connection.
+    for (const name of ["Publishing a release", "Search", "The trash"]) {
+      expect(within(list).queryByText(name)).toBeNull();
+    }
+  });
+
   it("says why a change of the device's that the server refused for when it was sent waits to be sent again", async () => {
     serve(() => {
       throw refused(403, {
@@ -361,7 +388,9 @@ describe("the sync panel", () => {
         role: "viewer",
       });
     });
-    await within(panel).findByText(unkeptPanel);
+    await within(panel).findByText("This device cannot reach the server now.");
+    expect(within(panel).queryByText(keptPanel)).toBeNull();
+    expect(within(panel).queryByText(unkeptPanel)).toBeNull();
     expect(screen.queryByText(keptNotice)).toBeNull();
   });
 
@@ -511,6 +540,13 @@ describe("a board's deletion offline", () => {
     const dialog = await screen.findByRole("alertdialog");
     await within(dialog).findByText("The door, on Lighthouse");
     expect(within(dialog).queryByText("The gate, on Lighthouse")).toBeNull();
+    // Confirmed, the deletion leaves broken the jumpers that the server
+    // knows of and the copy does not too, which the dialog says.
+    expect(
+      within(dialog).getByText(
+        /^Offline, the jumpers listed are those of the copy on this device\. Deleting the board anyway leaves broken any others/,
+      ),
+    ).toBeDefined();
   });
 });
 
