@@ -15,8 +15,9 @@ afterEach(() => {
 
 /** A document that sends sending of the page's batches, as its store says. */
 function sendingDocument(sending: number) {
-  const store = createStore<Pick<DocumentState, "sending">>(() => ({
+  const store = createStore<Pick<DocumentState, "sending" | "queued">>(() => ({
     sending,
+    queued: 0,
   }));
   return { doc: { store } as unknown as ProjectDocument, store };
 }
@@ -47,6 +48,16 @@ describe("whenSent", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(await settled(sent)).toBe(false);
     store.setState({ sending: 0 });
+    expect(await settled(sent)).toBe(true);
+  });
+
+  it("does not wait for the batches that the device's queue keeps, which a reload does not lose", async () => {
+    vi.useFakeTimers();
+    const { doc, store } = sendingDocument(2);
+    store.setState({ queued: 1 });
+    const sent = whenSent(doc, new AbortController().signal);
+    expect(await settled(sent)).toBe(false);
+    store.setState({ queued: 2 });
     expect(await settled(sent)).toBe(true);
   });
 

@@ -23,6 +23,17 @@
 // batches made before they were asked for have joined the history, and
 // before those made after, expecting what the server left, which no answer
 // to a batch before them moves.
+//
+// A batch of the draft that the page cannot send, as while the browser has
+// no connection, or that no answer came to, is kept in the device's queue
+// (queue.ts, PRD FR-OFF-03), the page showing it as before, and sent again,
+// with its commands' IDs, once the server answers, in its order, the same
+// commands as online (AC2). Its caller is told that it is queued, rather
+// than kept waiting. The server's refusal of a queued batch for what it does
+// keeps it, as needing review, and every batch after it, until the user
+// decides (plan item 92). Undo takes the latest queued batch that never
+// reached the server out of the queue, and redo puts it back, with no
+// connection (AC4).
 
 import {
   ApiError,
@@ -50,6 +61,7 @@ import { csrfHeaders } from "../auth/session";
 import { commentsKey } from "../comments/queries";
 import { dependenciesKey } from "../dependencies/queries";
 import type { ErrorLog } from "../errors/log";
+import { overQuota } from "../offline/db";
 import { playStatesKey } from "../play/queries";
 import { conflictOf, projectQuery } from "../project/queries";
 import { statisticsKey } from "../statistics/queries";
@@ -74,6 +86,13 @@ import {
   typeOfAttribute,
 } from "./doc";
 import { Follower } from "./follow";
+import {
+  nextOrder,
+  type QueuedBatch,
+  type QueueStore,
+  queueFormat,
+  type Refusal,
+} from "./queue";
 import { backoff, type Realtime } from "./realtime";
 import {
   applyOperation,
@@ -100,6 +119,37 @@ import {
 
 /** A command of a batch, without the ID that the document gives it. */
 export type Command = DistributiveOmit<CommandBody, "command_id">;
+
+/**
+ * What send resolves to for a batch that the device's queue keeps, rather
+ * than the server's answer, which comes once the queue is sent (PRD
+ * FR-OFF-03): the page shows the batch meanwhile, as it showed it before.
+ */
+export interface Queued {
+  status: "queued";
+}
+
+/** What send resolves to: the server's answer to the batch, or that the device's queue keeps it. */
+export type SendResult = CommandResultBody | Queued;
+
+/** A batch of the page's that the server has yet to answer, as the sync panel lists it (PRD FR-OFF-06). */
+export interface PendingBatch {
+  /** Its ID, the queue's record's for a queued batch, else its first command's. */
+  id: string;
+  /** When the page made it. */
+  time: string;
+  commands: readonly CommandBody[];
+  /**
+   * sending, on its way to the server or about to be; queued, in the
+   * device's queue, waiting for the server; review, refused by the server
+   * for what it does, waiting for the user's decision (plan item 92).
+   */
+  state: "sending" | "queued" | "review";
+  /** Whether it was sent and no answer came, so that it may have applied. */
+  sent: boolean;
+  /** The server's latest refusal of it, if any. */
+  refusal?: Refusal;
+}
 
 /** How the document sends a batch of the page's (ProjectDocument.send). */
 export interface SendOptions {
@@ -136,6 +186,23 @@ export interface DocumentState {
   historyVersion: number;
   /** Whether an undo or a redo is under way. */
   stepping: boolean;
+  /** How many of the page's batches the device's queue keeps, to be sent, or needing review (PRD FR-OFF-03). */
+  queued: number;
+  /** How many of those the server refused for what they do, which wait for the user's decision, with every batch after them (plan item 92). */
+  review: number;
+  /**
+   * Whether the document keeps the batches that it can in the device's
+   * queue rather than send them, for want of a connection, or of an answer,
+   * or of the page's own session, as while it holds the one that the device
+   * kept, without its CSRF token (PRD FR-OFF-02).
+   */
+  holding: boolean;
+  /** Whether undo would take the latest batch out of the device's queue, which needs no connection (AC4). */
+  undoLocal: boolean;
+  /** Whether redo would put a batch that undo took out of the queue back. */
+  redoLocal: boolean;
+  /** Counts the changes of what the sync panel lists (pendingBatches). */
+  queueVersion: number;
 }
 
 /** An entity that a conflict found changed elsewhere, with the fields that both changed. */
@@ -283,7 +350,19 @@ interface Entry {
    * (FR-EDIT-08 AC4).
    */
   step: boolean;
+  /** Whether its undo joins the history once it applies (SendOptions.history), as it does not of a step's. */
+  history: boolean;
   sent: boolean;
+  /**
+   * The batch as the device's queue keeps it, once it does (PRD FR-OFF-03):
+   * it is no longer the caller's, who was told that it is queued, and the
+   * document records its answer itself, and keeps what changes of it there.
+   */
+  held?: QueuedBatch;
+  /** Whether what the queue keeps of it is behind the batch, as once the answer to a batch before it moved what it expects (persist). */
+  dirty?: boolean;
+  /** Tells the caller that the device's queue keeps the batch, once it does. */
+  queued?: () => void;
   answer?: CommandResultBody;
   /** What the document held of the entities that the batch changed, before its operation applied. */
   captured?: Captured;
@@ -514,6 +593,17 @@ export interface DocumentOptions {
    * (refresh); always, if not set.
    */
   online?: () => boolean;
+  /** Calls listener each time that the browser's connection comes or goes, until what it returns is called; never, if not set. */
+  onConnection?: (listener: (online: boolean) => void) => () => void;
+  /**
+   * The device's queue of the batches that the server has yet to answer
+   * (PRD FR-OFF-03, queue.ts), which keeps a batch that the page cannot
+   * send, as offline; none if not set, as over plain HTTP, where a batch
+   * that no answer comes to is refused, as one that the page cannot keep.
+   */
+  queue?: QueueStore;
+  /** Returns a number in [0, 1), which spreads the queue's tries again (backoff); Math.random, if not set. */
+  random?: () => number;
 }
 
 /** A copy of a project that the device keeps, as a document starts from it (PRD FR-OFF-02). */
@@ -697,14 +787,14 @@ export class ProjectDocument {
    * step of the history under way too (send), which the document is busy
    * with until they have.
    */
-  private readonly sends = new Set<Promise<CommandResultBody>>();
+  private readonly sends = new Set<Promise<SendResult>>();
   /**
    * The page's batches that send has sent, or queued, and that have yet to
    * settle, each with what its answer adds to the history, which an undo or
    * a redo asked for meanwhile waits for before it is sent, so that it sends
    * the step that is the latest once they have joined it (stepped).
    */
-  private readonly batches = new Set<Promise<CommandResultBody>>();
+  private readonly batches = new Set<Promise<SendResult>>();
   /**
    * The revision that each of the page's batches that applied moved an
    * entity to, by the entity's ID and the revision that the batch expected
@@ -822,6 +912,39 @@ export class ProjectDocument {
    * the channel brings what changed since the copy's seq (refresh).
    */
   private liveWait: Promise<void> | undefined;
+  /** The ID of the document as the holder of the batches that the device's queue keeps (QueuedBatch.owner). */
+  private readonly owner = formatUuid(newUuid());
+  /**
+   * Resolves to what lets go of the document's lock as the holder of its
+   * batches, once it holds it, before any is kept, so that another tab's
+   * document takes none of them while this one is kept (QueueStore.hold),
+   * or to undefined where the page keeps none, or the lock was not given.
+   */
+  private readonly ownerLock: Promise<(() => void) | undefined>;
+  /** The queue's order of the latest batch that the document kept (nextOrder). */
+  private lastOrder = 0;
+  /** The writes of the device's queue under way, one at a time, in order. */
+  private saving: Promise<void> = Promise.resolve();
+  /** How many writes of the device's queue are under way (busy). */
+  private saves = 0;
+  /** The taking of the project's batches that the device's queue keeps, once begun (adoptQueue). */
+  private adopting: Promise<void> | undefined;
+  /** Stops taking the batches of the documents of other tabs that close (QueueStore.adopt). */
+  private stopAdopting: (() => void) | undefined;
+  /**
+   * The batches that undo took out of the device's queue, the latest last,
+   * which redo puts back, until the page makes another change (AC4); kept
+   * by the page alone, as a reload begins anew.
+   */
+  private withdrawn: { commands: Command[]; history: boolean }[] = [];
+  /** The timer of the queue's next try, while the server gives no answer, or refuses for when it was asked. */
+  private retryTimer: ReturnType<typeof setTimeout> | undefined;
+  /** How many tries in a row the server gave no answer to, which spaces the next (backoff). */
+  private retryFailures = 0;
+  /** Counts the changes of what the sync panel lists (DocumentState.queueVersion). */
+  private queueChanges = 0;
+  /** Stops following the browser's connection and the page's session, which the queue waits for. */
+  private readonly stopFollowing: (() => void)[] = [];
 
   constructor(projectId: string, options: DocumentOptions) {
     this.projectId = projectId;
@@ -866,8 +989,50 @@ export class ProjectDocument {
       redoable: this.history.redoable,
       historyVersion: this.history.version,
       stepping: false,
+      queued: 0,
+      review: 0,
+      holding: false,
+      undoLocal: false,
+      redoLocal: false,
+      queueVersion: 0,
     }));
+    const queue = this.queue;
+    this.ownerLock =
+      queue === undefined
+        ? Promise.resolve(undefined)
+        : queue.hold(this.owner).catch(() => undefined);
+    if (queue !== undefined) {
+      // The queue is sent once the browser is online again, and once the
+      // page has its own session, as one that started offline asks for it.
+      const onConnection = options.onConnection;
+      if (onConnection !== undefined) {
+        this.stopFollowing.push(
+          onConnection((online) => {
+            if (online) {
+              this.tryAgainNow();
+            } else {
+              this.show();
+            }
+          }),
+        );
+      }
+      this.stopFollowing.push(
+        options.queryClient.getQueryCache().subscribe((event) => {
+          if (
+            event.query.queryKey[0] === sessionQuery.queryKey[0] &&
+            event.type === "updated"
+          ) {
+            void this.pump();
+          }
+        }),
+      );
+    }
     this.starting = this.begin();
+  }
+
+  /** The device's queue of the batches that the server has yet to answer, where the page keeps one, and knows its account. */
+  private get queue(): QueueStore | undefined {
+    return this.userId === undefined ? undefined : this.options.queue;
   }
 
   /** Settles once the project has been read, and the document follows it. */
@@ -966,7 +1131,10 @@ export class ProjectDocument {
    * or the project's seq, which tells whether the history kept over a
    * reload is of what the server has (seqChecks), or sending the page's
    * batches, or a step of the history, whose answers join the history,
-   * which a document dropped keeps no longer in the tab's storage (dispose).
+   * which a document dropped keeps no longer in the tab's storage (dispose),
+   * or holding batches that the device's queue keeps, which it sends once
+   * the server answers, rather than leave them for the next page that opens
+   * the project, or keeping them there.
    */
   get busy(): boolean {
     return (
@@ -976,7 +1144,11 @@ export class ProjectDocument {
       this.seqChecks > 0 ||
       this.resyncing !== undefined ||
       this.sends.size > 0 ||
-      this.stepUnderWay !== undefined
+      this.stepUnderWay !== undefined ||
+      this.entries.some(
+        (e) => e.held !== undefined && e.answer === undefined,
+      ) ||
+      this.saves > 0
     );
   }
 
@@ -1002,6 +1174,11 @@ export class ProjectDocument {
       userId === undefined || copies === undefined
         ? undefined
         : copies.seqOf(userId, this.projectId).catch(() => undefined);
+    // The batches of the project that the device's queue keeps and that no
+    // open page's document holds, as of a tab that closed, or a browser that
+    // restarted (PRD FR-OFF-03 AC1), which the page shows on top of what the
+    // server confirmed, and sends, as its own, read while the project is.
+    const adopting = this.adoptQueue();
     let body = await this.options.queryClient.ensureQueryData(
       projectQuery(this.projectId),
     );
@@ -1055,6 +1232,10 @@ export class ProjectDocument {
       }
     } else {
       this.confirmed = { ...emptyDoc(body.seq), project: projectOf(body) };
+    }
+    await adopting;
+    if (this.disposed) {
+      return;
     }
     // A read of the project as of a seq before the steps of the history, kept
     // over a reload, may be one that the query client kept from before them,
@@ -1119,6 +1300,11 @@ export class ProjectDocument {
           this.wasLive = true;
         }
         this.store.setState({ live });
+        // The server answers again: the device's queue is sent at once,
+        // rather than once its next try is due.
+        if (live && this.retryTimer !== undefined) {
+          this.tryAgainNow();
+        }
         // The answers to the page's batches past what the document has, as
         // one whose operations the socket was lost before it brought, are
         // followed by the project read anew, as they are once they come
@@ -1151,6 +1337,101 @@ export class ProjectDocument {
     if (this.copied) {
       this.liveWait = this.whenLive(confirmWait);
     }
+    // The batches that the device's queue kept are sent, once the server
+    // answers.
+    void this.pump();
+  }
+
+  /**
+   * Takes the project's batches that the device's queue keeps, of no open
+   * page's document, as the document's own, once, which the page shows on
+   * top of what the server confirmed, before any that it made since, and
+   * from then on those of another tab's document that closes, after its
+   * own; resolves once it has taken the first, at once where the page keeps
+   * no queue, and never rejects.
+   */
+  private adoptQueue(): Promise<void> {
+    this.adopting ??= this.adoptOnce();
+    return this.adopting;
+  }
+
+  private async adoptOnce(): Promise<void> {
+    const queue = this.queue;
+    const userId = this.userId;
+    if (queue === undefined || userId === undefined) {
+      return;
+    }
+    // A batch is taken as the document's once it holds its lock, so that
+    // another tab's takes none of what it takes.
+    if ((await this.ownerLock) === undefined || this.disposed) {
+      return;
+    }
+    const taken = await queue
+      .adopt(userId, this.projectId, this.owner, (batches) =>
+        this.adoptMore(batches),
+      )
+      .catch(() => undefined);
+    if (taken === undefined) {
+      return;
+    }
+    if (this.disposed) {
+      taken.stop();
+      return;
+    }
+    this.stopAdopting = taken.stop;
+    for (const batch of taken.batches) {
+      this.lastOrder = Math.max(this.lastOrder, batch.order);
+    }
+    this.entries = [
+      ...taken.batches.map((b) => this.heldEntry(b)),
+      ...this.entries,
+    ];
+    this.queueChanged();
+  }
+
+  /** Takes batches of another tab's document that closed, after the document's own, and sends them. */
+  private adoptMore(batches: QueuedBatch[]): void {
+    if (this.disposed) {
+      return;
+    }
+    for (const batch of batches) {
+      this.lastOrder = Math.max(this.lastOrder, batch.order);
+    }
+    this.entries = [...this.entries, ...batches.map((b) => this.heldEntry(b))];
+    this.queueChanged();
+    void this.pump();
+  }
+
+  /** Returns the entry of a batch that the device's queue keeps, as its document holds it. */
+  private heldEntry(batch: QueuedBatch): Entry {
+    return {
+      commands: batch.commands,
+      key: batch.key,
+      time: batch.time,
+      base: new Map(
+        batch.base.map(([id, b]) => [
+          id,
+          {
+            entity: (b.entity ?? undefined) as Revised | undefined,
+            exact: b.exact,
+          },
+        ]),
+      ),
+      before: new Map(batch.before),
+      parts: new Set(batch.parts),
+      retries: batch.retries,
+      known:
+        batch.known === undefined
+          ? undefined
+          : { latest: batch.known, restores: this.restores },
+      step: false,
+      history: batch.history,
+      // A batch that needs review is not sent until the user decides.
+      sent: false,
+      held: batch,
+      resolve: () => {},
+      reject: () => {},
+    };
   }
 
   /**
@@ -1188,6 +1469,15 @@ export class ProjectDocument {
     this.disposed = true;
     clearTimeout(this.resyncTimer);
     clearTimeout(this.lostTimer);
+    clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    for (const stop of this.stopFollowing.splice(0)) {
+      stop();
+    }
+    this.stopAdopting?.();
+    // The lock goes once the writes under way are done, so that another
+    // tab's document takes the batches as they are written.
+    void this.saving.then(() => this.ownerLock).then((release) => release?.());
     for (const follower of this.followers) {
       follower.dispose();
     }
@@ -1926,14 +2216,36 @@ export class ProjectDocument {
     for (const waiting of this.waiting) {
       view = shownOn(view, waiting);
     }
+    let queued = 0;
+    let review = 0;
+    for (const entry of this.entries) {
+      // A batch that the server has answered is the queue's no longer, though
+      // the page shows it until the document has its operation (settle).
+      if (entry.held !== undefined && entry.answer === undefined) {
+        queued++;
+        if (entry.held.state === "review") {
+          review++;
+        }
+      }
+    }
+    const reason = this.holdReason();
+    const local = this.withdrawableCount();
     this.store.setState({
       view,
       sending:
         this.entries.filter((e) => e.answer === undefined).length +
         this.waiting.length,
-      undoable: this.history.undoable,
-      redoable: this.history.redoable,
-      historyVersion: this.history.version,
+      undoable: this.history.undoable + local,
+      redoable: this.history.redoable + this.withdrawn.length,
+      // The steps that undo and redo would take out of the device's queue,
+      // or put back, are steps too.
+      historyVersion: this.history.version + this.queueChanges,
+      queued,
+      review,
+      holding: reason !== undefined && reason !== "review",
+      undoLocal: local > 0,
+      redoLocal: this.withdrawn.length > 0,
+      queueVersion: this.queueChanges,
     });
   }
 
@@ -2605,12 +2917,30 @@ export class ProjectDocument {
    * revision, which are no change made elsewhere (ownMoves). The batch's
    * undo joins the history, unless options say that it does not, as of a
    * comment's commands, which are no step of the page's undo (plan item 74):
-   * the history is then as it was, its redo too.
+   * the history is then as it was, its redo too. A batch of the draft that
+   * the page cannot send now, as offline, or that no answer comes to, is
+   * kept in the device's queue, where the page keeps one, and resolves as
+   * queued once it is (PRD FR-OFF-03), the page showing it all the same:
+   * its answer, once the queue is sent, joins the history as any does.
    */
   send(
     commands: readonly Command[],
     options: SendOptions = {},
-  ): Promise<CommandResultBody> {
+  ): Promise<SendResult> {
+    // A new change, after which what undo took out of the device's queue is
+    // not put back (AC4).
+    if (options.history !== false && this.withdrawn.length > 0) {
+      this.withdrawn = [];
+      this.queueChanged();
+    }
+    return this.sendTracked(commands, options);
+  }
+
+  /** Sends a batch as send does, without ending what redo would put back, as redo itself sends one. */
+  private sendTracked(
+    commands: readonly Command[],
+    options: SendOptions,
+  ): Promise<SendResult> {
     const sending = this.sendAfterSteps(commands, undefined, options);
     this.sends.add(sending);
     const settled = () => {
@@ -2637,7 +2967,7 @@ export class ProjectDocument {
     commands: readonly Command[],
     waiting: Waiting | undefined,
     options: SendOptions,
-  ): Promise<CommandResultBody> {
+  ): Promise<SendResult> {
     const underWay = this.stepUnderWay;
     if (underWay !== undefined) {
       let held = waiting;
@@ -2663,26 +2993,44 @@ export class ProjectDocument {
     return batch;
   }
 
-  /** Sends a batch as send does, made at time, or now, adding its undo to the history once it has applied, unless options say that it does not. */
+  /**
+   * Sends a batch as send does, made at time, or now, its undo joining the
+   * history once it has applied, before it resolves, unless options say
+   * that it does not (joinHistory).
+   */
   private async sendBatch(
     commands: readonly Command[],
     time: string | undefined,
     options: SendOptions,
-  ): Promise<CommandResultBody> {
-    const sent = await this.enqueue(commands, conflictRetries, false, time);
-    const answer = sent.answer;
-    if (answer.status === "applied" && options.history !== false) {
-      this.history.done(
-        answer.undo == null || answer.undo.length === 0
-          ? undefined
-          : { commands: answer.undo, seqs: [answer.seq] },
-      );
-      if (sent.captured !== undefined && answer.undo?.length) {
-        this.history.capture(answer.seq, sent.captured);
-      }
-      this.show();
+  ): Promise<SendResult> {
+    const sent = await this.enqueue(
+      commands,
+      conflictRetries,
+      false,
+      time,
+      options.history !== false,
+    );
+    return "answer" in sent ? sent.answer : sent;
+  }
+
+  /**
+   * Adds the undo of entry, which applied with answer, to the history, as
+   * the user's latest change: as its caller hears of it, or, of a batch of
+   * the device's queue, whose caller was told that it is queued, as the
+   * queue is sent.
+   */
+  private joinHistory(entry: Entry, answer: CommandResultBody): void {
+    if (answer.status !== "applied" || !entry.history) {
+      return;
     }
-    return answer;
+    this.history.done(
+      answer.undo == null || answer.undo.length === 0
+        ? undefined
+        : { commands: answer.undo, seqs: [answer.seq] },
+    );
+    if (entry.captured !== undefined && answer.undo?.length) {
+      this.history.capture(answer.seq, entry.captured);
+    }
   }
 
   /**
@@ -2742,6 +3090,146 @@ export class ProjectDocument {
       ...this.sends,
       ...(this.stepUnderWay === undefined ? [] : [this.stepUnderWay.done]),
     ]);
+    // And the batches of the device's queue, while it is sent, as once the
+    // browser is online again, but not while it is kept for want of the
+    // server, or of the user's review, which may be for long.
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        const state = this.store.getState();
+        return state.queued === 0 || state.holding || this.disposed;
+      };
+      if (done()) {
+        resolve();
+        return;
+      }
+      const stop = this.store.subscribe(() => {
+        if (done()) {
+          stop();
+          resolve();
+        }
+      });
+    });
+  }
+
+  /**
+   * Returns the batches of the page's that the server has yet to answer, in
+   * the order that they are sent, as the sync panel lists them (PRD
+   * FR-OFF-06): those of the device's queue, and those on their way, or
+   * waiting for a step of the history.
+   */
+  pendingBatches(): PendingBatch[] {
+    const pending: PendingBatch[] = [];
+    for (const entry of this.entries) {
+      if (entry.answer !== undefined) {
+        continue;
+      }
+      const held = entry.held;
+      pending.push({
+        id: held?.id ?? entry.commands[0]?.command_id ?? "",
+        time: entry.time,
+        commands: entry.commands,
+        state:
+          held === undefined
+            ? "sending"
+            : held.state === "review"
+              ? "review"
+              : "queued",
+        sent: held?.sent ?? entry.sent,
+        ...(held?.refusal === undefined ? {} : { refusal: held.refusal }),
+      });
+    }
+    for (const waiting of this.waiting) {
+      pending.push({
+        id: "",
+        time: waiting.time,
+        commands: waiting.commands as CommandBody[],
+        state: "sending",
+        sent: false,
+      });
+    }
+    return pending;
+  }
+
+  /**
+   * Returns the entry that undo takes out of the device's queue, which needs
+   * no connection (AC4): the page's latest batch, once the queue keeps it,
+   * a change of the user's, as long as it never reached the server, as one
+   * that the page has not sent, nor sent and got no answer to, which may
+   * have applied, and the server has not refused for what it does.
+   */
+  private withdrawable(): Entry | undefined {
+    const last = this.entries.at(-1);
+    return last !== undefined && this.withdraws(last) ? last : undefined;
+  }
+
+  /** Reports whether undo would take entry out of the device's queue, were it the latest (withdrawable). */
+  private withdraws(entry: Entry): boolean {
+    const held = entry.held;
+    return (
+      held !== undefined &&
+      entry.history &&
+      !entry.sent &&
+      !held.sent &&
+      held.state === "pending" &&
+      entry.answer === undefined
+    );
+  }
+
+  /** How many of the page's latest batches undo would take out of the device's queue in turn. */
+  private withdrawableCount(): number {
+    let count = 0;
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      if (!this.withdraws(this.entries[i] as Entry)) {
+        break;
+      }
+      count++;
+    }
+    return count;
+  }
+
+  /**
+   * Takes entry out of the device's queue, and out of what the page shows,
+   * as the undo of a change that never reached the server, and keeps its
+   * commands for redo, resolving once the queue no longer keeps it, or
+   * rejecting, with entry back in its place, where the device refused.
+   */
+  private async withdraw(entry: Entry): Promise<boolean> {
+    const held = entry.held as QueuedBatch;
+    this.entries = this.entries.filter((e) => e !== entry);
+    const undone = {
+      commands: entry.commands.map(
+        ({ command_id: _, ...command }) => command as Command,
+      ),
+      history: entry.history,
+    };
+    this.withdrawn.push(undone);
+    this.queueChanged();
+    try {
+      await this.persist([held.id]);
+    } catch (error) {
+      // The device still keeps it, which the page would send once it loads
+      // anew: it is kept, as the latest, unless the page has made another
+      // change meanwhile, after which it goes back behind those.
+      this.withdrawn = this.withdrawn.filter((w) => w !== undone);
+      if (!this.disposed) {
+        this.entries = [...this.entries, entry];
+        this.queueChanged();
+        void this.pump();
+      }
+      throw error;
+    }
+    return true;
+  }
+
+  /** Puts the batch that undo took out of the device's queue last back, as a change of the page's anew, resolving once it is queued or answered. */
+  private async putBack(): Promise<boolean> {
+    const batch = this.withdrawn.pop();
+    if (batch === undefined) {
+      return false;
+    }
+    this.queueChanged();
+    await this.sendTracked(batch.commands, { history: batch.history });
+    return true;
   }
 
   /**
@@ -2760,6 +3248,34 @@ export class ProjectDocument {
       }
       const after = () => this.step(which);
       return underWay.done.then(after, after);
+    }
+    // The latest change that the device's queue keeps and that never reached
+    // the server is undone there, with no connection, and put back by redo,
+    // as a step under way, which the page's batches made meanwhile wait for
+    // (AC4).
+    const local =
+      which === "undo"
+        ? this.withdrawable()
+        : this.withdrawn.length > 0
+          ? true
+          : undefined;
+    if (local !== undefined) {
+      const done = (
+        local === true ? this.putBack() : this.withdraw(local)
+      ).finally(() => {
+        if (this.stepUnderWay?.done === done) {
+          this.stepUnderWay = undefined;
+          this.show();
+        }
+      });
+      this.stepUnderWay = { which, done };
+      return done;
+    }
+    // A step of the history waits for the batches that the device's queue
+    // keeps, which come before it, and which the page cannot undo before
+    // the server has answered them, as the button says.
+    if (this.entries.some((e) => e.held !== undefined)) {
+      return Promise.resolve(false);
     }
     const newest = () =>
       which === "undo" ? this.history.nextUndo() : this.history.nextRedo();
@@ -2785,7 +3301,7 @@ export class ProjectDocument {
   private async stepped(
     which: "undo" | "redo",
     newest: () => Step | undefined,
-    earlier: readonly Promise<CommandResultBody>[],
+    earlier: readonly Promise<SendResult>[],
   ): Promise<boolean> {
     this.store.setState({ stepping: true });
     try {
@@ -2957,7 +3473,10 @@ export class ProjectDocument {
       throw new WentBackError();
     }
     try {
-      return [await this.enqueue(commands as unknown as Command[], 0, true)];
+      // A step is never kept in the device's queue (keepable).
+      return [
+        (await this.enqueue(commands as unknown as Command[], 0, true)) as Sent,
+      ];
     } catch (error) {
       if (!undoTooLarge(error) || commands.length < 2) {
         throw error;
@@ -2990,13 +3509,19 @@ export class ProjectDocument {
     }
   }
 
-  /** Queues a batch, made at time, or now, which the page shows at once, a step of the history or not (Entry.step), and resolves with its answer. */
+  /**
+   * Queues a batch, made at time, or now, which the page shows at once, a
+   * step of the history or not (Entry.step), whose undo joins the history
+   * once it applies, if history says so, and resolves with its answer, or
+   * as queued, once the device's queue keeps it (keep).
+   */
   private enqueue(
     commands: readonly Command[],
     retries: number,
     step: boolean,
     time = this.now(),
-  ): Promise<Sent> {
+    history = false,
+  ): Promise<Sent | Queued> {
     const key = JSON.stringify(commands);
     // A batch the same as one that is queued or under way, as once a change
     // goes back and forth, is another batch, with IDs of its own, which the
@@ -3055,7 +3580,7 @@ export class ProjectDocument {
         }
       }
     }
-    return new Promise<Sent>((resolve, reject) => {
+    return new Promise<Sent | Queued>((resolve, reject) => {
       const entry: Entry = {
         commands: withIds,
         key,
@@ -3066,6 +3591,7 @@ export class ProjectDocument {
         retries,
         known: again?.known,
         step,
+        history: history && !step,
         sent: false,
         resolve: (answer, restores) =>
           resolve({
@@ -3075,11 +3601,237 @@ export class ProjectDocument {
             restores,
           }),
         reject,
+        queued: () => resolve({ status: "queued" }),
       };
       this.entries.push(entry);
       this.show();
       void this.pump();
     });
+  }
+
+  /**
+   * Reports whether the device's queue can keep entry, rather than refuse
+   * it once the page cannot send it (PRD FR-OFF-03): a batch of the draft,
+   * where the page keeps a queue; not a step of the history, which the
+   * history keeps until it is sent, nor a batch of what is no part of the
+   * draft, as a comment's, whose page says that it needs a connection.
+   */
+  private keepable(entry: Entry): boolean {
+    return (
+      this.queue !== undefined &&
+      !entry.step &&
+      !entry.commands.some((command) => outside(command))
+    );
+  }
+
+  /**
+   * Returns why the document keeps the batches that it can in the device's
+   * queue, rather than send them now, or undefined where it sends them: a
+   * queued batch that needs review, which every batch after it waits for
+   * (plan item 92); a browser that has no connection; a try that no answer
+   * came to, until the next (retryTimer); or a page that holds the session
+   * that the device kept, without its CSRF token, which no change can be
+   * sent with, until the page has its own (PRD FR-OFF-02).
+   */
+  private holdReason():
+    | "review"
+    | "offline"
+    | "unanswered"
+    | "session"
+    | undefined {
+    if (this.queue === undefined) {
+      return undefined;
+    }
+    if (this.entries.some((e) => e.held?.state === "review")) {
+      return "review";
+    }
+    if (!this.isOnline()) {
+      return "offline";
+    }
+    if (this.retryTimer !== undefined) {
+      return "unanswered";
+    }
+    const session = this.options.queryClient.getQueryData(
+      sessionQuery.queryKey,
+    );
+    if (session && session.csrf_token === "") {
+      return "session";
+    }
+    return undefined;
+  }
+
+  /**
+   * Keeps in the device's queue each batch of the page's that it can keep,
+   * and does not yet, that the document has not sent, as the page cannot
+   * send it now (holdReason): its caller is told that it is queued once it
+   * is written; one that the device refuses, as for its quota, is refused
+   * with error, as it would be without a queue. A change that the queue
+   * keeps ends what the history could redo, as its answer would.
+   */
+  private keep(error: unknown): void {
+    const fresh = this.entries.filter(
+      (e) => !e.sent && e.held === undefined && this.keepable(e),
+    );
+    if (fresh.length === 0) {
+      return;
+    }
+    for (const entry of fresh) {
+      entry.held = this.batchOf(entry);
+      entry.dirty = true;
+    }
+    if (fresh.some((e) => e.history)) {
+      this.history.endRedo();
+    }
+    this.queueChanged();
+    this.persist().then(
+      () => {
+        for (const entry of fresh) {
+          entry.queued?.();
+        }
+      },
+      (failure: unknown) => {
+        if (!overQuota(failure)) {
+          this.options.log.record("error", failure);
+        }
+        for (const entry of fresh) {
+          if (!entry.sent && this.entries.includes(entry)) {
+            this.entries = this.entries.filter((e) => e !== entry);
+            entry.reject(error);
+          } else {
+            // On its way meanwhile, as the browser came online again: its
+            // answer settles it.
+            entry.queued = undefined;
+          }
+        }
+        this.queueChanged();
+      },
+    );
+  }
+
+  /**
+   * Writes to the device's queue, after the writes before, in one
+   * transaction, each batch that it keeps of which it keeps what is behind
+   * (Entry.dirty), and the removal of those of the IDs of remove, resolving
+   * once it has, or rejecting where the device refused.
+   */
+  private persist(remove: readonly string[] = []): Promise<void> {
+    const queue = this.queue;
+    const userId = this.userId;
+    if (queue === undefined || userId === undefined) {
+      return Promise.resolve();
+    }
+    const put: QueuedBatch[] = [];
+    for (const entry of this.entries) {
+      if (entry.held !== undefined && entry.dirty) {
+        entry.dirty = false;
+        entry.held = this.batchOf(entry);
+        put.push(entry.held);
+      }
+    }
+    if (put.length === 0 && remove.length === 0) {
+      return this.saving;
+    }
+    this.saves++;
+    const write = this.saving.then(async () => {
+      await this.ownerLock;
+      await queue.save(userId, this.projectId, put, remove);
+    });
+    const done = () => {
+      this.saves--;
+    };
+    write.then(done, done);
+    this.saving = write.catch(() => undefined);
+    return write;
+  }
+
+  /**
+   * Writes to the device's queue what is behind of the batches that it
+   * keeps, and the removals of remove, as persist does, recording a write
+   * that failed, after which the queue keeps them as they were, as a page
+   * that loads anew sends them, and is answered as they would be.
+   */
+  private persistLater(remove: readonly string[] = []): void {
+    this.persist(remove).catch((error: unknown) => {
+      if (!overQuota(error)) {
+        this.options.log.record("error", error);
+      }
+    });
+  }
+
+  /** Returns the batch of entry as the device's queue keeps it, with changes, as of what entry holds now. */
+  private batchOf(
+    entry: Entry,
+    changes: Partial<Pick<QueuedBatch, "state" | "refusal" | "sent">> = {},
+  ): QueuedBatch {
+    const held = entry.held;
+    if (held === undefined) {
+      this.lastOrder = nextOrder(entry.time, this.lastOrder);
+    }
+    const refusal = changes.refusal ?? held?.refusal;
+    return {
+      id: held?.id ?? formatUuid(newUuid()),
+      owner: this.owner,
+      order: held?.order ?? this.lastOrder,
+      format: queueFormat,
+      time: entry.time,
+      commands: entry.commands,
+      key: entry.key,
+      base: [...entry.base].map(([id, b]) => [
+        id,
+        {
+          entity: (b.entity ?? null) as Record<string, unknown> | null,
+          exact: b.exact,
+        },
+      ]),
+      before: [...entry.before],
+      parts: [...entry.parts],
+      retries: entry.retries,
+      ...(entry.known === undefined ? {} : { known: entry.known.latest }),
+      sent: changes.sent ?? held?.sent ?? false,
+      history: entry.history,
+      state: changes.state ?? held?.state ?? "pending",
+      ...(refusal === undefined ? {} : { refusal }),
+    };
+  }
+
+  /** Counts a change of what the sync panel lists, and shows it. */
+  private queueChanged(): void {
+    this.queueChanges++;
+    this.show();
+  }
+
+  /**
+   * Has the queue tried again later, as the server gave no answer, or refused
+   * for when it was asked, the longer the more tries in a row it did,
+   * exponentially, with full jitter, as the channel's socket does (backoff),
+   * or at once once the browser is online again, or the channel live.
+   */
+  private tryAgainLater(): void {
+    if (this.disposed) {
+      return;
+    }
+    clearTimeout(this.retryTimer);
+    const delay = backoff(
+      this.retryFailures,
+      this.options.random ?? Math.random,
+    );
+    this.retryFailures++;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      void this.pump();
+      this.show();
+    }, delay);
+    this.show();
+  }
+
+  /** Tries the queue again at once, as once the browser is online again, or the channel live. */
+  private tryAgainNow(): void {
+    if (this.retryTimer !== undefined) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = undefined;
+    }
+    this.show();
+    void this.pump();
   }
 
   /**
@@ -3100,12 +3852,34 @@ export class ProjectDocument {
       : { entity: held, exact: true };
   }
 
-  /** Sends the next queued batch, once the one before has been answered. */
+  /**
+   * Sends the next queued batch, once the one before has been answered.
+   * While the page cannot send what the device's queue can keep (holdReason),
+   * the queue keeps it, and the batch sent is the next that it cannot keep,
+   * as a comment's, which is sent as it would be without a queue, and
+   * refused for want of a connection, or else sent before the batches that
+   * the queue keeps, which change nothing that it changes. A document that
+   * has been dropped sends none of the queue's, which another tab's, or the
+   * project's next, takes.
+   */
   private async pump(): Promise<void> {
     if (this.inflight) {
       return;
     }
-    const entry = this.entries.find((e) => !e.sent);
+    const reason = this.holdReason();
+    if (reason !== undefined && !this.disposed) {
+      this.keep(
+        reason === "offline" || reason === "unanswered"
+          ? new NetworkError(new TypeError("The server cannot be reached."))
+          : undefined,
+      );
+    }
+    const entry = this.entries.find(
+      (e) =>
+        !e.sent &&
+        (reason === undefined || !this.keepable(e)) &&
+        !(this.disposed && e.held !== undefined),
+    );
     if (entry === undefined) {
       return;
     }
@@ -3114,14 +3888,21 @@ export class ProjectDocument {
     // What the server is known to have had as the batch's commands were
     // first sent, past which they commit, if they apply, and past which the
     // server's answer to them sent again gives the seq that applied them.
+    if (entry.known === undefined && entry.held !== undefined) {
+      entry.dirty = true;
+    }
     entry.known ??= this.knownNow();
     const known = entry.known;
+    // Whether the batch reached the request, which may then have applied.
+    let posted = false;
     try {
       await this.whenReady();
       // The restores that the document had found as the batch was sent,
       // after which its answer is of what the server has (Sent.restores).
       let restores = this.restores;
+      posted = true;
       const answer = await this.post(entry.commands);
+      this.retryFailures = 0;
       // A batch that applied at a seq that the server had had before its
       // commands were first sent tells that its seq went back, as of a
       // database restored from an older backup, which the channel may tell
@@ -3176,6 +3957,16 @@ export class ProjectDocument {
         entry.followed ??= unanswered.followed;
       }
       this.unanswered.delete(entry.key);
+      // Its undo joins the history before its caller hears of it, or as the
+      // device's queue is sent, whose batch the queue no longer keeps, with
+      // what moved of those after it, in one write (persist).
+      this.joinHistory(entry, answer);
+      if (entry.held !== undefined) {
+        this.persistLater([entry.held.id]);
+        this.queueChanged();
+      } else {
+        this.persistLater();
+      }
       this.settle();
       this.catchUp();
       entry.resolve(answer, restores);
@@ -3186,41 +3977,144 @@ export class ProjectDocument {
         this.adopt(error);
       }
       if (this.retried(entry, error)) {
+        if (entry.held !== undefined) {
+          // Refused, it applied nothing, and is sent again with new IDs.
+          entry.held = this.batchOf(entry, { sent: false });
+          entry.dirty = true;
+          this.persistLater();
+        }
         return;
       }
-      if (answered(error)) {
-        // The server answers a batch sent again with these IDs alike, so
-        // the next has IDs of its own.
-        this.unanswered.delete(entry.key);
-      } else {
-        // A batch that no answer came to may have applied all the same: one
-        // sent again as it was has the IDs that its commands had, which the
-        // server answers as the batch that it applied, if it did.
-        this.unanswered.set(entry.key, {
-          ids: entry.commands.map((c) => c.command_id),
-          known,
-        });
-        if (!this.store.getState().live) {
-          // The channel, while it is not live, would not bring it: the
-          // parts that it changes are read again, so that the page shows
-          // it, as a board that a dialog created, rather than offer to make
-          // it anew, with IDs of its own, which would make another.
-          for (const part of entry.parts) {
-            void this.reread(part);
-          }
-        }
+      if (this.queueKept(entry, error, posted)) {
+        return;
       }
-      this.entries = this.entries.filter((e) => e !== entry);
-      this.show();
-      entry.reject(
-        conflictOf(error)
-          ? new ConflictError(error, this.overlaps(entry, error))
-          : error,
-      );
+      this.refuse(entry, error, known);
     } finally {
       this.inflight = false;
       void this.pump();
     }
+  }
+
+  /**
+   * Takes entry, which the server refused, or did not answer, out of what
+   * the page shows, and refuses it to its caller with error, as a
+   * ConflictError where it is one, which names what both changed.
+   */
+  private refuse(entry: Entry, error: unknown, known: Known): void {
+    if (answered(error)) {
+      // The server answers a batch sent again with these IDs alike, so the
+      // next has IDs of its own.
+      this.unanswered.delete(entry.key);
+    } else {
+      // A batch that no answer came to may have applied all the same: one
+      // sent again as it was has the IDs that its commands had, which the
+      // server answers as the batch that it applied, if it did.
+      this.unanswered.set(entry.key, {
+        ids: entry.commands.map((c) => c.command_id),
+        known,
+      });
+      if (!this.store.getState().live) {
+        // The channel, while it is not live, would not bring it: the parts
+        // that it changes are read again, so that the page shows it, as a
+        // board that a dialog created, rather than offer to make it anew,
+        // with IDs of its own, which would make another.
+        for (const part of entry.parts) {
+          void this.reread(part);
+        }
+      }
+    }
+    this.entries = this.entries.filter((e) => e !== entry);
+    this.show();
+    entry.reject(
+      conflictOf(error)
+        ? new ConflictError(error, this.overlaps(entry, error))
+        : error,
+    );
+  }
+
+  /**
+   * Keeps entry in the device's queue, rather than refuse it to its caller,
+   * once error tells that the server did not answer it, or refused a batch
+   * that the queue keeps, and reports whether it did (PRD FR-OFF-03). A
+   * batch that no answer came to, posted or not, which the queue can keep,
+   * is kept, and the queue is tried again later, with its commands' IDs, as
+   * it may have applied; its caller hears that it is queued once it is
+   * written, or, where the device refuses, its refusal. A batch of the queue
+   * refused for when or by whom it was sent, as a session that ended (401),
+   * a role that does not allow it (403), a request of too many (429), an
+   * archived project, or a failure of the server's own, waits too, and is
+   * tried again later; one refused for what it does, as for what changed
+   * since, needs review, with every batch after it (plan item 92).
+   */
+  private queueKept(entry: Entry, error: unknown, posted: boolean): boolean {
+    const held = entry.held;
+    const answer = error instanceof ApiError ? error : undefined;
+    if (held === undefined && (answer !== undefined || !this.keepable(entry))) {
+      return false;
+    }
+    entry.sent = false;
+    if (answer === undefined) {
+      if (held === undefined) {
+        entry.held = this.batchOf(entry, { sent: posted });
+        entry.dirty = true;
+        if (entry.history) {
+          this.history.endRedo();
+        }
+        const known = entry.known as Known;
+        this.persist().then(
+          () => entry.queued?.(),
+          (failure: unknown) => {
+            if (!overQuota(failure)) {
+              this.options.log.record("error", failure);
+            }
+            // The device could not keep it: it is refused as it would be
+            // without a queue, unless it is on its way again meanwhile.
+            if (!entry.sent && this.entries.includes(entry)) {
+              entry.held = undefined;
+              this.refuse(entry, error, known);
+              this.queueChanged();
+            }
+          },
+        );
+      } else {
+        if (posted && !held.sent) {
+          entry.held = this.batchOf(entry, { sent: true });
+        }
+        entry.dirty = true;
+        this.persistLater();
+      }
+      this.tryAgainLater();
+      this.queueChanged();
+      return true;
+    }
+    // Refused: a batch that the queue keeps, as one refused to its caller
+    // returned above.
+    const kept = held as QueuedBatch;
+    const refusal: Refusal = {
+      status: answer.status,
+      ...(answer.error === undefined ? {} : { error: answer.error }),
+      at: this.now(),
+    };
+    const waits = answered(answer)
+      ? !refusedForGood(answer)
+      : answer.status >= 500 || answer.status === 408 || answer.status === 429;
+    entry.held = this.batchOf(entry, {
+      refusal,
+      state: waits ? "pending" : "review",
+      // A refusal applied nothing, but a failure of the server's own may
+      // have come after the batch committed.
+      sent: waits && (kept.sent || (posted && answer.status >= 500)),
+    });
+    entry.dirty = true;
+    this.persistLater();
+    if (waits) {
+      if (sessionDoubtedBy(answer)) {
+        this.options.checkSession?.();
+      }
+      this.tryAgainLater();
+    }
+    this.queueChanged();
+    return true;
   }
 
   private async post(commands: CommandBody[]): Promise<CommandResultBody> {
@@ -3267,14 +4161,19 @@ export class ProjectDocument {
           continue;
         }
         if (!queued.step) {
-          queued.commands = queued.commands.map((c) =>
+          const commands = queued.commands.map((c) =>
             moved(c, id, from, r.rev),
           );
+          if (commands.some((c, i) => c !== queued.commands[i])) {
+            queued.commands = commands;
+            queued.dirty = true;
+          }
         }
         // A batch made on top of this one, after it, expects what this one
         // is moved to, from which its answer moves it on.
         if (queued.before.get(id) === from) {
           queued.before.set(id, r.rev);
+          queued.dirty = true;
         }
       }
     }

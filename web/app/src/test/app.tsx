@@ -38,6 +38,7 @@ import { copySource, OfflineDatabase } from "../offline/db";
 import { OfflineKeeper } from "../offline/keeper";
 import { keepReads } from "../offline/kept";
 import { onConnection } from "../offline/online";
+import { deviceQueue } from "../offline/queue";
 import type { AppShell } from "../pwa/worker";
 import { parseSearch } from "../router";
 import { routeTree } from "../routeTree.gen";
@@ -162,6 +163,9 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
     storage: window.sessionStorage,
     copies: offlineDb === undefined ? undefined : copySource(offlineDb, secure),
     online: connected,
+    onConnection: (listener) => onConnection(listener),
+    queue:
+      offlineDb === undefined ? undefined : deviceQueue(offlineDb, { secure }),
   });
   const offline =
     offlineDb === undefined

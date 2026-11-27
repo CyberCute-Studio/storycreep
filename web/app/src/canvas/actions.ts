@@ -18,12 +18,7 @@
 // would else not see where the one before put its nodes, and put its own
 // over them, or paste what the clipboard held before the copy just asked.
 
-import type {
-  Clipboard,
-  ClipboardReport,
-  CommandResultBody,
-  Node,
-} from "@storycreep/shared/api";
+import type { Clipboard, ClipboardReport, Node } from "@storycreep/shared/api";
 import { newId } from "@storycreep/shared/ids";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useRef, useState } from "react";
@@ -32,6 +27,7 @@ import { csrfHeaders } from "../auth/session";
 import { holdCopy } from "../document/clipboard";
 import { boardPart } from "../document/doc";
 import { useDocuments, useProjectDocument } from "../document/react";
+import type { SendResult } from "../document/store";
 import type { PaletteColor } from "../project/colors";
 import type { Command } from "../project/queries";
 import {
@@ -157,7 +153,7 @@ export function useCanvasActions(
     const sendOne = async (
       batch: Command[],
       of: Refused = "edit",
-    ): Promise<CommandResultBody | null | undefined> => {
+    ): Promise<SendResult | null | undefined> => {
       if (batch.length === 0) {
         return null;
       }
@@ -304,7 +300,13 @@ export function useCanvasActions(
           if (answer === undefined) {
             return false;
           }
-          if (batch.includes(command) && answer !== null) {
+          // A paste that the device's queue keeps, as one that no answer
+          // came to, shows its nodes once the server has answered it.
+          if (
+            batch.includes(command) &&
+            answer !== null &&
+            answer.status !== "queued"
+          ) {
             await doc.shown(answer.seq, boardPart(boardId));
           }
         }
@@ -324,7 +326,7 @@ export function useCanvasActions(
     const place = async (
       places: ReadonlyMap<string, Point>,
       expected?: ReadonlyMap<string, number>,
-    ): Promise<{ applied: boolean; answer?: CommandResultBody }> => {
+    ): Promise<{ applied: boolean; answer?: SendResult }> => {
       if (places.size === 0) {
         return { applied: true };
       }

@@ -138,7 +138,10 @@ function TrashItem({
       (result) => {
         // A node's connections whose node at the other end is still in the
         // trash come back once that node does (PRD FR-PROJ-06 AC1).
-        const waiting = result.not_reconnected?.length ?? 0;
+        const waiting =
+          result.status === "queued"
+            ? 0
+            : (result.not_reconnected?.length ?? 0);
         onRestored(
           waiting === 0
             ? t("trash.restored", { name })

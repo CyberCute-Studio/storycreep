@@ -30,6 +30,7 @@ import { copySource, OfflineDatabase } from "./offline/db";
 import { OfflineKeeper, tabsBroadcast, writerLock } from "./offline/keeper";
 import { askForOwnSession, keepReads } from "./offline/kept";
 import { onConnection, online } from "./offline/online";
+import { deviceQueue, queueBroadcast, webLocks } from "./offline/queue";
 import { startShell } from "./pwa/worker";
 import { createAppRouter } from "./router";
 import "./styles.css";
@@ -71,8 +72,10 @@ const realtime = createRealtime({
 });
 // What the device keeps of the projects that the account keeps offline
 // (PRD FR-OFF-02), which a project's document starts from, and which the
-// page's queries read once the server does not answer, as offline, in a
-// secure context alone, which a page over plain HTTP is not (FR-OFF-01).
+// page's queries read once the server does not answer, as offline, and the
+// changes that the server has yet to answer (FR-OFF-03), which the page
+// sends once it does, in a secure context alone, which a page over plain
+// HTTP is not (FR-OFF-01).
 const secure = window.isSecureContext;
 const offlineDb = new OfflineDatabase();
 const documents = new Documents({
@@ -83,6 +86,12 @@ const documents = new Documents({
   storage: tabStorage(),
   copies: copySource(offlineDb, secure),
   online: () => online(),
+  onConnection: (listener) => onConnection(listener),
+  queue: deviceQueue(offlineDb, {
+    secure,
+    locks: webLocks(navigator.locks),
+    broadcast: secure ? queueBroadcast() : undefined,
+  }),
 });
 const offline = new OfflineKeeper({
   queryClient,

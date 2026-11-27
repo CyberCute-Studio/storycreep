@@ -9,7 +9,11 @@
 // session changed makes none anew (DeviceRecord). A copy is written in one
 // transaction, which the browser applies whole or not at all, so that a
 // quota that refuses it, or a page that closes meanwhile, leaves the copy
-// that was there, or none.
+// that was there, or none. The device also keeps the account's batches that
+// the server has yet to answer (PRD FR-OFF-03, document/queue.ts), which
+// are no copy's: removing a project from the device, a session that ended,
+// and another account's signing in leave them, and only signing out, which
+// asks first, takes them (deleteQueued, plan note N98).
 
 import type {
   AccountBody,
@@ -26,6 +30,7 @@ import {
   type Part,
   projectOf,
 } from "../document/doc";
+import { inQueueOrder, type QueuedBatch, queueFormat } from "../document/queue";
 import type { CopySource } from "../document/store";
 import type { Workspace } from "../workspace/queries";
 
@@ -120,12 +125,19 @@ interface DeviceRecord {
   user_id: string | null;
 }
 
+/** A batch of an account's project that the server has yet to answer, as the device keeps it (document/queue.ts). */
+export interface QueueRecord extends QueuedBatch {
+  user_id: string;
+  project_id: string;
+}
+
 interface Schema extends DBSchema {
   sessions: { key: string; value: KeptSession };
   pins: { key: [string, string]; value: PinRecord };
   copies: { key: [string, string]; value: CopyRecord };
   entities: { key: [string, string, string]; value: EntityRecord };
   device: { key: string; value: DeviceRecord };
+  queue: { key: [string, string, string]; value: QueueRecord };
 }
 
 /** The key of the device's one record (DeviceRecord). */
@@ -294,7 +306,7 @@ export class OfflineDatabase {
       const opening =
         typeof indexedDB === "undefined"
           ? Promise.reject(new Error("The browser has no IndexedDB."))
-          : openDB<Schema>(databaseName, 2, {
+          : openDB<Schema>(databaseName, 3, {
               upgrade(db, oldVersion) {
                 if (oldVersion < 1) {
                   db.createObjectStore("sessions", { keyPath: "user_id" });
@@ -310,6 +322,11 @@ export class OfflineDatabase {
                 }
                 if (oldVersion < 2) {
                   db.createObjectStore("device");
+                }
+                if (oldVersion < 3) {
+                  db.createObjectStore("queue", {
+                    keyPath: ["user_id", "project_id", "id"],
+                  });
                 }
               },
               // A connection that the browser closed itself, as once the
@@ -762,6 +779,7 @@ export class OfflineDatabase {
       (recorded !== undefined || users.size > 0) && recorded?.user_id !== kept
         ? [device.put({ user_id: kept }, deviceKey)]
         : [];
+    // The account's queued batches are no copy's, and stay (queued).
     for (const user of users) {
       writes.push(
         tx.objectStore("sessions").delete(user),
@@ -771,5 +789,72 @@ export class OfflineDatabase {
       );
     }
     await Promise.all([...writes, tx.done]);
+  }
+
+  /** Returns the batches of userId's that the device keeps for the server, of projectId's alone if given, in the queue's order. */
+  async queued(userId: string, projectId?: string): Promise<QueueRecord[]> {
+    const db = await this.open();
+    const all = await db.getAll(
+      "queue",
+      projectId === undefined ? under(userId) : under(userId, projectId),
+    );
+    return inQueueOrder(all) as QueueRecord[];
+  }
+
+  /**
+   * Takes the batches of userId's projectId of the owners that from allows,
+   * of this version's format (queueFormat), as owner's, in one transaction,
+   * and resolves to them in the queue's order: a batch of another format,
+   * which another version of the app wrote, is kept as it is.
+   */
+  async takeQueued(
+    userId: string,
+    projectId: string,
+    owner: string,
+    from: (owner: string) => boolean,
+  ): Promise<QueueRecord[]> {
+    const db = await this.open();
+    const tx = db.transaction("queue", "readwrite");
+    const store = tx.objectStore("queue");
+    const taken: QueueRecord[] = [];
+    const writes: Promise<unknown>[] = [];
+    for (const record of await store.getAll(under(userId, projectId))) {
+      if (
+        record.owner !== owner &&
+        record.format === queueFormat &&
+        from(record.owner)
+      ) {
+        const mine = { ...record, owner };
+        taken.push(mine);
+        writes.push(store.put(mine));
+      }
+    }
+    await Promise.all([...writes, tx.done]);
+    return inQueueOrder(taken) as QueueRecord[];
+  }
+
+  /** Writes put and removes the batches of the IDs of remove, of userId's projectId, in one transaction. */
+  async saveQueued(
+    userId: string,
+    projectId: string,
+    put: readonly QueuedBatch[],
+    remove: readonly string[],
+  ): Promise<void> {
+    const db = await this.open();
+    const tx = db.transaction("queue", "readwrite");
+    const store = tx.objectStore("queue");
+    await Promise.all([
+      ...remove.map((id) => store.delete([userId, projectId, id])),
+      ...put.map((batch) =>
+        store.put({ ...batch, user_id: userId, project_id: projectId }),
+      ),
+      tx.done,
+    ]);
+  }
+
+  /** Takes every batch of userId's that the device keeps for the server off it, as once the user signs out, having been asked (plan note N98). */
+  async deleteQueued(userId: string): Promise<void> {
+    const db = await this.open();
+    await db.delete("queue", under(userId));
   }
 }

@@ -2,7 +2,17 @@
 // shows: the page's batches, which the page shows before the server has
 // answered them.
 
-import type { ProjectDocument } from "./store";
+import type { DocumentState, ProjectDocument } from "./store";
+
+/**
+ * Reports whether the document of state sends none of the page's batches
+ * but those that the device's queue keeps (PRD FR-OFF-03), which are no
+ * longer the page's to lose, as a reload, and which a read that waits for
+ * the page's batches would wait for until the server answers again.
+ */
+function unsent(state: Pick<DocumentState, "sending" | "queued">): boolean {
+  return state.sending - state.queued <= 0;
+}
 
 /**
  * How long, in milliseconds, a read that the project's document has read
@@ -31,7 +41,7 @@ export function whenSent(
   wait?: number,
 ): Promise<void> {
   return new Promise((resolve) => {
-    if (doc.store.getState().sending === 0 || signal.aborted) {
+    if (unsent(doc.store.getState()) || signal.aborted) {
       resolve();
       return;
     }
@@ -43,7 +53,7 @@ export function whenSent(
       resolve();
     };
     const stop = doc.store.subscribe((state) => {
-      if (state.sending === 0) {
+      if (unsent(state)) {
         done();
       }
     });

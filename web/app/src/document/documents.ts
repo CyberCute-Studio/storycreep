@@ -16,6 +16,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { sessionQuery } from "../api";
 import type { ErrorLog } from "../errors/log";
 import { type ClipboardStore, createClipboard } from "./clipboard";
+import type { QueueStore } from "./queue";
 import type { Realtime } from "./realtime";
 import { whenSent } from "./sent";
 import { type CopySource, ProjectDocument } from "./store";
@@ -36,6 +37,10 @@ export interface DocumentsOptions {
   copies?: CopySource;
   /** Reports whether the browser says that it has a connection (DocumentOptions.online). */
   online?: () => boolean;
+  /** Calls listener as the browser's connection comes and goes (DocumentOptions.onConnection). */
+  onConnection?: (listener: (online: boolean) => void) => () => void;
+  /** The device's queue of the batches that the server has yet to answer (DocumentOptions.queue). */
+  queue?: QueueStore;
 }
 
 interface Held {
