@@ -12,7 +12,7 @@ import { ApiError } from "@storycreep/shared/api";
 import { formatDateTime } from "@storycreep/shared/i18n";
 import { useQueryClient } from "@tanstack/react-query";
 import { Dialog } from "radix-ui";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
@@ -20,6 +20,7 @@ import { useDocumentState, useProjectDocument } from "../document/react";
 import type { PendingBatch } from "../document/store";
 import { Button } from "../ui/Button";
 import { DialogFrame } from "../ui/Dialog";
+import { useKeepsChanges } from "./OfflinePages";
 import { useOnline } from "./online";
 import {
   exportedOf,
@@ -60,10 +61,28 @@ function useLabel(state: SyncState): string {
   }
 }
 
-/** The sync indicator of the pages of projectId, which opens the sync panel. */
-export function SyncIndicator({ projectId }: { projectId: string }) {
+/**
+ * The sync indicator of the pages of projectId, which opens the sync panel,
+ * whose words of the changes kept offline are for a user that edits says
+ * can make them (useKeepsChanges).
+ */
+export function SyncIndicator({
+  projectId,
+  edits,
+}: {
+  projectId: string;
+  edits: boolean;
+}) {
   const state = useSyncState(projectId);
   const label = useLabel(state);
+  // What the live region says, which a screen reader reads each change of:
+  // each state but syncing, which comes and goes with every change saved
+  // online, so that the user hears that the changes are saved, kept on the
+  // device, or need review, rather than of each save as it is made.
+  const [announced, setAnnounced] = useState(label);
+  if (state.state !== "syncing" && announced !== label) {
+    setAnnounced(label);
+  }
   const mark =
     state.state === "review"
       ? "border-danger text-danger"
@@ -72,15 +91,22 @@ export function SyncIndicator({ projectId }: { projectId: string }) {
         : "border-border text-fg-muted";
   return (
     <Dialog.Root>
-      {/* A live region, which a screen reader reads each change of. */}
-      <div role="status" className="flex">
+      <div className="flex">
         <Dialog.Trigger asChild>
           <Button className={mark} aria-haspopup="dialog">
             {label}
           </Button>
         </Dialog.Trigger>
+        <span role="status" className="sr-only">
+          {announced}
+        </span>
       </div>
-      <SyncPanel projectId={projectId} state={state} label={label} />
+      <SyncPanel
+        projectId={projectId}
+        state={state}
+        label={label}
+        edits={edits}
+      />
     </Dialog.Root>
   );
 }
@@ -189,18 +215,24 @@ function Unavailable() {
   );
 }
 
-/** The sync panel of the pages of projectId, as of state, which the indicator says as label. */
+/** The sync panel of the pages of projectId, as of state, which the indicator says as label, for a user that edits says can change the project. */
 function SyncPanel({
   projectId,
   state,
   label,
+  edits,
 }: {
   projectId: string;
   state: SyncState;
   label: string;
+  edits: boolean;
 }) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
+  // Offline, the panel says that the changes are kept on the device only
+  // where they are, as they are not over plain HTTP, which keeps no queue,
+  // and a change made meanwhile is refused (PRD FR-OFF-03).
+  const keeps = useKeepsChanges(edits);
   const queryClient = useQueryClient();
   // What the panel lists, read anew as it changes (queueVersion), and as
   // what the page sends changes.
@@ -234,7 +266,9 @@ function SyncPanel({
       : state.state === "syncing"
         ? t("sync.panel.syncing")
         : state.state === "offline"
-          ? t("sync.panel.offline")
+          ? keeps
+            ? t("sync.panel.offline")
+            : t("sync.panel.offline_unkept")
           : t("sync.panel.review");
   return (
     <DialogFrame title={t("sync.panel.title")} description={label}>

@@ -53,14 +53,35 @@ function KeptLink() {
   ) : null;
 }
 
-/** The notice of a project's pages while the browser has no connection, of the copy of projectId that the device keeps, if it keeps one. */
-export function OfflineNotice({ projectId }: { projectId: string }) {
+/**
+ * Reports whether the device keeps the changes that the user makes to a
+ * project while the page cannot reach the server (PRD FR-OFF-03), as the
+ * pages say: where the page keeps a queue, which it does not over plain
+ * HTTP, the device can keep anything, and edits says that the user can
+ * change the project, as an editor of one that is not archived, rather
+ * than tell a viewer that changes that it cannot make are kept.
+ */
+export function useKeepsChanges(edits: boolean): boolean {
+  const available = useOffline((s) => s.available === true);
+  return useDocuments().keepsQueue && available && edits;
+}
+
+/**
+ * The notice of a project's pages while the browser has no connection, of
+ * the copy of projectId that the device keeps, if it keeps one, and of the
+ * changes made meanwhile, where it keeps them, as edits says that the user
+ * can make them (useKeepsChanges).
+ */
+export function OfflineNotice({
+  projectId,
+  edits,
+}: {
+  projectId: string;
+  edits: boolean;
+}) {
   const { t, i18n } = useTranslation();
   const copy = useOffline((s) => s.pins.get(projectId)?.copy);
-  // The device keeps the changes made meanwhile, where the page keeps a
-  // queue and the device can keep anything (PRD FR-OFF-03).
-  const available = useOffline((s) => s.available === true);
-  const keeps = useDocuments().keepsQueue && available;
+  const keeps = useKeepsChanges(edits);
   return (
     <div role="status">
       <p className="rounded-md border border-border bg-surface px-4 py-3">

@@ -18,6 +18,7 @@ import {
   vi,
 } from "vitest";
 import { boardPart } from "../document/doc";
+import { projectQuery } from "../project/queries";
 import { renderApp, testSession } from "../test/app";
 import { testNode } from "../test/canvas";
 import { fakeApi, refused, startPage, testProject } from "../test/fake";
@@ -152,6 +153,12 @@ async function openProject() {
 function indicator(text: string) {
   return screen.findByRole("button", { name: text }, { timeout: 1_000 });
 }
+
+/** What the sync panel, and the offline notice, say of the changes made offline, where the device keeps them, or does not. */
+const keptPanel = /Your changes are kept on it, and sent/;
+const unkeptPanel = /This page cannot keep changes on the device/;
+const keptNotice =
+  /Your changes are kept on this device and sent once it reaches the server\./;
 
 describe("the sync indicator", () => {
   it("is in one of four states, as the document holds the user's changes", () => {
@@ -337,6 +344,67 @@ describe("the sync panel", () => {
     expect(
       within(panel).queryByRole("region", { name: "Not available offline" }),
     ).toBeNull();
+  });
+
+  it("says offline that the device keeps the changes made meanwhile, but to a viewer, who makes none", async () => {
+    serve();
+    const user = userEvent.setup();
+    const { queryClient } = await openProject();
+    setOnline(false);
+    await screen.findByText(keptNotice);
+    await user.click(await indicator("Offline"));
+    const panel = await screen.findByRole("dialog", { name: "Sync status" });
+    expect(within(panel).getByText(keptPanel)).toBeDefined();
+    act(() => {
+      queryClient.setQueryData(projectQuery(testProject.id).queryKey, {
+        ...testProject,
+        role: "viewer",
+      });
+    });
+    await within(panel).findByText(unkeptPanel);
+    expect(screen.queryByText(keptNotice)).toBeNull();
+  });
+
+  it("says offline over plain HTTP, which keeps no queue, that a change made meanwhile is not saved", async () => {
+    serve();
+    const user = userEvent.setup();
+    renderApp(`/projects/${testProject.id}`, {
+      session: testSession,
+      offline: { online: () => navigator.onLine, secure: false },
+    });
+    await screen.findByRole("link", { name: "Quay" });
+    setOnline(false);
+    await user.click(await indicator("Offline"));
+    const panel = await screen.findByRole("dialog", { name: "Sync status" });
+    expect(within(panel).getByText(unkeptPanel)).toBeDefined();
+    expect(within(panel).queryByText(keptPanel)).toBeNull();
+    expect(screen.queryByText(keptNotice)).toBeNull();
+  });
+});
+
+describe("the sync indicator's live region", () => {
+  it("says each state but syncing, which comes and goes with every change saved online", async () => {
+    const server = serve();
+    const { doc } = await openProject();
+    /** Returns what the live region of the indicator that says text says. */
+    const region = async (text: string) =>
+      within((await indicator(text)).parentElement as HTMLElement).getByRole(
+        "status",
+      ).textContent;
+    expect(await region("All changes saved")).toBe("All changes saved");
+    let sent: Promise<unknown> = Promise.resolve();
+    act(() => {
+      sent = doc.send([renameQuay("Pier")]);
+    });
+    expect(await region("Saving 1 change…")).toBe("All changes saved");
+    server.release();
+    await act(() => sent);
+    expect(await region("All changes saved")).toBe("All changes saved");
+    setOnline(false);
+    await act(() => doc.send([renameQuay("Dock")]));
+    expect(await region("Offline, 1 change on this device")).toBe(
+      "Offline, 1 change on this device",
+    );
   });
 });
 

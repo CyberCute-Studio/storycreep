@@ -34,7 +34,7 @@ import type { Realtime } from "../document/realtime";
 import { ErrorConsoleProvider } from "../errors/ErrorConsole";
 import { createErrorLog } from "../errors/log";
 import { createAppI18n } from "../i18n";
-import { copySource, OfflineDatabase } from "../offline/db";
+import { copySource, OfflineDatabase, openWait } from "../offline/db";
 import { OfflineKeeper } from "../offline/keeper";
 import { keepReads } from "../offline/kept";
 import { onConnection } from "../offline/online";
@@ -192,10 +192,14 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
     }
     offline.start();
     // The keeper's change under way is let finish, and none after it begins,
-    // before the database is closed, which a change would else open again.
+    // before the database is closed, which a change would else open again;
+    // and so are the writes of the device's queue that the documents began,
+    // those of the documents dropped that have yet to let go of it too, as
+    // the documents go first, the hooks running from the last registered.
     onTestFinished(async () => {
       offline.stop();
       await offline.idle();
+      await documents.whenWritten(openWait);
       await offlineDb?.close();
     });
   }

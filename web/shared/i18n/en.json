@@ -1884,6 +1884,7 @@
   "sync.panel.export": "Export as JSON",
   "sync.panel.none": "No change is waiting.",
   "sync.panel.offline": "This device cannot reach the server now. Your changes are kept on it, and sent in the order that you made them once it can.",
+  "sync.panel.offline_unkept": "This device cannot reach the server now. This page cannot keep changes on the device, so a change made before it reaches the server is not saved.",
   "sync.panel.pending_title": "Waiting to be sent",
   "sync.panel.review": "The server refused a change that you made offline. It is kept on this device, with the changes made after it, until you decide what becomes of it. Nothing is discarded meanwhile.",
   "sync.panel.review_title": "Needs your review",

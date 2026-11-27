@@ -103,6 +103,9 @@ function ProjectPages({ projectId }: { projectId: string }) {
   const params = { projectId };
   const settings =
     managesProject(project.role) || managesWorkspace(workspace.role);
+  // Whether the user changes the project, which the history's controls,
+  // and what the pages say of the changes kept offline, are for.
+  const edits = editsProject(project.role) && project.archived_at === undefined;
   // A page that takes the window's width, as a board's for its canvas,
   // says so of itself (staticData), rather than the layout knowing it.
   const wide = useChildMatches({
@@ -367,10 +370,8 @@ function ProjectPages({ projectId }: { projectId: string }) {
         </nav>
         {/* Whether the user's changes are saved on the server, on their
         way, kept on the device offline, or need review (PRD FR-OFF-06). */}
-        <SyncIndicator projectId={projectId} />
-        {editsProject(project.role) && project.archived_at === undefined && (
-          <LayoutHistory projectId={projectId} />
-        )}
+        <SyncIndicator projectId={projectId} edits={edits} />
+        {edits && <LayoutHistory projectId={projectId} />}
         {project.archived_at !== undefined && (
           <p className="rounded-md border border-border bg-surface px-4 py-3">
             {managesProject(project.role)
@@ -378,7 +379,7 @@ function ProjectPages({ projectId }: { projectId: string }) {
               : t("project.archived")}
           </p>
         )}
-        {!connected && <OfflineNotice projectId={projectId} />}
+        {!connected && <OfflineNotice projectId={projectId} edits={edits} />}
       </div>
       {!shown && <NeedsConnection />}
       {(shown || held === pathname) && (
