@@ -119,12 +119,15 @@ function open(
     });
   }
   const realtime = fakeRealtime();
-  const readCopy = vi.fn(async () => copy);
+  const seqOf = vi.fn(async () => copy?.doc.seq);
+  const readCopy = vi.fn(
+    async (_user: string, _project: string, _signal?: AbortSignal) => copy,
+  );
   const doc = new ProjectDocument(testProject.id, {
     queryClient,
     realtime,
     log,
-    copies: { readCopy },
+    copies: { seqOf, readCopy },
     online: options.online,
   });
   onTestFinished(() => doc.dispose());
@@ -141,7 +144,12 @@ describe("a document that starts from the device's copy", () => {
     await doc.ready;
     await tree;
     await doc.load(boardPart("bd_a"));
-    expect(readCopy).toHaveBeenCalledWith(testSession.user_id, testProject.id);
+    expect(readCopy).toHaveBeenCalledWith(
+      testSession.user_id,
+      testProject.id,
+      expect.any(AbortSignal),
+    );
+    expect(readCopy.mock.calls[0][2]?.aborted).toBe(false);
     expect(calls).toEqual(["getProject"]);
     expect(doc.fromCopy).toBe(true);
     expect(doc.hasRead("tree")).toBe(true);
@@ -162,14 +170,32 @@ describe("a document that starts from the device's copy", () => {
     expect(calls).toEqual(["getProject"]);
   });
 
+  it("is let go once the document holds something else, as in a tab whose keeper does not take it", async () => {
+    serve(3);
+    const { doc, realtime } = open(copyOf(3));
+    await doc.ready;
+    realtime.hold(testProject.id);
+    realtime.send(
+      testProject.id,
+      [{ type: "board.rename", payload: { id: "bd_a", name: "Renamed" } }],
+      [{ id: "bd_a", rev: 2 }],
+    );
+    expect(doc.doc.seq).toBe(4);
+    expect(doc.takeCopy()).toBeUndefined();
+    expect(doc.fromCopy).toBe(true);
+  });
+
   it("is passed over while the browser has a connection where its seq is behind the project's, which the document reads from the server", async () => {
     vi.useFakeTimers();
     const { calls } = serve(5);
-    const { doc } = open(copyOf(3));
+    const { doc, readCopy } = open(copyOf(3));
     await vi.advanceTimersByTimeAsync(0);
     await doc.ready;
     expect(doc.fromCopy).toBe(false);
     expect(doc.doc.seq).toBe(5);
+    // The read of the whole of the copy, which the document does not use,
+    // is let go, rather than waited for.
+    expect(readCopy.mock.calls[0][2]?.aborted).toBe(true);
     expect(doc.hasRead("tree")).toBe(false);
     await doc.load("tree");
     expect(doc.doc.boards.get("bd_a")?.name).toBe("Server's");

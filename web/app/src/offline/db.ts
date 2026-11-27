@@ -172,12 +172,19 @@ export function copySource(
   secure: boolean,
   wait = openWait,
 ): CopySource {
+  const opens = async () => secure && (await opensWithin(db, wait));
   return {
-    readCopy: async (userId, projectId) => {
-      if (!secure || !(await opensWithin(db, wait))) {
+    seqOf: async (userId, projectId) =>
+      (await opens())
+        ? db.copySeq(userId, projectId).catch(() => undefined)
+        : undefined,
+    readCopy: async (userId, projectId, signal) => {
+      if (!(await opens())) {
         return undefined;
       }
-      const copy = await db.readCopy(userId, projectId).catch(() => undefined);
+      const copy = await db
+        .readCopy(userId, projectId, signal)
+        .catch(() => undefined);
       return copy === undefined
         ? undefined
         : {
@@ -348,19 +355,62 @@ export class OfflineDatabase {
   }
 
   /**
-   * Reads the copy of userId's project, the document as of its seq, holding
-   * every part that it held, or resolves to undefined where the device has
-   * none, or the project is not pinned.
+   * Returns the seq of the copy of userId's project, without reading its
+   * entities, or undefined where the device has none, or the project is not
+   * pinned, as a project's document reads it to tell whether it uses the
+   * copy, before the read of the whole of it has ended (readCopy).
    */
-  async readCopy(userId: string, projectId: string): Promise<Copy | undefined> {
+  async copySeq(
+    userId: string,
+    projectId: string,
+  ): Promise<number | undefined> {
     const db = await this.open();
-    const tx = db.transaction(["pins", "copies", "entities"], "readonly");
-    const [pin, record, entities] = await Promise.all([
+    const tx = db.transaction(["pins", "copies"], "readonly");
+    const [pin, record] = await Promise.all([
       tx.objectStore("pins").get([userId, projectId]),
       tx.objectStore("copies").get([userId, projectId]),
-      tx.objectStore("entities").getAll(under(userId, projectId)),
       tx.done,
     ]);
+    return pin === undefined ? undefined : record?.seq;
+  }
+
+  /**
+   * Reads the copy of userId's project, the document as of its seq, holding
+   * every part that it held, or resolves to undefined where the device has
+   * none, or the project is not pinned. Once signal aborts, the read is let
+   * go, and rejects, as for a copy that its reader no longer uses, which
+   * the browser then does not hand the page.
+   */
+  async readCopy(
+    userId: string,
+    projectId: string,
+    signal?: AbortSignal,
+  ): Promise<Copy | undefined> {
+    signal?.throwIfAborted();
+    const db = await this.open();
+    signal?.throwIfAborted();
+    const tx = db.transaction(["pins", "copies", "entities"], "readonly");
+    const abort = () => {
+      try {
+        tx.abort();
+      } catch {
+        // The transaction is done already.
+      }
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    let pin: PinRecord | undefined;
+    let record: CopyRecord | undefined;
+    let entities: EntityRecord[];
+    try {
+      [pin, record, entities] = await Promise.all([
+        tx.objectStore("pins").get([userId, projectId]),
+        tx.objectStore("copies").get([userId, projectId]),
+        tx.objectStore("entities").getAll(under(userId, projectId)),
+        tx.done,
+      ]);
+    } finally {
+      signal?.removeEventListener("abort", abort);
+    }
     if (pin === undefined || record === undefined) {
       return undefined;
     }

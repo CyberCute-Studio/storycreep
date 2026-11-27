@@ -2,8 +2,9 @@
 // plan note N97): the pins, the copies, and what the page shows of them.
 // A project is pinned once the user makes it available offline, and once
 // the account opens its pages, as the last opened, whose pin moves to the
-// next project that it opens, the copy of the one before taken out unless
-// the user made it available offline too. While the page is signed in, one
+// next project that it opens whose read the server answers, the copy of the
+// one before taken out unless the user made it available offline too
+// (OfflineKeeper.opened). While the page is signed in, one
 // tab of the browser's keeps the copies, the one that holds the lock of the
 // writer (Web Locks): it holds the document of each pinned project, which
 // the real-time channel keeps current, has it read the whole of the project,
@@ -27,7 +28,7 @@ import type { Documents } from "../document/documents";
 import { inTurns, type ProjectDocument } from "../document/store";
 import { unreadOf } from "../document/whole";
 import type { ErrorLog } from "../errors/log";
-import { projectQuery } from "../project/queries";
+import { projectQuery, readUnanswered } from "../project/queries";
 import { workspaceQuery } from "../workspace/queries";
 import {
   type CopyRecord,
@@ -102,14 +103,6 @@ export interface KeeperOptions {
   writeDelay?: number;
   /** How long, in milliseconds, after a read or a write that failed it is tried again: 30 seconds, if not set. */
   retryDelay?: number;
-  /**
-   * Resolves to whether the server answers, which the keeper asks before it
-   * moves the pin of the project that the account last opened, whose copy
-   * of the one before the device could not download again while the server
-   * does not answer, as on a flight's network without the internet, where
-   * the browser says that it is online (opened); always, if not set.
-   */
-  reachable?: () => Promise<boolean>;
   /**
    * How many of the parts and components of the projects that the keeper
    * downloads it reads in a burst, at most, and how long, in milliseconds,
@@ -229,10 +222,8 @@ export class OfflineKeeper {
   private writer = false;
   /** The account whose records the device keeps, null once the page is signed out, undefined until the session is known. */
   private followed: string | null | undefined;
-  /** The project whose pages the page last opened, which opened has pinned already, or has to once the server answers. */
+  /** The project, and its name, that opened last pinned as the last opened. */
   private lastOpened: string | undefined;
-  /** The project whose pages the page opened last, whose pin moves once the server answers, while it has not yet (moveAuto). */
-  private toMove: { projectId: string; name: string } | undefined;
   /** The changes of the records under way, one at a time, in order. */
   private queue: Promise<void> = Promise.resolve();
   /** The steps of the copies' keeping under way (Kept), which may still write after the keeper has stopped, until they are done (idle). */
@@ -336,10 +327,6 @@ export class OfflineKeeper {
     this.stops.push(
       this.options.onConnection((online) => {
         if (online) {
-          const opened = this.toMove;
-          if (opened !== undefined) {
-            this.moveAuto(opened.projectId, opened.name);
-          }
           // Everything is tried at once, what failed a while ago too, as
           // without the connection.
           for (const kept of this.kept.values()) {
@@ -432,62 +419,61 @@ export class OfflineKeeper {
   /**
    * Pins the project of projectId, named name, as the project that the
    * account last opened on the device, in place of the one before, whose
-   * copy goes unless the user made it available offline. While the server
-   * does not answer, as while the browser has no connection, or on a
-   * flight's network without the internet, where the browser says that it
-   * is online, the pin moves once the browser is online again, and the
-   * server answers, or at the next project opened that it answers: the copy
-   * of the one before, which the device could not download again until
-   * then, stays meanwhile, as for a user on a flight who goes from one
-   * project that the device keeps to another, and back.
+   * copy goes unless the user made it available offline: once the changes
+   * before it are done, where the browser says that it is online, no read
+   * of the project is under way, and the server answered the page's last
+   * read of it, rather than the device (readUnanswered). The project's
+   * pages call it as they open, and as each read of the project ends while
+   * they are shown (routes/projects.$projectId.tsx), so that a project
+   * whose pages open from what the page read of it before moves the pin as
+   * of the read that their opening makes. Otherwise, as while the
+   * browser has no connection, or on a flight's network without the
+   * internet, where the browser says that it is online, the pin stays where
+   * it is, and the copy of the one before, which the device could not
+   * download again until then, with it, as for a user on a flight who goes
+   * from one project that the device keeps to another, and back, with
+   * nothing pending, until a read that the server answers.
    */
   opened(projectId: string, name: string): void {
-    if (!this.options.secure || this.lastOpened === `${projectId}:${name}`) {
+    if (!this.options.secure) {
       return;
     }
-    this.lastOpened = `${projectId}:${name}`;
-    this.moveAuto(projectId, name);
-  }
-
-  /** Moves the pin of the project that the account last opened to projectId, named name, as opened says, once the server answers. */
-  private moveAuto(projectId: string, name: string): void {
-    const opened = { projectId, name };
-    this.toMove = opened;
-    if (!this.options.online()) {
-      return;
-    }
-    const reachable = this.options.reachable ?? (async () => true);
-    void reachable()
-      .catch(() => false)
-      .then((answers) => {
-        // A project opened since moves the pin in its place, and the
-        // session of another account forgets it (follow).
-        if (!answers || this.toMove !== opened) {
-          return;
+    const opened = `${projectId}:${name}`;
+    // The changes before it are done once what the page does as it opens
+    // the project has begun, as the read of it that its pages make, and the
+    // session's account is known, as the page's first change follows the
+    // session (follow).
+    this.enqueue(async () => {
+      const client = this.options.queryClient;
+      const userId = this.store.getState().userId;
+      if (
+        this.lastOpened === opened ||
+        userId === undefined ||
+        !this.options.online() ||
+        client.isFetching({
+          queryKey: projectQuery(projectId).queryKey,
+          exact: true,
+        }) > 0 ||
+        readUnanswered(client, projectId) ||
+        !(await this.ready())
+      ) {
+        return;
+      }
+      this.lastOpened = opened;
+      for (const pin of await this.db.pins(userId)) {
+        if (pin.auto && pin.project_id !== projectId) {
+          await this.db.changePin(userId, pin.project_id, (p) =>
+            p === undefined ? undefined : { ...p, auto: false },
+          );
         }
-        this.toMove = undefined;
-        // The session's account is known once the changes before it are
-        // done, as the page's first, which follows the session (follow).
-        this.enqueue(async () => {
-          const userId = this.store.getState().userId;
-          if (userId === undefined || !(await this.ready())) {
-            return;
-          }
-          for (const pin of await this.db.pins(userId)) {
-            if (pin.auto && pin.project_id !== projectId) {
-              await this.db.changePin(userId, pin.project_id, (p) =>
-                p === undefined ? undefined : { ...p, auto: false },
-              );
-            }
-          }
-          await this.db.changePin(userId, projectId, (pin) => ({
-            ...(pin ?? this.newPin(projectId, name)),
-            name,
-            auto: true,
-          }));
-          await this.changed();
-        });
-      });
+      }
+      await this.db.changePin(userId, projectId, (pin) => ({
+        ...(pin ?? this.newPin(projectId, name)),
+        name,
+        auto: true,
+      }));
+      await this.changed();
+    });
   }
 
   /**
@@ -606,7 +592,6 @@ export class OfflineKeeper {
     }
     this.followed = userId;
     this.lastOpened = undefined;
-    this.toMove = undefined;
     this.enqueue(async () => {
       for (const kept of this.kept.values()) {
         kept.stop();
@@ -925,11 +910,14 @@ class Kept {
     if (unread.parts.length > 0 || unread.components.length > 0) {
       // A pass that leaves what it read unread, as a component that another
       // session changes again and again as it is read (readComponent), is
-      // tried again a while after, rather than at once, again and again.
+      // tried again a while after, rather than at once, again and again,
+      // and the pin says that the copy could not be written meanwhile, as
+      // of a read that failed.
       const what = [...unread.parts, ...unread.components].join(" ");
       if (what === this.unreadBefore) {
         this.unreadBefore = undefined;
         this.failedNow();
+        await this.keeper.failed(this.userId, this.projectId, "error");
         return;
       }
       // The reads go at the pace of the keeper's downloads (Pace), and

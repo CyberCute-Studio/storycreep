@@ -391,8 +391,12 @@ describe("where a project's document finds the device's copy", () => {
   it("finds it on the device, and none where the database does not open in a while", async () => {
     await pin();
     await db.writeCopy(recordOf(1), docOf(1, [board("bd_a")], []), undefined);
+    expect(await copySource(db, true).seqOf(user, testProject.id)).toBe(1);
     const copy = await copySource(db, true).readCopy(user, testProject.id);
     expect(copy?.doc.boards.has("bd_a")).toBe(true);
+    expect(
+      await copySource(db, false).seqOf(user, testProject.id),
+    ).toBeUndefined();
     expect(
       await copySource(db, false).readCopy(user, testProject.id),
     ).toBeUndefined();
@@ -401,7 +405,45 @@ describe("where a project's document finds the device's copy", () => {
     const stuck = new OfflineDatabase();
     vi.spyOn(stuck, "open").mockReturnValue(new Promise(() => {}));
     expect(
+      await copySource(stuck, true, 10).seqOf(user, testProject.id),
+    ).toBeUndefined();
+    expect(
       await copySource(stuck, true, 10).readCopy(user, testProject.id),
     ).toBeUndefined();
+  });
+
+  it("tells the copy's seq without its entities, and lets go of a read of the whole of it once its reader no longer uses it", async () => {
+    await pin();
+    await db.writeCopy(recordOf(1), docOf(1, [board("bd_a")], []), undefined);
+    const getAll = IDBObjectStore.prototype.getAll;
+    let during: AbortController | undefined;
+    const reads = vi
+      .spyOn(IDBObjectStore.prototype, "getAll")
+      .mockImplementation(function (
+        this: IDBObjectStore,
+        ...args: Parameters<IDBObjectStore["getAll"]>
+      ) {
+        // The reader lets the read go as the browser reads the entities.
+        const request = getAll.apply(this, args);
+        during?.abort();
+        return request;
+      });
+    expect(await db.copySeq(user, testProject.id)).toBe(1);
+    expect(await db.copySeq(user, "prj_other")).toBeUndefined();
+    expect(reads).not.toHaveBeenCalled();
+    const before = new AbortController();
+    before.abort();
+    await expect(
+      db.readCopy(user, testProject.id, before.signal),
+    ).rejects.toThrow();
+    during = new AbortController();
+    await expect(
+      db.readCopy(user, testProject.id, during.signal),
+    ).rejects.toThrow();
+    expect(
+      await copySource(db, true).readCopy(user, testProject.id, before.signal),
+    ).toBeUndefined();
+    during = undefined;
+    expect((await db.readCopy(user, testProject.id))?.doc.seq).toBe(1);
   });
 });

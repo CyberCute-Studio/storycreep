@@ -8,7 +8,7 @@
 
 import { formatDateTime } from "@storycreep/shared/i18n";
 import type { TFunction } from "i18next";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CheckboxField } from "../ui/Field";
 import type { PinView } from "./keeper";
@@ -77,8 +77,11 @@ export function OfflineSwitch({
   const pin = useOffline((s) => s.pins.get(projectId));
   const online = useOnline();
   // What the user asked for, which the switch shows at once, until the
-  // device's record of it, which follows a moment after, says it.
+  // device's record of it, which follows a moment after, says it: of the
+  // last change asked for, as the user may switch it on and off again
+  // before the first has been recorded.
   const [asked, setAsked] = useState<boolean>();
+  const changes = useRef(0);
   if (keeper === undefined) {
     return null;
   }
@@ -98,10 +101,15 @@ export function OfflineSwitch({
       disabled={available !== true}
       onChange={(event) => {
         const chosen = event.currentTarget.checked;
+        const change = ++changes.current;
         setAsked(chosen);
         void (chosen ? keeper.pin(projectId, name) : keeper.unchoose(projectId))
           .catch(() => undefined)
-          .finally(() => setAsked(undefined));
+          .finally(() => {
+            if (changes.current === change) {
+              setAsked(undefined);
+            }
+          });
       }}
     />
   );

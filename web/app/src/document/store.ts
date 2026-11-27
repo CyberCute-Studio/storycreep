@@ -528,10 +528,13 @@ export interface StartingCopy {
 
 /** Where a document finds the copy of its project that the device keeps (DocumentOptions.copies). */
 export interface CopySource {
-  /** Resolves to the copy of projectId that the device keeps for userId, or to undefined for none, without rejecting. */
+  /** Resolves to the seq of the copy of projectId that the device keeps for userId, without its entities, or to undefined for none, without rejecting. */
+  seqOf(userId: string, projectId: string): Promise<number | undefined>;
+  /** Resolves to that copy, or to undefined for none, or once signal aborts, as for a copy passed over, without rejecting. */
   readCopy(
     userId: string,
     projectId: string,
+    signal?: AbortSignal,
   ): Promise<StartingCopy | undefined>;
 }
 
@@ -796,9 +799,10 @@ export class ProjectDocument {
   private copied = false;
   /**
    * The copy that the document started from, until the keeper takes it as
-   * what its first write of the copy is made on (takeCopy), after which the
-   * document holds it no longer, as it would else hold the project as it
-   * was then for as long as the keeper holds the document.
+   * what its first write of the copy is made on (takeCopy), or the document
+   * holds something else (show), after which the document holds it no
+   * longer, as it would else hold the project as it was then for as long
+   * as the document is kept.
    */
   private startedFrom: StartingCopy | undefined;
   /**
@@ -887,7 +891,7 @@ export class ProjectDocument {
    * started from, once, for the keeper's first write of the copy to be made
    * on (offline/keeper.ts), after which the document holds it no longer; or
    * undefined, where it started from the server alone, or the copy has been
-   * taken.
+   * taken, or the document has changed since (show).
    */
   takeCopy(): StartingCopy | undefined {
     const copy = this.startedFrom;
@@ -989,36 +993,62 @@ export class ProjectDocument {
     // seq is not used: the document reads the project from the server, as
     // without a copy, rather than bring the copy up to it. A copy of a seq
     // past the project's is of what the server no longer has, as a database
-    // restored from an older backup, and is passed over.
-    const copying =
-      this.userId === undefined || this.options.copies === undefined
+    // restored from an older backup, and is passed over. The copy's seq is
+    // read alone too, which tells whether the copy is used before the read
+    // of the whole of it has ended: the start waits for that read only where
+    // it uses the copy, and lets it go otherwise, so that a copy passed over
+    // costs the start no wait for the whole of it.
+    const userId = this.userId;
+    const copies = this.options.copies;
+    const passed = new AbortController();
+    const peeking =
+      userId === undefined || copies === undefined
         ? undefined
-        : this.options.copies
-            .readCopy(this.userId, this.projectId)
+        : copies.seqOf(userId, this.projectId).catch(() => undefined);
+    const copying =
+      userId === undefined || copies === undefined
+        ? undefined
+        : copies
+            .readCopy(userId, this.projectId, passed.signal)
             .catch(() => undefined);
-    let body = await this.options.queryClient.ensureQueryData(
-      projectQuery(this.projectId),
-    );
-    const copy = await copying;
+    let body = await this.options.queryClient
+      .ensureQueryData(projectQuery(this.projectId))
+      .catch((error: unknown) => {
+        passed.abort();
+        throw error;
+      });
+    const seq = await peeking;
     // The read of the project that the query client holds may be older than
     // the copy, as one kept from before another tab wrote it, whose seq the
     // client's read does not follow but as the project itself changes
     // (projectFollowed): the project is read anew before the copy is passed
     // over, which, offline, gives the copy's own (offline/kept.ts).
-    if (copy !== undefined && copy.doc.seq > body.seq && !this.disposed) {
+    if (seq !== undefined && seq > body.seq && !this.disposed) {
       const held = body;
       body = await this.options.queryClient
         .fetchQuery({ ...projectQuery(this.projectId), staleTime: 0 })
         .catch(() => held);
     }
     if (this.disposed) {
+      passed.abort();
       return;
     }
+    const used =
+      seq !== undefined &&
+      (seq === body.seq || (seq < body.seq && !this.isOnline()));
+    if (!used) {
+      passed.abort();
+    }
+    const copy = used ? await copying : undefined;
+    if (this.disposed) {
+      return;
+    }
+    // The copy that the whole read found is of the seq that the start
+    // decided on, unless another tab wrote it anew between the two reads.
     if (
       copy !== undefined &&
       copy.doc.project?.id === this.projectId &&
-      (copy.doc.seq === body.seq ||
-        (copy.doc.seq < body.seq && !this.isOnline()))
+      copy.doc.seq === seq
     ) {
       this.copied = true;
       this.startedFrom = copy;
@@ -1886,6 +1916,17 @@ export class ProjectDocument {
    * what it applies on top of has changed too (Waiting.shown).
    */
   private show(): void {
+    // The copy that the document started from is let go once the document
+    // holds something else, as in a tab whose keeper does not write the
+    // copies, which would else hold the project as it was then for as long
+    // as the document is kept: a first write made on it then writes the
+    // whole document (takeCopy).
+    if (
+      this.startedFrom !== undefined &&
+      this.startedFrom.doc !== this.confirmed
+    ) {
+      this.startedFrom = undefined;
+    }
     let view = this.confirmed;
     for (const entry of this.entries) {
       view = shownOn(

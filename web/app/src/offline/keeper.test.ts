@@ -1,10 +1,11 @@
 import "fake-indexeddb/auto";
-import type {
-  Board,
-  ComponentType,
-  Node,
-  SignedInBody,
-  Variable,
+import {
+  type Board,
+  type ComponentType,
+  NetworkError,
+  type Node,
+  type SignedInBody,
+  type Variable,
 } from "@storycreep/shared/api";
 import { IDBFactory } from "fake-indexeddb";
 import {
@@ -25,6 +26,7 @@ import {
 import { type ComponentEntry, emptyDoc, projectOf } from "../document/doc";
 import { Documents } from "../document/documents";
 import { createErrorLog } from "../errors/log";
+import { projectQuery } from "../project/queries";
 import { testAccount, testInstance, testSession } from "../test/app";
 import { fakeApi, refused, testProject, testWorkspace } from "../test/fake";
 import { fakeRealtime } from "../test/realtime";
@@ -193,7 +195,6 @@ function setup(
     secure?: boolean;
     retryDelay?: number;
     writeDelay?: number;
-    reachable?: () => Promise<boolean>;
     pace?: { burst: number; interval: number };
   } = {},
 ) {
@@ -238,7 +239,6 @@ function setup(
     storage: { persist },
     writeDelay: options.writeDelay ?? 0,
     retryDelay: options.retryDelay ?? 20,
-    reachable: options.reachable,
     pace: options.pace ?? { burst: 1, interval: 0 },
   });
   keeper.start();
@@ -434,7 +434,7 @@ describe("the last opened project", () => {
     expect(await db.readCopy(testSession.user_id, lighthouse.id)).toBeDefined();
   });
 
-  it("stays while the browser has no connection, keeping the copy before, and moves once it has one", async () => {
+  it("stays while the browser has no connection, keeping the copy before, and moves at a project opened once it has one", async () => {
     serve();
     const { keeper, db, setOnline } = setup();
     keeper.opened(testProject.id, testProject.name);
@@ -447,7 +447,11 @@ describe("the last opened project", () => {
     expect(
       await db.readCopy(testSession.user_id, testProject.id),
     ).toBeDefined();
+    // Nothing waits for the connection to move it.
     setOnline(true);
+    await keeper.idle();
+    expect(keeper.store.getState().pins.has(lighthouse.id)).toBe(false);
+    keeper.opened(lighthouse.id, lighthouse.name);
     await statusOf(keeper, lighthouse.id, "ready");
     expect(keeper.store.getState().pins.has(testProject.id)).toBe(false);
   });
@@ -608,17 +612,24 @@ describe("a copy that the browser's quota refuses", () => {
 });
 
 describe("the last opened project, where the server does not answer", () => {
-  it("stays though the browser says that it is online, as on a flight's network without the internet, and moves once the server answers", async () => {
-    serve();
+  it("stays though the browser says that it is online, as on a flight's network without the internet, and moves from a project opened whose read the server answers", async () => {
     let answers = true;
-    const { keeper, db, setOnline } = setup({
-      reachable: async () => answers,
+    serve({
+      fail: (operation) =>
+        !answers && operation === "getProject"
+          ? new NetworkError(new TypeError("Failed to fetch"))
+          : undefined,
     });
+    const { keeper, db, queryClient } = setup();
     keeper.opened(testProject.id, testProject.name);
     await statusOf(keeper, testProject.id, "ready");
+    // The page's read of the project, as its pages are opened, gets no
+    // answer, which the device's copy of it, where it has one, answers.
     answers = false;
+    await queryClient
+      .fetchQuery({ ...projectQuery(lighthouse.id), retry: false })
+      .catch(() => undefined);
     keeper.opened(lighthouse.id, lighthouse.name);
-    await new Promise((resolve) => setTimeout(resolve, 50));
     await keeper.idle();
     expect(keeper.store.getState().pins.has(lighthouse.id)).toBe(false);
     expect(keeper.store.getState().pins.get(testProject.id)?.auto).toBe(true);
@@ -626,7 +637,8 @@ describe("the last opened project, where the server does not answer", () => {
       await db.readCopy(testSession.user_id, testProject.id),
     ).toBeDefined();
     answers = true;
-    setOnline(true);
+    await queryClient.fetchQuery(projectQuery(lighthouse.id));
+    keeper.opened(lighthouse.id, lighthouse.name);
     await statusOf(keeper, lighthouse.id, "ready");
     expect(keeper.store.getState().pins.has(testProject.id)).toBe(false);
   });
@@ -661,9 +673,11 @@ describe("a project's download", () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(calls.filter((c) => c === "getComponent").length).toBe(read);
     expect(read).toBeLessThanOrEqual(3);
-    expect(keeper.store.getState().pins.get(testProject.id)?.status).toBe(
-      "downloading",
-    );
+    // The pin says that the copy could not be written meanwhile.
+    expect(keeper.store.getState().pins.get(testProject.id)).toMatchObject({
+      status: "failed",
+      failure: "error",
+    });
   });
 
   it("is tried again at once once the browser is online again, though a read failed a moment before", async () => {
@@ -685,37 +699,42 @@ describe("a project's download", () => {
   });
 
   it("is no failure where a board goes to the trash as it is read, which the next pass finds gone", async () => {
-    let trashed = true;
+    const id = testProject.id;
+    let send = () => {};
     const calls = serve({
-      fail: (operation, input) =>
-        trashed &&
-        operation === "listBoardNodes" &&
-        (input as { path: { board_id: string } }).path.board_id.startsWith(
-          "bd_b",
-        )
-          ? refused(404, { code: "not_found" })
-          : undefined,
+      fail: (operation, input) => {
+        if (
+          operation !== "listBoardNodes" ||
+          !(input as { path: { board_id: string } }).path.board_id.startsWith(
+            "bd_b",
+          )
+        ) {
+          return undefined;
+        }
+        // The operation that took the board to the trash, which the
+        // channel brings as the board's read is refused.
+        send();
+        send = () => {};
+        return refused(404, { code: "not_found" });
+      },
     });
     // Nothing is tried again of itself within the test.
-    const { keeper, setOnline } = setup({ retryDelay: 60_000 });
-    await keeper.pin(testProject.id, testProject.name);
-    await vi.waitFor(() =>
-      expect(
-        calls.filter((c) => c === "listBoardNodes").length,
-      ).toBeGreaterThanOrEqual(3),
-    );
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(keeper.store.getState().pins.get(testProject.id)).toMatchObject({
-      status: "downloading",
+    const { keeper, realtime } = setup({ retryDelay: 60_000 });
+    send = () =>
+      realtime.send(
+        id,
+        [{ type: "board.delete", payload: { id: `bd_b${id}` } }],
+        [{ id: `bd_b${id}`, rev: 2 }],
+      );
+    const statuses: string[] = [];
+    keeper.store.subscribe((state) => {
+      statuses.push(state.pins.get(id)?.status ?? "none");
     });
-    expect(
-      keeper.store.getState().pins.get(testProject.id)?.failure,
-    ).toBeUndefined();
-    // As a board that came back from the trash.
-    trashed = false;
-    setOnline(false);
-    setOnline(true);
-    await statusOf(keeper, testProject.id, "ready");
+    await keeper.pin(id, testProject.name);
+    await statusOf(keeper, id, "ready");
+    expect(calls.filter((c) => c === "listBoardNodes")).toHaveLength(2);
+    expect(statuses).not.toContain("failed");
+    expect(keeper.store.getState().pins.get(id)?.failure).toBeUndefined();
   });
 
   it("says that the copy could not be written where the project's tree cannot be read", async () => {

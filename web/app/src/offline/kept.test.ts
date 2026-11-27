@@ -8,7 +8,7 @@ import {
   sessionQuery,
 } from "../api";
 import { createErrorLog } from "../errors/log";
-import { projectQuery } from "../project/queries";
+import { projectQuery, readUnanswered } from "../project/queries";
 import { testAccount, testInstance, testSession } from "../test/app";
 import { fakeApi, refused, testProject, testWorkspace } from "../test/fake";
 import { workspaceQuery } from "../workspace/queries";
@@ -89,6 +89,44 @@ describe("a page that the server does not answer", () => {
     await expect(
       queryClient.fetchQuery(projectQuery("prj_other")),
     ).rejects.toThrow(NetworkError);
+  });
+
+  it("keeps the project that the page read as of the copy's seq or past it, rather than take the copy's, and tells that the server did not answer it", async () => {
+    offline();
+    let answers = false;
+    fakeApi(() => {
+      if (!answers) {
+        throw new NetworkError(new TypeError("Failed to fetch"));
+      }
+      return testProject;
+    });
+    const queryClient = client();
+    queryClient.setQueryData(sessionQuery.queryKey, testSession);
+    const key = projectQuery(testProject.id).queryKey;
+    // As the document followed it since the copy was written.
+    const later = { ...testProject, name: "Renamed", seq: testProject.seq + 5 };
+    queryClient.setQueryData(key, later);
+    expect(
+      await queryClient.fetchQuery({
+        ...projectQuery(testProject.id),
+        staleTime: 0,
+      }),
+    ).toBe(later);
+    expect(readUnanswered(queryClient, testProject.id)).toBe(true);
+    // One older than the copy gives way to the copy's.
+    queryClient.setQueryData(key, { ...testProject, seq: testProject.seq - 1 });
+    expect(
+      await queryClient.fetchQuery({
+        ...projectQuery(testProject.id),
+        staleTime: 0,
+      }),
+    ).toEqual(testProject);
+    answers = true;
+    await queryClient.fetchQuery({
+      ...projectQuery(testProject.id),
+      staleTime: 0,
+    });
+    expect(readUnanswered(queryClient, testProject.id)).toBe(false);
   });
 
   it("reads the device's account only of the account that the page is signed in to", async () => {
