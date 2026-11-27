@@ -86,17 +86,22 @@ export function SyncIndicator({ projectId }: { projectId: string }) {
 /** What each change of the panel says it is. */
 function useBatchState(batch: PendingBatch): string {
   const { t } = useTranslation();
+  // What the server said as it refused the change last, if it did.
+  const reason =
+    batch.refusal?.error?.message ??
+    t("sync.batch.status", { status: batch.refusal?.status ?? 0 });
   switch (batch.state) {
     case "sending":
       return t("sync.batch.sending");
     case "queued":
+      // One that the server refused for when or by whom it was sent, as for
+      // a role that no longer allows it, waits to be tried again, with why.
+      if (batch.refusal !== undefined) {
+        return t("sync.batch.queued_refused", { reason });
+      }
       return batch.sent ? t("sync.batch.queued_sent") : t("sync.batch.queued");
     case "review":
-      return t("sync.batch.review", {
-        reason:
-          batch.refusal?.error?.message ??
-          t("sync.batch.status", { status: batch.refusal?.status ?? 0 }),
-      });
+      return t("sync.batch.review", { reason });
   }
 }
 

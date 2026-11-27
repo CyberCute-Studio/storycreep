@@ -1869,6 +1869,7 @@
   "sync.batch.commands": "{count, plural, one {# command:} other {# commands:}}",
   "sync.batch.made": "Made {time}.",
   "sync.batch.queued": "On this device, waiting for the server.",
+  "sync.batch.queued_refused": "On this device. The server refused it when it was last sent ({reason}), so it is sent again later.",
   "sync.batch.queued_sent": "On this device. It was sent once and no answer came, so the server may have it already; it is sent again as it was.",
   "sync.batch.review": "Refused by the server: {reason}",
   "sync.batch.sending": "Being sent.",

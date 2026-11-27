@@ -15,9 +15,12 @@ afterEach(() => {
 
 /** A document that sends sending of the page's batches, as its store says. */
 function sendingDocument(sending: number) {
-  const store = createStore<Pick<DocumentState, "sending" | "queued">>(() => ({
+  const store = createStore<
+    Pick<DocumentState, "sending" | "queued" | "sendsQueued">
+  >(() => ({
     sending,
     queued: 0,
+    sendsQueued: true,
   }));
   return { doc: { store } as unknown as ProjectDocument, store };
 }
@@ -51,13 +54,26 @@ describe("whenSent", () => {
     expect(await settled(sent)).toBe(true);
   });
 
-  it("does not wait for the batches that the device's queue keeps, which a reload does not lose", async () => {
+  it("does not wait for the batches that the device's queue keeps while the document holds them, which a reload does not lose", async () => {
     vi.useFakeTimers();
     const { doc, store } = sendingDocument(2);
-    store.setState({ queued: 1 });
+    store.setState({ queued: 1, sendsQueued: false });
     const sent = whenSent(doc, new AbortController().signal);
     expect(await settled(sent)).toBe(false);
     store.setState({ queued: 2 });
+    expect(await settled(sent)).toBe(true);
+  });
+
+  it("waits for the batches that the device's queue keeps while the document sends them, as once the browser is online again", async () => {
+    vi.useFakeTimers();
+    const { doc, store } = sendingDocument(2);
+    store.setState({ queued: 2 });
+    const sent = whenSent(doc, new AbortController().signal);
+    expect(await settled(sent)).toBe(false);
+    store.setState({ sending: 1, queued: 1 });
+    expect(await settled(sent)).toBe(false);
+    // Held again, as the next try waits after a refusal.
+    store.setState({ sendsQueued: false });
     expect(await settled(sent)).toBe(true);
   });
 

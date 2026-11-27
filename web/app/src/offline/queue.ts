@@ -6,14 +6,14 @@
 // a document whose lock no tab holds, as of a tab that closed, or a browser
 // that restarted, at once, and those of an open tab's once its lock is let
 // go, as the tab closes, which it hears of from the other tabs
-// (BroadcastChannel) as they keep batches. A browser without Web Locks,
-// none of those that the app supports, keeps no queue, as it could not
-// tell an open tab's batches from a closed one's, and two tabs that sent
-// one batch, each with IDs of its own once a refusal had them sent again,
-// would apply it twice. Signing out takes the account's batches off the
-// device (discard), after which no tab writes one of them there again, as
-// of an answer to it that comes after, since a batch written before is
-// written again only where the device still keeps it (save).
+// (BroadcastChannel) as they keep batches, or take them. A browser without
+// Web Locks, none of those that the app supports, keeps no queue, as it
+// could not tell an open tab's batches from a closed one's, and two tabs
+// that sent one batch, each with IDs of its own once a refusal had them
+// sent again, would apply it twice. Signing out takes the account's batches
+// off the device (discard), after which no tab writes one of them there
+// again, as of an answer to it that comes after, since a batch written
+// before is written again only where the device still keeps it (save).
 
 import type { QueuedBatch, QueueStore } from "../document/queue";
 import { type OfflineDatabase, opensWithin, openWait } from "./db";
@@ -145,14 +145,33 @@ export function deviceQueue(
       // meanwhile, whose lock it holds before it takes any, is not taken
       // for closed.
       const takeLock = `storycreep-queue-take:${userId}:${projectId}`;
-      const take = (from: (other: string) => boolean) =>
-        locks.run(takeLock, () =>
-          db.takeQueued(userId, projectId, owner, from),
-        );
+      const stopped = new AbortController();
+      // Tells the other tabs that owner's document holds batches that it
+      // took, as a write does (save), so that they wait for its lock, and
+      // take them once it is let go, rather than leave them to the next
+      // page that opens the project.
+      const tell = (taken: QueuedBatch[]) => {
+        if (taken.length > 0) {
+          broadcast?.post({ user: userId, project: projectId, owner });
+        }
+        return taken;
+      };
+      // Takes, under the lock, as owner's, the batches of the owners that
+      // the test that from resolves to allows, read inside the lock, and
+      // resolves to them: none once owner's document has stopped taking
+      // them, as once it was dropped, which sends none of them, and would
+      // leave them to no document.
+      const take = (from: () => Promise<(other: string) => boolean>) =>
+        locks
+          .run(takeLock, async () =>
+            stopped.signal.aborted
+              ? []
+              : db.takeQueued(userId, projectId, owner, await from()),
+          )
+          .then(tell);
       // The batches of an open tab's document are taken once its lock is let
       // go, as the tab closes, or the document is dropped; and those that
       // it wrote since, if any, as the next news of it tells.
-      const stopped = new AbortController();
       const waiting = new Set<string>();
       const watch = (other: string) => {
         if (other === owner || waiting.has(other) || stopped.signal.aborted) {
@@ -166,7 +185,7 @@ export function deviceQueue(
             if (stopped.signal.aborted) {
               return;
             }
-            const more = await take((o) => o === other).catch(
+            const more = await take(async () => (o) => o === other).catch(
               () => [] as QueuedBatch[],
             );
             if (more.length > 0 && !stopped.signal.aborted) {
@@ -186,17 +205,10 @@ export function deviceQueue(
       // Takes those of no open tab's document, and then watches those of
       // the open tabs', resolving to the first.
       const begin = async () => {
-        const first = await locks
-          .run(takeLock, async () => {
-            const held = await locks.held();
-            return db.takeQueued(
-              userId,
-              projectId,
-              owner,
-              (other) => !held.has(lockOf(other)),
-            );
-          })
-          .catch(() => [] as QueuedBatch[]);
+        const first = await take(async () => {
+          const held = await locks.held();
+          return (other) => !held.has(lockOf(other));
+        }).catch(() => [] as QueuedBatch[]);
         if (stopped.signal.aborted) {
           return first;
         }

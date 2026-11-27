@@ -212,6 +212,26 @@ export class Documents {
     return this.options.queue?.discard(userId);
   }
 
+  /**
+   * Resolves once every document's writes of the device's queue begun so
+   * far are done, kept or refused (ProjectDocument.queueWritten), or once
+   * wait milliseconds have passed, as of a database that another tab
+   * blocks, so that signing out, which reads the device after, names a
+   * change that a document was still keeping as the user clicked.
+   */
+  async whenWritten(wait: number): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      Promise.all(
+        [...this.held.values()].map((held) => held.doc.queueWritten()),
+      ),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, wait);
+      }),
+    ]);
+    clearTimeout(timer);
+  }
+
   /** Drops every document. */
   clear(): void {
     for (const projectId of [...this.held.keys()]) {

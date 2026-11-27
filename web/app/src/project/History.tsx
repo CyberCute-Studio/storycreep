@@ -97,7 +97,7 @@ export function useHistory(projectId: string) {
   const stepping = useDocumentState(doc, (state) => state.stepping);
   const undoLocal = useDocumentState(doc, (state) => state.undoLocal);
   const redoLocal = useDocumentState(doc, (state) => state.redoLocal);
-  const queued = useDocumentState(doc, (state) => state.queued);
+  const holdsQueued = useDocumentState(doc, (state) => state.holdsQueued);
   const review = useDocumentState(doc, (state) => state.review);
   const reachable = useServerReachable(doc);
   const [done, setDone] = useState<"undo" | "redo">();
@@ -116,7 +116,7 @@ export function useHistory(projectId: string) {
     stepping,
     undoLocal,
     redoLocal,
-    queued,
+    holdsQueued,
     review,
     reachable,
     done,
@@ -128,7 +128,8 @@ export function useHistory(projectId: string) {
  * Returns why history cannot step which way now, though it has a step:
  * the step is of a change that the server already has, which the page
  * cannot reach (offline), or which waits for the changes that the device's
- * queue keeps to be sent first (queue), which a change that the server
+ * queue keeps, those that it is still writing too (holdsQueued), to be
+ * sent first (queue), as step does, which a change that the server
  * refused holds until the user decides (review, plan item 92); or
  * undefined where it can, or has no step.
  */
@@ -147,7 +148,7 @@ function waitsFor(
   if (history.review > 0) {
     return "review";
   }
-  return history.queued > 0 ? "queue" : undefined;
+  return history.holdsQueued ? "queue" : undefined;
 }
 
 /**

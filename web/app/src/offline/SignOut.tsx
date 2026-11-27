@@ -6,9 +6,10 @@
 // for support, before it takes them off the device with the account's
 // copies, once the server has signed the page out. Signing out of a device
 // that keeps none asks nothing. The device's database is read as the user
-// clicks, once it has opened, as on a page that has just loaded, and again
-// as the user signs out anyway, which asks anew where the device keeps
-// changes since that the dialog did not name.
+// clicks, once it has opened, as on a page that has just loaded, and once
+// the page's documents have written the changes that they were keeping,
+// and again as the user signs out anyway, which asks anew where the device
+// keeps changes since that the dialog did not name.
 
 import type { SignedInBody } from "@storycreep/shared/api";
 import { AlertDialog } from "radix-ui";
@@ -78,6 +79,9 @@ export function SignOutButton({
     }
     setReading(true);
     try {
+      // A change that a document was still keeping as the user clicked, as
+      // one made just before, is on the device once its write is done.
+      await documents.whenWritten(openWait);
       return (await opensWithin(db, openWait))
         ? await db.queued(userId).catch(() => [])
         : [];

@@ -6,12 +6,17 @@ import type { DocumentState, ProjectDocument } from "./store";
 
 /**
  * Reports whether the document of state sends none of the page's batches
- * but those that the device's queue keeps (PRD FR-OFF-03), which are no
- * longer the page's to lose, as a reload, and which a read that waits for
- * the page's batches would wait for until the server answers again.
+ * but those that the device's queue keeps (PRD FR-OFF-03) while the
+ * document holds them, as offline, which are no longer the page's to lose,
+ * as a reload, and which a read that waits for the page's batches would
+ * wait for until the server answers again: those that it sends, as once
+ * the browser is online again, the server answers soon, and a read made
+ * before would not find what they change.
  */
-function unsent(state: Pick<DocumentState, "sending" | "queued">): boolean {
-  return state.sending - state.queued <= 0;
+function unsent(
+  state: Pick<DocumentState, "sending" | "queued" | "sendsQueued">,
+): boolean {
+  return state.sending - (state.sendsQueued ? 0 : state.queued) <= 0;
 }
 
 /**

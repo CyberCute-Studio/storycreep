@@ -287,6 +287,29 @@ describe("the sync panel", () => {
     );
   });
 
+  it("says why a change of the device's that the server refused for when it was sent waits to be sent again", async () => {
+    serve(() => {
+      throw refused(403, {
+        code: "forbidden",
+        message: "You can no longer edit this project.",
+      });
+    });
+    const user = userEvent.setup();
+    const { doc } = await openProject();
+    setOnline(false);
+    await act(() => doc.send([renameQuay("Pier")]));
+    setOnline(true);
+    await user.click(await indicator("Saving 1 change…"));
+    const panel = await screen.findByRole("dialog", { name: "Sync status" });
+    expect(
+      await within(panel).findByText(
+        /The server refused it when it was last sent \(You can no longer edit this project\.\), so it is sent again later\.$/,
+        {},
+        { timeout: 2_000 },
+      ),
+    ).toBeDefined();
+  });
+
   it("lists nothing as needing the server while the page reaches it, though a change needs review", async () => {
     serve(() => {
       throw refused(422, { code: "validation_failed" });
@@ -374,6 +397,35 @@ describe("signing out", () => {
     await waitFor(async () =>
       expect(await offlineDb?.queued(testSession.user_id)).toEqual([]),
     );
+  });
+
+  it("asks first where the device is still writing a change as the user clicks, once it has", async () => {
+    const server = serve();
+    const user = userEvent.setup();
+    const { doc, offlineDb } = await openProject();
+    const db = offlineDb as OfflineDatabase;
+    setOnline(false);
+    await indicator("Offline");
+    const save = db.saveQueued.bind(db);
+    let write = () => {};
+    vi.spyOn(db, "saveQueued").mockImplementationOnce(async (...args) => {
+      await new Promise<void>((resolve) => {
+        write = resolve;
+      });
+      return save(...args);
+    });
+    const sending = doc.send([renameQuay("Pier")]);
+    setOnline(true);
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    write();
+    const asked = await screen.findByRole("alertdialog", {
+      name: "Sign out and lose a change not yet sent?",
+    });
+    await user.click(
+      within(asked).getByRole("button", { name: "Stay signed in" }),
+    );
+    server.release();
+    await act(() => sending);
   });
 
   it("asks anew, as the user signs out anyway, where the device keeps a change since that the dialog did not name", async () => {
