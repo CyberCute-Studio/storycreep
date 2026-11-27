@@ -22,6 +22,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { accountQuery, instanceQuery, notFoundBy, sessionQuery } from "../api";
+import type { Part } from "../document/doc";
 import type { Documents } from "../document/documents";
 import { inTurns, type ProjectDocument } from "../document/store";
 import { unreadOf } from "../document/whole";
@@ -573,10 +574,7 @@ export class OfflineKeeper {
       ) {
         return;
       }
-      const pin = await this.db.changePin(userId, projectId, change);
-      if (pin === undefined) {
-        this.failures.delete(projectId);
-      }
+      await this.db.changePin(userId, projectId, change);
       await this.changed();
     });
   }
@@ -658,6 +656,14 @@ export class OfflineKeeper {
     const byProject = new Map<string, CopyRecord>(
       copies.map((c) => [c.project_id, c]),
     );
+    // Why the copy of a project that is pinned no longer, here or in another
+    // tab, as the last opened once another was, could not be written is not
+    // shown of it once it is pinned again, before its copy has been tried.
+    for (const projectId of [...this.failures.keys()]) {
+      if (!pins.some((pin) => pin.project_id === projectId)) {
+        this.failures.delete(projectId);
+      }
+    }
     const views = new Map<string, PinView>();
     for (const pin of pins) {
       const copy = byProject.get(pin.project_id);
@@ -912,7 +918,7 @@ class Kept {
     }
     if (!this.based) {
       this.based = true;
-      this.written = doc.copy;
+      this.written = doc.takeCopy();
     }
     const view = doc.doc;
     const unread = unreadOf(doc, view);
@@ -927,17 +933,28 @@ class Kept {
         return;
       }
       // The reads go at the pace of the keeper's downloads (Pace), and
-      // those that a stopped Kept has yet to begin are not made.
+      // those that a stopped Kept has yet to begin are not made. A board's
+      // content is read for the copy alone, which a reading anew of the
+      // project leaves to this pace (ProjectDocument.load's kept); a board
+      // that went to the trash as it was read, by an operation that the
+      // document has yet to apply, which takes it out, is no failure: the
+      // next pass finds it gone, or reads it again.
       const paced = (read: () => Promise<void>) => async () => {
         await this.keeper.turn();
         if (!this.stopped) {
           await read();
         }
       };
+      const readPart = (part: Part) =>
+        doc.load(part, true).catch((error: unknown) => {
+          if (!(part.startsWith("board:") && notFoundBy(error))) {
+            throw error;
+          }
+        });
       try {
         await inTurns(
           [
-            ...unread.parts.map((part) => paced(() => doc.load(part))),
+            ...unread.parts.map((part) => paced(() => readPart(part))),
             ...unread.components.map((id) =>
               paced(() => doc.readComponent(id)),
             ),

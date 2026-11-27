@@ -121,7 +121,7 @@ const page = <T>(items: T[]) => ({ items, next_cursor: null });
  */
 function serve(
   options: {
-    fail?: (operation: string) => Error | undefined;
+    fail?: (operation: string, input: unknown) => Error | undefined;
     component?: () => unknown;
   } = {},
 ) {
@@ -133,7 +133,7 @@ function serve(
   fakeApi((operation, input) => {
     calls.push(operation);
     times.push(Date.now());
-    const failure = options.fail?.(operation);
+    const failure = options.fail?.(operation, input);
     if (failure !== undefined) {
       throw failure;
     }
@@ -251,6 +251,7 @@ function setup(
   return {
     keeper,
     db,
+    documents,
     realtime,
     queryClient,
     persist,
@@ -580,6 +581,30 @@ describe("a copy that the browser's quota refuses", () => {
     ).toBeUndefined();
     await statusOf(keeper, testProject.id, "ready");
   });
+
+  it("is not shown of a project whose pin went as the last opened moved on, which pinned again downloads", async () => {
+    serve();
+    const { keeper, setOnline } = setup({ retryDelay: 60_000 });
+    let full = true;
+    quota(() => full);
+    keeper.opened(testProject.id, testProject.name);
+    await statusOf(keeper, testProject.id, "failed");
+    full = false;
+    keeper.opened(lighthouse.id, lighthouse.name);
+    await vi.waitFor(() =>
+      expect(keeper.store.getState().pins.has(testProject.id)).toBe(false),
+    );
+    // Pinned again while the browser has no connection, the copy waits to
+    // be downloaded, as nothing has tried it since.
+    setOnline(false);
+    await keeper.pin(testProject.id, testProject.name);
+    expect(keeper.store.getState().pins.get(testProject.id)).toMatchObject({
+      status: "downloading",
+    });
+    expect(
+      keeper.store.getState().pins.get(testProject.id)?.failure,
+    ).toBeUndefined();
+  });
 });
 
 describe("the last opened project, where the server does not answer", () => {
@@ -659,6 +684,40 @@ describe("a project's download", () => {
     await statusOf(keeper, testProject.id, "ready");
   });
 
+  it("is no failure where a board goes to the trash as it is read, which the next pass finds gone", async () => {
+    let trashed = true;
+    const calls = serve({
+      fail: (operation, input) =>
+        trashed &&
+        operation === "listBoardNodes" &&
+        (input as { path: { board_id: string } }).path.board_id.startsWith(
+          "bd_b",
+        )
+          ? refused(404, { code: "not_found" })
+          : undefined,
+    });
+    // Nothing is tried again of itself within the test.
+    const { keeper, setOnline } = setup({ retryDelay: 60_000 });
+    await keeper.pin(testProject.id, testProject.name);
+    await vi.waitFor(() =>
+      expect(
+        calls.filter((c) => c === "listBoardNodes").length,
+      ).toBeGreaterThanOrEqual(3),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(keeper.store.getState().pins.get(testProject.id)).toMatchObject({
+      status: "downloading",
+    });
+    expect(
+      keeper.store.getState().pins.get(testProject.id)?.failure,
+    ).toBeUndefined();
+    // As a board that came back from the trash.
+    trashed = false;
+    setOnline(false);
+    setOnline(true);
+    await statusOf(keeper, testProject.id, "ready");
+  });
+
   it("says that the copy could not be written where the project's tree cannot be read", async () => {
     serve({
       fail: (operation) =>
@@ -725,6 +784,29 @@ describe("a kept project's copy", () => {
     } finally {
       clearInterval(sending);
     }
+  });
+
+  it("has the boards that a reading anew of the project let go read again by the download, before it is written", async () => {
+    const calls = serve();
+    const { keeper, db, documents } = setup();
+    await keeper.pin(testProject.id, testProject.name);
+    await statusOf(keeper, testProject.id, "ready");
+    const nodes = () => calls.filter((c) => c === "listBoardNodes").length;
+    expect(nodes()).toBe(2);
+    // As while the channel is not live: the project is read anew, without
+    // the boards that the download read.
+    await documents.get(testProject.id).refresh();
+    expect(nodes()).toBe(2);
+    await vi.waitFor(() => expect(nodes()).toBe(4), { timeout: 4000 });
+    await vi.waitFor(
+      async () => {
+        const copy = await db.readCopy(testSession.user_id, testProject.id);
+        expect(copy?.doc.nodes.size).toBe(3);
+        expect(copy?.doc.components.get("cmp_jo")?.attributes).toEqual({});
+      },
+      { timeout: 4000 },
+    );
+    await statusOf(keeper, testProject.id, "ready");
   });
 
   it("is not taken back to an older seq by a document whose channel is not live, which writes once it is", async () => {

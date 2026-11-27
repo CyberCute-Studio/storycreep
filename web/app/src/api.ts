@@ -25,7 +25,7 @@ import {
 } from "@tanstack/react-query";
 import type { i18n as I18n } from "i18next";
 import type { ErrorLog } from "./errors/log";
-import { fromDevice, orKept } from "./offline/kept";
+import { orKept } from "./offline/kept";
 import { online as browserOnline } from "./offline/online";
 
 /** The locale that the page is shown in, once requestsIn has been told it. */
@@ -129,12 +129,9 @@ export const instanceQuery = queryOptions({
       async (kept) => (await kept.session())?.instance,
     ),
   // The instance that the device kept, which a page that the server did not
-  // answer started from, is read anew once the browser is online, as the
-  // page shows itself again, or a page reads it.
-  staleTime: (query) =>
-    fromDevice(query.state.data) && browserOnline()
-      ? 0
-      : Number.POSITIVE_INFINITY,
+  // answer started from, is the page's until it loads anew, as the server's
+  // is.
+  staleTime: Number.POSITIVE_INFINITY,
   ...readOffline,
 });
 

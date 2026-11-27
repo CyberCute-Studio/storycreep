@@ -122,7 +122,7 @@ describe("a page that the server does not answer", () => {
 });
 
 describe("the instance that the device keeps", () => {
-  it("is read anew once the browser is online, rather than kept for the page's life as the server's is", async () => {
+  it("is the page's until it loads anew, as the server's is, once the browser is online too", async () => {
     let answers = false;
     let calls = 0;
     fakeApi(() => {
@@ -148,11 +148,9 @@ describe("the instance that the device keeps", () => {
     onLine.mockReturnValue(true);
     answers = true;
     expect((await queryClient.fetchQuery(instanceQuery)).default_locale).toBe(
-      "de",
+      "en",
     );
-    // The server's is kept for the page's life.
-    await queryClient.fetchQuery(instanceQuery);
-    expect(calls).toBe(2);
+    expect(calls).toBe(1);
   });
 });
 

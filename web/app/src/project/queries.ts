@@ -141,7 +141,7 @@ export async function readBoard(
   );
   const doc = context.documents.get(project.id);
   await read(doc.load("tree"));
-  if (current && doc.copy !== undefined && doc.doc.seq < project.seq) {
+  if (current && doc.fromCopy && doc.doc.seq < project.seq) {
     await doc.refresh("tree").catch(() => undefined);
   }
   const has = () => doc.store.getState().view.boards.has(boardId);

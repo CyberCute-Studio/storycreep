@@ -143,10 +143,14 @@ describe("a document that starts from the device's copy", () => {
     await doc.load(boardPart("bd_a"));
     expect(readCopy).toHaveBeenCalledWith(testSession.user_id, testProject.id);
     expect(calls).toEqual(["getProject"]);
-    expect(doc.copy?.version).toBe("v1");
+    expect(doc.fromCopy).toBe(true);
     expect(doc.hasRead("tree")).toBe(true);
     expect(doc.doc.nodes.get("nd_1")?.board_id).toBe("bd_a");
     expect(doc.settled).toBe(true);
+    // The copy is the keeper's to make its first write on, once.
+    expect(doc.takeCopy()?.version).toBe("v1");
+    expect(doc.takeCopy()).toBeUndefined();
+    expect(doc.fromCopy).toBe(true);
     realtime.hold(testProject.id);
     realtime.send(
       testProject.id,
@@ -164,7 +168,7 @@ describe("a document that starts from the device's copy", () => {
     const { doc } = open(copyOf(3));
     await vi.advanceTimersByTimeAsync(0);
     await doc.ready;
-    expect(doc.copy).toBeUndefined();
+    expect(doc.fromCopy).toBe(false);
     expect(doc.doc.seq).toBe(5);
     expect(doc.hasRead("tree")).toBe(false);
     await doc.load("tree");
@@ -187,7 +191,7 @@ describe("a document that starts from the device's copy", () => {
     });
     await vi.advanceTimersByTimeAsync(0);
     await doc.ready;
-    expect(doc.copy?.version).toBe("v1");
+    expect(doc.fromCopy).toBe(true);
     expect(doc.doc.seq).toBe(3);
     // Offline, nothing reads the project anew, however long.
     await vi.advanceTimersByTimeAsync(20_000);
@@ -236,7 +240,7 @@ describe("a document that starts from the device's copy", () => {
     const { calls } = serve(2);
     const { doc } = open(copyOf(3));
     await doc.ready;
-    expect(doc.copy).toBeUndefined();
+    expect(doc.fromCopy).toBe(false);
     expect(doc.doc.seq).toBe(2);
     expect(doc.hasRead("tree")).toBe(false);
     await doc.load("tree");
@@ -249,7 +253,7 @@ describe("a document that starts from the device's copy", () => {
     const { calls } = serve(3);
     const { doc } = open(copyOf(3), { cached: 2 });
     await doc.ready;
-    expect(doc.copy?.version).toBe("v1");
+    expect(doc.fromCopy).toBe(true);
     expect(doc.hasRead("tree")).toBe(true);
     expect(calls).toEqual(["getProject"]);
   });
@@ -258,8 +262,82 @@ describe("a document that starts from the device's copy", () => {
     const { calls } = serve(3);
     const { doc } = open(undefined);
     await doc.load("tree");
-    expect(doc.copy).toBeUndefined();
+    expect(doc.fromCopy).toBe(false);
     expect(calls).toEqual(["getProject", "listFolders", "listBoards"]);
+  });
+
+  it("lets go, as it reads the project anew, of a board of the copy's that no page asked for, and reads anew one that a page did", async () => {
+    vi.useFakeTimers();
+    const { calls } = serve(3);
+    const { doc } = open(copyOf(3));
+    await vi.advanceTimersByTimeAsync(0);
+    await doc.ready;
+    expect(doc.hasRead(boardPart("bd_a"))).toBe(true);
+    // A reading anew of the whole project, as while the channel is not live,
+    // once the wait for it is over.
+    const refreshed = doc.refresh();
+    await vi.advanceTimersByTimeAsync(6_000);
+    await refreshed;
+    expect(calls).toContain("listBoards");
+    expect(calls).not.toContain("listBoardNodes");
+    expect(doc.hasRead(boardPart("bd_a"))).toBe(false);
+    expect(doc.doc.nodes.size).toBe(0);
+    // A board that a page asked for is read anew with the project.
+    await doc.load(boardPart("bd_a"));
+    const read = calls.filter((c) => c === "listBoardNodes").length;
+    await doc.refresh();
+    expect(calls.filter((c) => c === "listBoardNodes")).toHaveLength(read + 1);
+    expect(doc.hasRead(boardPart("bd_a"))).toBe(true);
+    expect(doc.doc.nodes.get("nd_1")?.board_id).toBe("bd_a");
+  });
+});
+
+describe("a document that holds a board for the device's copy alone", () => {
+  it("lets it go as it reads the project anew, rather than read it again at once, until a page asks for it too", async () => {
+    const { calls } = serve(3);
+    const { doc } = open(undefined);
+    const nodes = () => calls.filter((c) => c === "listBoardNodes").length;
+    await doc.load("tree");
+    // As the keeper's download reads it.
+    await doc.load(boardPart("bd_a"), true);
+    expect(nodes()).toBe(1);
+    await doc.refresh();
+    expect(nodes()).toBe(1);
+    expect(doc.hasRead(boardPart("bd_a"))).toBe(false);
+    expect(doc.doc.nodes.size).toBe(0);
+    // Read again by the download, and asked for by a page.
+    await doc.load(boardPart("bd_a"), true);
+    await doc.load(boardPart("bd_a"));
+    expect(nodes()).toBe(2);
+    await doc.refresh();
+    expect(nodes()).toBe(3);
+    expect(doc.hasRead(boardPart("bd_a"))).toBe(true);
+  });
+});
+
+describe("a document that catches up on the channel", () => {
+  it("is not settled until it has the operations up to the seq that its subscription held as of", async () => {
+    serve(3);
+    const { doc, realtime } = open(undefined);
+    await doc.load("tree");
+    expect(doc.settled).toBe(true);
+    // The server has two operations more, which the channel sends after.
+    realtime.hold(testProject.id, 5);
+    expect(doc.settled).toBe(false);
+    realtime.send(
+      testProject.id,
+      [{ type: "board.rename", payload: { id: "bd_a", name: "One" } }],
+      [{ id: "bd_a", rev: 3 }],
+    );
+    expect(doc.doc.seq).toBe(4);
+    expect(doc.settled).toBe(false);
+    realtime.send(
+      testProject.id,
+      [{ type: "board.rename", payload: { id: "bd_a", name: "Two" } }],
+      [{ id: "bd_a", rev: 4 }],
+    );
+    expect(doc.doc.seq).toBe(5);
+    expect(doc.settled).toBe(true);
   });
 });
 
