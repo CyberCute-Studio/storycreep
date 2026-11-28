@@ -962,7 +962,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-OFF-02 AC1–AC3 pass, and the harness reports NFR-PERF-03.
 
 ### 91. Offline editing queue and sync status
-**Status:** todo · **Depends on:** 90
+**Status:** done ([#108](https://github.com/CyberCute-Studio/storycreep/pull/108)) · **Depends on:** 90
 **PRD:** FR-OFF-03, FR-OFF-06
 - A durable command queue in IndexedDB using the shared command layer from item 56: the store `queue` of `storycreep-offline`, version 3, a record to a batch, the account's, held by its document's lock (Web Locks), which another tab's document takes once that tab closes, as the next page's does after the browser restarted (`document/queue.ts`, `offline/queue.ts`, `offline/db.ts`, `document/store.ts`, N98). A batch that the page cannot send, or that no answer came to, is kept, and sent again with its commands' IDs once the server answers; one that the server refuses for what it does needs review, holding the batches after it, until item 92 decides. Undo and redo work offline: undo takes a queued batch that never reached the server out of the queue, and redo puts it back.
 - Server-only actions are disabled with a reason: the canvas's clipboard, uploads, comments, and saved play states (`offline/pending.ts`), while the rename, retype, and board-deletion dialogs change the project without their previews. Signing out asks first where the device keeps unsent changes, and offers them as JSON (`offline/SignOut.tsx`, N98).
