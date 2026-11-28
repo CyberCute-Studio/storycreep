@@ -1068,6 +1068,59 @@ describe("the device's queue of the page's batches", () => {
     await db.close();
   });
 
+  it("has a document that passed over what a sign-out under way names take it once the page is still signed in, and keeps it for review rather than write it over a change made after it", async () => {
+    const batches = serveBoard();
+    const net = connection(false);
+    const locks = fakeLocks();
+    const db = new OfflineDatabase();
+    const hub = fakeBroadcast();
+    const queue = deviceQueue(db, {
+      secure: true,
+      locks,
+      broadcast: hub.tab(),
+      storage: window.localStorage,
+    }) as QueueStore;
+    const other = deviceQueue(db, {
+      secure: true,
+      locks,
+      broadcast: hub.tab(),
+      storage: window.localStorage,
+    }) as QueueStore;
+    const first = await open(db, locks, net, testSession, queue);
+    await first.doc.send([rename("bd_a", "Quay", 3)]);
+    clock = "2026-11-27T10:05:00Z";
+    await first.doc.send([rename("bd_a", "Dock", 3)]);
+    const [named] = await db.queued(user, testProject.id);
+    first.doc.dispose();
+    await first.doc.lettingGo();
+    // As the server answers the sign-out, another tab's document starts,
+    // which takes the change that the sign-out did not name alone, and
+    // stays open.
+    const settle = await queue.intend(user, named ? [named] : []);
+    const during = await open(db, locks, net, testSession, other);
+    expect(during.doc.store.getState().queued).toBe(1);
+    // The page is still signed in: the document takes the other too.
+    settle(false);
+    await until(during.doc, (s) => s.queued === 2);
+    expect(window.localStorage.length).toBe(0);
+    // It holds them both, which no other document takes.
+    const next = await open(db, locks, net, testSession, other);
+    expect(next.doc.store.getState().queued).toBe(0);
+    next.doc.dispose();
+    await next.doc.lettingGo();
+    // The change made before the other, sent after it, is not moved past
+    // what that one changed, which it would write over.
+    net.set(true);
+    await until(during.doc, (s) => s.review === 1);
+    expect(batches.map((b) => [nameOf(b), b[0]?.expected_rev])).toEqual([
+      ["Dock", { bd_a: 3 }],
+      ["Quay", { bd_a: 3 }],
+    ]);
+    during.doc.dispose();
+    await during.doc.lettingGo();
+    await db.close();
+  });
+
   it("keeps what a sign-out under way names once the page is still signed in, though a take read it before, and the locks after", async () => {
     const batches = serve(() => new Promise<never>(() => {}));
     const net = connection(false);
@@ -1317,6 +1370,61 @@ describe("the device's queue of the page's batches", () => {
     expect(batches.map(nameOf)).toEqual(["Quay", undefined, "Pier"]);
     expect(await db.queued(user, testProject.id)).toEqual([]);
     expect(shownName(doc)).toBe("Pier");
+    doc.dispose();
+    await doc.lettingGo();
+    await db.close();
+  });
+
+  it("sends an undo that waited for a comment's try that had no answer for a while once it settles, where no batch went on before it meanwhile", async () => {
+    let seq = testProject.seq;
+    let rev = 3;
+    let answer = (_: CommandResultBody) => {};
+    const batches = serve(
+      (commands) => {
+        if (commands[0]?.type === "comment.delete") {
+          return new Promise<CommandResultBody>((resolve) => {
+            answer = resolve;
+          });
+        }
+        seq++;
+        rev++;
+        return applied(
+          seq,
+          [{ id: "bd_a", rev }],
+          [renameBack("bd_a", "Harbour", rev)],
+        );
+      },
+      () => seq,
+    );
+    const db = new OfflineDatabase();
+    const locks = fakeLocks();
+    const { doc } = await open(
+      db,
+      locks,
+      connection(true),
+      testSession,
+      deviceQueue(db, { secure: true, locks }),
+      { answerWait: 20 },
+    );
+    await doc.send([rename("bd_a", "Quay", 3)]);
+    const comment = doc.send(
+      [{ type: "comment.delete", payload: { id: "cmt_a" } }],
+      { history: false },
+    );
+    const undo = doc.undo();
+    await until(doc, (s) => s.holding);
+    seq++;
+    answer(applied(seq, []));
+    await comment;
+    // Nothing went on before the undo, which is the latest change still.
+    expect(await undo).toBe(true);
+    expect(batches.map(nameOf)).toEqual(["Quay", undefined, "Harbour"]);
+    expect(shownName(doc)).toBe("Harbour");
+    expect(doc.store.getState()).toMatchObject({
+      undoable: 0,
+      redoable: 1,
+      holding: false,
+    });
     doc.dispose();
     await doc.lettingGo();
     await db.close();

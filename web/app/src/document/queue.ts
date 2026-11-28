@@ -175,8 +175,9 @@ export interface QueueStore {
    * batches meanwhile either, as the page may still be signed in after.
    * Resolves, once the tab holds it, to what lets it go, which forgets the
    * removal where signedOut says that the page is still signed in, and
-   * else tells the other tabs, which ask for their session, as their
-   * documents may hold those batches too.
+   * tells the documents of the tabs of those batches, which take those
+   * that they passed over meanwhile, and else tells the other tabs, which
+   * ask for their session, as their documents may hold those batches too.
    */
   intend(
     userId: string,

@@ -24,12 +24,14 @@
 // that closes first leaves no batch that the user signed out without to be
 // sent; while the tab that signs out holds the removal's lock, as the
 // server answers, it is not made, as the page may still be signed in
-// after, nor are its batches taken, and once the server has signed the
-// page out the other tabs are told, which ask for their session, as their
-// documents may hold such batches too, which a page signed out keeps none
-// of. A database that does not open in time refuses a write, as one that
-// refuses it for its quota does, rather than hold the document's writes,
-// and the tries that wait for them, for as long as the page is open.
+// after, nor are its batches taken, which the documents that passed over
+// them meanwhile are told of, and take, once it is (tellSpared), and once
+// the server has signed the page out the other tabs are told, which ask
+// for their session, as their documents may hold such batches too, which
+// a page signed out keeps none of. A database that does not open in time
+// refuses a write, as one that refuses it for its quota does, rather than
+// hold the document's writes, and the tries that wait for them, for as
+// long as the page is open.
 
 import { formatUuid, newUuid } from "@storycreep/shared/ids";
 import type { QueuedBatch, QueueStore } from "../document/queue";
@@ -405,6 +407,28 @@ export function deviceQueue(
       }
     }
   };
+  // Tells the documents of the tabs, this one's too, of the batches that a
+  // sign-out under way named, once the page is still signed in after it,
+  // by the documents that hold them, as a write does (save): one that
+  // passed over them meanwhile (discarded), as it took a closed tab's,
+  // which hears of them no more, takes them now (adopt's watch), rather
+  // than leave them on the device unsent until the project is opened anew.
+  const tellSpared = async (userId: string, removal: Discarded) => {
+    const named = namedBy([removal]);
+    const told = new Set<string>();
+    for (const record of await db.queued(userId).catch(() => [])) {
+      const news = {
+        user: userId,
+        project: record.project_id,
+        owner: record.owner,
+      };
+      const at = `${news.project}/${news.owner}`;
+      if (named(record) && !told.has(at)) {
+        told.add(at);
+        broadcast?.post(news);
+      }
+    }
+  };
   return {
     hold: (owner) => locks.hold(lockOf(owner)),
     adopt: async (userId, projectId, owner, found, takes = () => true) => {
@@ -606,8 +630,9 @@ export function deviceQueue(
       const key = signingOutKey(userId);
       const lock = `storycreep-queue-signing-out:${userId}:${formatUuid(newUuid())}`;
       const release = await locks.hold(lock).catch(() => undefined);
+      const removal = discardedWith(undefined, only, now());
       const written = store(key, {
-        ...discardedWith(undefined, only, now()),
+        ...removal,
         ...(release === undefined ? {} : { lock }),
       });
       return (signedOut) => {
@@ -626,6 +651,8 @@ export function deviceQueue(
         release?.();
         if (signedOut) {
           broadcast?.signedOut?.(userId);
+        } else if (written !== undefined) {
+          void tellSpared(userId, removal);
         }
       };
     },

@@ -388,7 +388,9 @@ function refusedForGood(error: unknown): boolean {
  * meanwhile wait for (sendAfterSteps), what they wait for no longer, once
  * its read of the server, or its try, or one that it waits for, has had no
  * answer for answerWait (givingWayAfter, stalled): that it gave way
- * (gaveWay), as it says (given), which giveWay gives.
+ * (gaveWay), as it says (given), which giveWay gives, and whether a batch
+ * of the page's went on before it since (passed), after which the step,
+ * not sent yet, is not sent (stepped).
  */
 interface StepUnderWay {
   which: "undo" | "redo";
@@ -396,6 +398,7 @@ interface StepUnderWay {
   gaveWay?: Promise<void>;
   given?: boolean;
   giveWay?: () => void;
+  passed?: boolean;
 }
 
 /**
@@ -3449,6 +3452,12 @@ export class ProjectDocument {
       // the time that it was made at, which the page showed it with.
       this.waiting = this.waiting.filter((w) => w !== waiting);
     }
+    // One that goes on as the step under way gave way goes before it, which
+    // is then not sent after it; a step that none went before is sent once
+    // what it waited for has settled, as it was asked for (stepped).
+    if (underWay !== undefined) {
+      underWay.passed = true;
+    }
     const batch = this.sendBatch(commands, waiting?.time, options);
     this.batches.add(batch);
     const settled = () => {
@@ -3868,8 +3877,9 @@ export class ProjectDocument {
       // comes before the step still, which waits for it, as step does; and so
       // do the page's batches made since, which went on, as a try that the
       // step waited for, as a comment's, had no answer for a while (stalled),
-      // and which are the latest changes once they apply.
-      if (this.holdsQueued() || this.gaveWay()) {
+      // and which are the latest changes once they apply; a step that none
+      // went before is sent, as it was asked for.
+      if (this.holdsQueued() || this.passed()) {
         return false;
       }
       const step = newest();
@@ -3918,8 +3928,9 @@ export class ProjectDocument {
       // The page's batches made meanwhile went on, as the read, or a try, had
       // no answer for a while (givingWayAfter, stalled), and are the latest
       // changes once they apply: the step is not sent after them, as it is
-      // not after one that the device's queue kept (holdsQueued).
-      if (this.gaveWay()) {
+      // not after one that the device's queue kept (holdsQueued); one that
+      // none went before is sent, as it was asked for.
+      if (this.passed()) {
         return false;
       }
       if (this.restores !== restores) {
@@ -4022,9 +4033,9 @@ export class ProjectDocument {
     }
   }
 
-  /** Reports whether the step under way gave way to the page's batches made meanwhile, which then go on before it (StepUnderWay.given). */
-  private gaveWay(): boolean {
-    return this.stepUnderWay?.given === true;
+  /** Reports whether a batch of the page's went on before the step under way, as it gave way to those made meanwhile (StepUnderWay.passed). */
+  private passed(): boolean {
+    return this.stepUnderWay?.passed === true;
   }
 
   /**
@@ -5241,12 +5252,15 @@ export class ProjectDocument {
       for (const queued of this.entries) {
         // A batch that a page made without showing entry, as another tab's
         // that the document took as that tab closed, was not made on top of
-        // it (madeOnTop): what it expects is left, so that it is refused for
-        // what entry changed, and compared with it, rather than written over
-        // it unasked.
+        // it (madeOnTop), nor was one made before it, as one of its maker's
+        // that the document took after it, as a sign-out under way passed
+        // over that one (QueueStore.intend): what it expects is left, so
+        // that it is refused for what entry changed, and compared with it,
+        // rather than written over it unasked.
         if (
           queued.sent ||
           queued === entry ||
+          queued.order <= entry.order ||
           !madeOnTop(queued, entry.maker)
         ) {
           continue;
