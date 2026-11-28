@@ -368,10 +368,14 @@ function ProjectPages({ projectId }: { projectId: string }) {
             )}
           </ul>
         </nav>
-        {/* Whether the user's changes are saved on the server, on their
-        way, kept on the device offline, or need review (PRD FR-OFF-06). */}
-        <SyncIndicator projectId={projectId} edits={edits} />
-        {edits && <LayoutHistory projectId={projectId} />}
+        {/* The undo and redo, and whether the user's changes are saved on
+        the server, on their way, kept on the device offline, or need review
+        (PRD FR-OFF-06), in one row, which takes no more of the page's height
+        than the undo and redo did before. */}
+        <div className="flex flex-wrap items-start gap-2">
+          {edits && <LayoutHistory projectId={projectId} />}
+          <SyncIndicator projectId={projectId} edits={edits} />
+        </div>
         {project.archived_at !== undefined && (
           <p className="rounded-md border border-border bg-surface px-4 py-3">
             {managesProject(project.role)

@@ -153,6 +153,16 @@ export async function drag(
   to: Locator,
   down = 0.5,
 ): Promise<void> {
+  // A handle at the window's edge, or past it, as the last row of a tree
+  // below the page's header, is brought to the window's middle first, where
+  // the pointer reaches it and the drag does not scroll the page as it
+  // nears the edge, as a hand would scroll it there before it drags.
+  await from.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    if (box.top < 0 || box.bottom > window.innerHeight) {
+      element.scrollIntoView({ block: "center" });
+    }
+  });
   const fromBox = await from.boundingBox();
   const toBox = await to.boundingBox();
   if (fromBox === null || toBox === null) {
