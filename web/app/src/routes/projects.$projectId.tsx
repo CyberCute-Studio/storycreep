@@ -233,15 +233,28 @@ function ProjectPages({ projectId }: { projectId: string }) {
   return (
     <div className={`mx-auto space-y-6 ${wide ? "" : "max-w-3xl"}`}>
       <div className="space-y-4">
-        <p>
-          <Link
-            to="/workspaces/$workspaceId"
-            params={{ workspaceId: workspace.id }}
-            className={textLink}
-          >
-            {t("project.back", { workspace: workspace.name })}
-          </Link>
-        </p>
+        {/* Whether the user's changes are saved on the server, on their
+        way, kept on the device offline, or need review (PRD FR-OFF-06), at
+        the end of the line of the link back to the workspace, beside which
+        it takes no more of the page's height than that line does, but for 4
+        px, so that a board's canvas, which takes the window's height below
+        it, keeps it, and is no lower in the window than before: the button,
+        as tall as a finger needs, reaches 8 px past the line above and below,
+        as far as a control may be from the nav's links under it. */}
+        <div className="flex items-center justify-between gap-4">
+          <p className="min-w-0">
+            <Link
+              to="/workspaces/$workspaceId"
+              params={{ workspaceId: workspace.id }}
+              className={textLink}
+            >
+              {t("project.back", { workspace: workspace.name })}
+            </Link>
+          </p>
+          <div className="-my-2 shrink-0">
+            <SyncIndicator projectId={projectId} edits={edits} />
+          </div>
+        </div>
         <nav aria-label={t("project.nav.label", { name: project.name })}>
           <ul className="flex flex-wrap gap-2 border-b border-border pb-2">
             <li>
@@ -368,14 +381,7 @@ function ProjectPages({ projectId }: { projectId: string }) {
             )}
           </ul>
         </nav>
-        {/* The undo and redo, and whether the user's changes are saved on
-        the server, on their way, kept on the device offline, or need review
-        (PRD FR-OFF-06), in one row, which takes no more of the page's height
-        than the undo and redo did before. */}
-        <div className="flex flex-wrap items-start gap-2">
-          {edits && <LayoutHistory projectId={projectId} />}
-          <SyncIndicator projectId={projectId} edits={edits} />
-        </div>
+        {edits && <LayoutHistory projectId={projectId} />}
         {project.archived_at !== undefined && (
           <p className="rounded-md border border-border bg-surface px-4 py-3">
             {managesProject(project.role)
