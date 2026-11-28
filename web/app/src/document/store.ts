@@ -1039,6 +1039,8 @@ export class ProjectDocument {
   private readonly comments: Follower;
   private unsubscribe: (() => void) | undefined;
   private disposed = false;
+  /** Whether the page signed out of the document's account as it was dropped, or after, or found its session ended (watchSignOut). */
+  private signedOut = false;
   /** Whether the document started from the copy of the project that the device keeps (start). */
   private copied = false;
   /**
@@ -1834,6 +1836,9 @@ export class ProjectDocument {
     for (const stop of this.stopFollowing.splice(0)) {
       stop();
     }
+    // Once, from the first time that it is dropped.
+    const stopWatching =
+      this.released === undefined ? this.watchSignOut() : () => {};
     this.stopAdopting?.();
     // The lock goes once the try under way, which may have reached the
     // server, has been answered, and the page's batches that the document
@@ -1846,6 +1851,7 @@ export class ProjectDocument {
       .then(() => this.ownerLock)
       .then((release) => {
         this.letGo = true;
+        stopWatching();
         release?.();
       });
     for (const follower of this.followers) {
@@ -3370,15 +3376,33 @@ export class ProjectDocument {
     options: SendOptions = {},
   ): Promise<SendResult> {
     // A new change, after which what undo took out of the device's queue is
-    // not put back (AC4).
-    if (options.history !== false) {
-      this.changesMade++;
-      if (this.withdrawn.length > 0) {
-        this.withdrawn = [];
-        this.queueChanged();
-      }
+    // not put back (AC4); but for one that fails, as one that the device
+    // refuses to keep, as for its quota, or that the server refuses, which
+    // changed nothing, and leaves redo as it was, unless another change was
+    // made since, as it leaves the history's (History.endRedo).
+    if (options.history === false) {
+      return this.sendTracked(commands, options);
     }
-    return this.sendTracked(commands, options);
+    const made = ++this.changesMade;
+    const withdrawn = this.withdrawn;
+    if (withdrawn.length > 0) {
+      this.withdrawn = [];
+      this.queueChanged();
+    }
+    const sending = this.sendTracked(commands, options);
+    if (withdrawn.length > 0) {
+      sending.catch(() => {
+        if (
+          !this.disposed &&
+          this.changesMade === made &&
+          this.withdrawn.length === 0
+        ) {
+          this.withdrawn = withdrawn;
+          this.queueChanged();
+        }
+      });
+    }
+    return sending;
   }
 
   /** Sends a batch as send does, without ending what redo would put back, as redo itself sends one. */
@@ -4477,7 +4501,10 @@ export class ProjectDocument {
       // out took off it meanwhile, in this tab or another, is not put back
       // (QueueStore.save); and a document dropped as the page signed out
       // writes none anew, which it keeps no longer, refusing the write, as
-      // their callers are refused without a queue (signedOutOf).
+      // their callers are refused without a queue (signedOutOf). One that
+      // the server answered while the write waited for those before, as a
+      // try that had no answer for a while (stalled), is the queue's no
+      // longer either, and is not written.
       const signedOut = this.signedOutOf();
       const kept: QueuedBatch[] = [];
       const created: string[] = [];
@@ -4485,7 +4512,7 @@ export class ProjectDocument {
       let refused = false;
       put.forEach((batch, i) => {
         const entry = writing[i] as Entry;
-        if (entry.held?.id !== batch.id) {
+        if (entry.held?.id !== batch.id || entry.answer !== undefined) {
           return;
         }
         if (entry.stored !== true) {
@@ -4505,12 +4532,15 @@ export class ProjectDocument {
       }
       // Each is the queue's from now on, which a reload keeps, and which its
       // caller hears of, as of one that the device refused to keep before,
-      // while it was on its way again (queueKept).
+      // while it was on its way again (queueKept); but for one that the
+      // server answered while the device wrote it, whose record the write
+      // after its answer takes off it (pump), and which joined the history
+      // as its answer came, whose redo since, as of an undo, it does not end.
       for (const entry of fresh) {
         entry.stored = true;
         entry.queued?.();
       }
-      if (fresh.some((e) => e.history)) {
+      if (fresh.some((e) => e.history && e.answer === undefined)) {
         this.history.endRedo();
       }
       if (fresh.length > 0) {
@@ -4990,12 +5020,12 @@ export class ProjectDocument {
     if (!signedOut) {
       this.stepUnderWay?.giveWay?.();
     }
-    if (
+    const keeps =
       entry.held === undefined &&
       this.keepable(entry) &&
       !signedOut &&
-      this.entries.includes(entry)
-    ) {
+      this.entries.includes(entry);
+    if (keeps) {
       entry.held = this.batchOf(entry, { sent: true });
       entry.dirty = true;
       this.persist().catch((failure: unknown) => {
@@ -5014,7 +5044,20 @@ export class ProjectDocument {
     if (!signedOut) {
       this.keep();
     }
-    this.queueChanged();
+    // What undo and redo would do changes only where the queue keeps the
+    // batch now, as keep says of those after it, not of a comment's try,
+    // nor of one of the queue's, which would end the undo of a move that
+    // the canvas offers (historyVersion), though the sync panel lists one
+    // of the queue's anew, as recorded as sent (pump); the page cannot
+    // reach the server all the same (unreachable).
+    if (keeps) {
+      this.queueChanged();
+    } else {
+      if (entry.held !== undefined) {
+        this.queueSends++;
+      }
+      this.show();
+    }
   }
 
   /**
@@ -5211,14 +5254,45 @@ export class ProjectDocument {
 
   /**
    * Reports whether the document was dropped as the page signed out, or
-   * found its session ended, after which it keeps no batch in the device's
-   * queue that it does not already (queueKept, pump).
+   * found its session ended, or the page signed out of its account after,
+   * while the document still kept what was on its way, after which it keeps
+   * no batch in the device's queue that it does not already (queueKept,
+   * pump), though another account signs in since; not one dropped as
+   * another account signed in, which keeps them for its own, though that
+   * one signs out after (watchSignOut).
    */
   private signedOutOf(): boolean {
-    return (
-      this.disposed &&
-      this.options.queryClient.getQueryData(sessionQuery.queryKey) === null
-    );
+    return this.signedOut;
+  }
+
+  /**
+   * Has the document, dropped, record that the page signed out of its
+   * account (signedOut): as it is dropped, where the page's session is
+   * none then, or once the session goes from its account's to none, until
+   * what it returns is called, as the document lets go of its lock, after
+   * which it keeps nothing.
+   */
+  private watchSignOut(): () => void {
+    const client = this.options.queryClient;
+    // Whether the session that the document saw last, since it was dropped,
+    // is its account's, or, before it saw one, as it is dropped.
+    let own = true;
+    const watch = () => {
+      const now = client.getQueryData(sessionQuery.queryKey);
+      if (now === undefined) {
+        return;
+      }
+      if (now === null && own) {
+        this.signedOut = true;
+      }
+      own = now?.user_id === this.userId;
+    };
+    watch();
+    return client.getQueryCache().subscribe((event) => {
+      if (event.query.queryKey[0] === sessionQuery.queryKey[0]) {
+        watch();
+      }
+    });
   }
 
   /**

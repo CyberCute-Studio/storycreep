@@ -548,26 +548,32 @@ export function deviceQueue(
               resolve();
             });
         });
-      if (await opensWithin(db, wait)) {
-        return { batches: await begin(), stop, again };
-      }
       // A database that does not open within wait, as one that another tab
-      // blocks, leaves the document to start without them, which it is given
-      // once the database has opened, as those of a tab that closes are
-      // (found), rather than never.
-      db.open().then(
-        async () => {
-          if (stopped.signal.aborted) {
-            return;
+      // blocks, or a take whose lock another tab's holds that long, as one
+      // whose database does not open either, leaves the document to start
+      // without them, which it is given once they are taken, as those of a
+      // tab that closes are (found), rather than never, leaving no timer
+      // behind; and none where the database cannot be opened.
+      const first = db
+        .open()
+        .then(() => (stopped.signal.aborted ? [] : begin()))
+        .catch(() => [] as QueuedBatch[]);
+      const batches = await new Promise<QueuedBatch[]>((resolve) => {
+        let late = false;
+        const timer = setTimeout(() => {
+          late = true;
+          resolve([]);
+        }, wait);
+        void first.then((taken) => {
+          clearTimeout(timer);
+          if (!late) {
+            resolve(taken);
+          } else if (taken.length > 0 && !stopped.signal.aborted) {
+            found(taken);
           }
-          const first = await begin();
-          if (first.length > 0 && !stopped.signal.aborted) {
-            found(first);
-          }
-        },
-        () => {},
-      );
-      return { batches: [], stop, again };
+        });
+      });
+      return { batches, stop, again };
     },
     save: async (userId, projectId, put, remove, created) => {
       // A database whose open does not settle within wait, as a browser's
