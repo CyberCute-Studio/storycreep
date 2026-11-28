@@ -461,6 +461,40 @@ describe("the script view", () => {
     expect(document.activeElement).toBe(entryOf("Market"));
   });
 
+  it("shows a condition that the server has yet to compile, as one saved offline, as it compiles here, and one that the server found an error in as having one", async () => {
+    const { nodes, connections } = harbourBoard();
+    boardPage({
+      nodes,
+      connections: connections.map((c) =>
+        c.id === "cn_market"
+          ? { ...c, condition: { source: "gold >= 3", is_valid: false } }
+          : c.id === "cn_pier"
+            ? {
+                ...c,
+                condition: {
+                  source: "gold >=",
+                  is_valid: false,
+                  error: { code: "unexpected_end", start: 7, end: 7 },
+                },
+              }
+            : c,
+      ),
+    });
+    await openScript();
+    const choices = within(entryOf("Quay")).getByRole("list", {
+      name: "Choices of Quay",
+    });
+    const [map, pier] = within(choices).getAllByRole("listitem");
+    // The view compiles it against the names that it reads as it opens,
+    // of a board of the server's IDs, which the test's is not, and so shows
+    // it as written (e2e/queue.spec.ts shows it compiled), with no error.
+    await screen.findByText("Elara", { exact: false });
+    expect(map.textContent).toContain("Only if gold >= 3");
+    expect(map.textContent).not.toContain("(the condition has an error)");
+    expect(pier.textContent).toContain("gold >=");
+    expect(pier.textContent).toContain("(the condition has an error)");
+  });
+
   // Verifies: FR-TEXT-04/AC1, FR-TEXT-04/AC3
   it("edits a node's title and text with the keyboard, in one node.update, as the canvas does, which the canvas then shows", async () => {
     const user = userEvent.setup();

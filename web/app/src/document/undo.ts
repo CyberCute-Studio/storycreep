@@ -320,6 +320,22 @@ export class History {
   }
 
   /**
+   * Ends what could be redone, as a change of the user's that the device's
+   * queue keeps does at once, before the server has answered it, whose
+   * answer then records it (done): the redo would otherwise be sent after
+   * it, writing over it (PRD FR-OFF-03).
+   */
+  endRedo(): void {
+    if (this.redoSteps.length === 0) {
+      return;
+    }
+    this.redoSteps = [];
+    this.changes++;
+    this.forget();
+    this.save();
+  }
+
+  /**
    * Takes the next step to undo out of the history, once it has applied, and
    * records the step that redoes it, if any; a step sent in parts of which
    * some applied is left in its place as rest, what did not.

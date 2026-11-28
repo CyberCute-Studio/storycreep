@@ -19,9 +19,18 @@ import {
 import { newId } from "@storycreep/shared/ids";
 import { useQuery } from "@tanstack/react-query";
 import { AlertDialog, Dialog } from "radix-ui";
-import { type FormEvent, type ReactNode, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
+import { boardPart } from "../document/doc";
+import { useDocumentState, useProjectDocument } from "../document/react";
+import { useServerReachable } from "../offline/pending";
 import {
   ConfirmButtons,
   ConfirmFrame,
@@ -610,13 +619,55 @@ export function DeleteBoardDialog({
   const commands = useCommands(projectId);
   const rev = useExpected(board.rev, commands.error);
   const refused = referencedBy(commands.error);
+  // The list is the server's, which the page may not reach now, as
+  // offline: the dialog lists then the jumpers of the other boards that the
+  // page holds, as the device's copy of the project, which is a change
+  // that the device keeps (PRD FR-OFF-03). Where the copy holds none, the
+  // deletion is not confirmed, and is refused once sent, and kept for
+  // review, where the server knows of one; where it holds some, the
+  // deletion that the user confirms leaves broken those that the server
+  // knows of and the copy does not too, which the dialog says. As the
+  // server's, it lists no jumper whose target is in the trash, which the
+  // page tells where it holds the board's content without it (FR-PROJ-02).
+  // The server's list, once read as the dialog opened, is listed still once
+  // the page cannot reach the server, with the copy's that it lacks, as
+  // made offline since, rather than the copy's alone, which lacks those of
+  // the boards that the copy has not read, and would leave the deletion
+  // unconfirmed for them.
+  const doc = useProjectDocument(projectId);
+  const reachable = useServerReachable(doc);
+  const nodes = useDocumentState(doc, (state) => state.view.nodes);
+  const parts = useDocumentState(doc, (state) => state.view.parts);
+  const held = useMemo(
+    () =>
+      reachable
+        ? undefined
+        : [...nodes.values()]
+            .filter(
+              (node) =>
+                node.type === "jumper" &&
+                node.board_id !== board.id &&
+                node.target?.board_id === board.id &&
+                (!parts.has(boardPart(board.id)) ||
+                  nodes.has(node.target.node_id ?? "")),
+            )
+            .map((node) => ({
+              id: node.id,
+              board_id: node.board_id,
+              title: node.title,
+            })),
+    [reachable, nodes, parts, board.id],
+  );
+  const listed = referrers.data?.items.map((node: Node) => ({
+    id: node.id,
+    board_id: node.board_id,
+    title: node.title,
+  }));
   const jumpers: Jumper[] | undefined =
     refused?.jumpers ??
-    referrers.data?.items.map((node: Node) => ({
-      id: node.id,
-      board_id: node.board_id,
-      title: node.title,
-    }));
+    (listed === undefined || held === undefined
+      ? (held ?? listed)
+      : [...listed, ...held.filter((j) => !listed.some((l) => l.id === j.id))]);
   const count = refused?.count ?? jumpers?.length ?? 0;
   const more =
     refused === undefined
@@ -640,7 +691,7 @@ export function DeleteBoardDialog({
       // once what it breaks is shown, while Cancel closes the dialog all the
       // same, as while a read that is slow, or that waits for the browser's
       // connection, is under way.
-      ready={!referrers.isPending}
+      ready={!referrers.isPending || !reachable}
       onClose={onClose}
       onConfirm={() =>
         commands.mutate(
@@ -665,8 +716,13 @@ export function DeleteBoardDialog({
         )
       }
     >
-      {referrers.isError && (
+      {referrers.isError && reachable && (
         <Alert message={refusalOf(referrers.error, t)?.message} />
+      )}
+      {!reachable && refused === undefined && listed === undefined && (
+        <p className="text-fg-muted">
+          {t("boards.jumpers_offline", { count })}
+        </p>
       )}
       {jumpers !== undefined && jumpers.length > 0 && (
         <div className="space-y-2">

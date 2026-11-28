@@ -74,6 +74,7 @@ import {
   useDocuments,
   useProjectDocument,
 } from "../document/react";
+import { useServerCopyWaits } from "../offline/pending";
 import { PlayPanel } from "../play/PlayPanel";
 import { goToSaved } from "../play/SavedStates";
 import {
@@ -1777,7 +1778,34 @@ function BoardCanvasOf({
   // on a board that may be changed, once the canvas is placed on its nodes,
   // as a new node is (Add), and while no copy, paste, or duplicate of the
   // canvas is under way (busy).
-  const clipboardReady = content === "ready" && copied !== undefined;
+  // Copy, Cut, Duplicate, and Paste read the server (plan note N71), which
+  // the page may not reach now, as offline, or whose copy lacks the changes
+  // that the device's queue keeps meanwhile, as while one needs review, and
+  // a paste would show nothing until they are sent, when they are not
+  // offered, and the toolbar says why (PRD FR-OFF-03 AC3, plan note N98).
+  const waits = useServerCopyWaits(doc);
+  const reachable = waits === undefined;
+  // Why, which the toolbar says, and the paste's dialog too, which pastes
+  // nothing meanwhile, as once the browser lost its connection after the
+  // dialog opened.
+  const waitsNote =
+    waits === undefined
+      ? undefined
+      : waits === "offline"
+        ? t("canvas.clipboard_offline")
+        : waits === "review"
+          ? t("canvas.clipboard_waits_for_review")
+          : t("canvas.clipboard_waits_for_queue");
+  const reachableNow = useRef(reachable);
+  useLayoutEffect(() => {
+    reachableNow.current = reachable;
+  });
+  // Whether the page's clipboard holds what Paste would paste here, once the
+  // canvas is placed on the board's nodes, whether or not it reaches the
+  // server now, which the toolbar's Paste is disabled without, rather than
+  // unavailable, as while the server cannot be reached (LastingButton).
+  const clipboardHeld = content === "ready" && copied !== undefined;
+  const clipboardReady = clipboardHeld && reachable;
   const pastable = editable && clipboardReady && !actions.busy;
   // Pastes what the page's clipboard holds, its nodes' middle at at of the
   // board, or at the canvas's centre, where at is not given: at once where
@@ -1808,7 +1836,9 @@ function BoardCanvasOf({
         opener: opener ?? (active instanceof HTMLElement ? active : null),
         asked,
       });
-    } else {
+    } else if (reachableNow.current) {
+      // Nothing is pasted where the page lost the server as the report was
+      // read, as the toolbar says (waitsNote).
       void actions.paste(clipboard, point, undefined, asked);
     }
   };
@@ -1818,7 +1848,7 @@ function BoardCanvasOf({
   // Cut on a board that may be changed alone; and Copy, Cut, and Duplicate
   // of at most as many nodes as a clipboard holds.
   const clipboardAsked = (asked: ClipboardAsk) => {
-    if (controller.gestures.following()) {
+    if (controller.gestures.following() || !reachable) {
       return;
     }
     if (asked === "paste") {
@@ -1876,7 +1906,7 @@ function BoardCanvasOf({
   // fit; Delete is of the nodes selected, or of the connection, as the
   // toolbar's is, by the same conditions.
   const fits = selected > 0 && selected <= maxEdited;
-  const copiable = fits && !actions.busy;
+  const copiable = fits && !actions.busy && reachable;
   const deletable = selected > 0 || connection !== undefined;
   const canvasHandlers: Handlers = {
     ...Object.fromEntries(viewCommands.map((id) => [id, ofController(id)])),
@@ -2215,15 +2245,17 @@ function BoardCanvasOf({
         {/* The page's clipboard (FR-EDIT-07, plan note N71): Copy, on any
         board, as a viewer may copy what they read, and Cut and Paste on a
         board that may be changed. While a copy, a paste, or a duplicate is
-        under way, as a press of one of them starts, each of them, and
-        Duplicate, says that it is unavailable, rather than be disabled,
-        and keeps the keyboard's focus that it has, which the dialog of a
-        paste gives back to Paste as it closes (LastingButton). */}
+        under way, as a press of one of them starts, or the page cannot
+        reach the server, or its copy lacks the queue's changes, as the note
+        beside them says (waitsNote), each of them, and Duplicate, says that
+        it is unavailable, rather than be disabled, and keeps the keyboard's
+        focus that it has, as the connection comes and goes, which the
+        dialog of a paste gives back to Paste as it closes (LastingButton). */}
         <fieldset className="flex min-w-0 flex-wrap gap-2">
           <legend className="sr-only">{t("canvas.clipboard")}</legend>
           <LastingButton
             disabled={!fits}
-            unavailable={actions.busy}
+            unavailable={actions.busy || !reachable}
             onClick={() => void actions.copy([...selection])}
           >
             {t("canvas.copy")}
@@ -2232,15 +2264,15 @@ function BoardCanvasOf({
             <>
               <LastingButton
                 disabled={!fits}
-                unavailable={actions.busy}
+                unavailable={actions.busy || !reachable}
                 onClick={() => void actions.cut([...selection])}
               >
                 {t("canvas.cut")}
               </LastingButton>
               <LastingButton
                 ref={pasteButton}
-                disabled={!clipboardReady}
-                unavailable={actions.busy}
+                disabled={!clipboardHeld}
+                unavailable={actions.busy || !reachable}
                 onClick={() =>
                   void pasteAt(undefined, () => pasteButton.current)
                 }
@@ -2248,6 +2280,9 @@ function BoardCanvasOf({
                 {t("canvas.paste")}
               </LastingButton>
             </>
+          )}
+          {waitsNote !== undefined && (
+            <p className="self-center text-fg-muted">{waitsNote}</p>
           )}
         </fieldset>
         {editable && (
@@ -2273,7 +2308,7 @@ function BoardCanvasOf({
             </Menu>
             <LastingButton
               disabled={!fits}
-              unavailable={actions.busy}
+              unavailable={actions.busy || !reachable}
               onClick={() => void actions.duplicate([...selection])}
             >
               {t("canvas.duplicate")}
@@ -2698,7 +2733,9 @@ function BoardCanvasOf({
                         {t("canvas.zoom_selection")}
                       </MenuItem>
                       <MenuItem
-                        disabled={selected > maxEdited || actions.busy}
+                        disabled={
+                          selected > maxEdited || actions.busy || !reachable
+                        }
                         onSelect={() => void actions.copy([...selection])}
                       >
                         {t("canvas.copy")}
@@ -2706,13 +2743,17 @@ function BoardCanvasOf({
                       {editable && (
                         <>
                           <MenuItem
-                            disabled={selected > maxEdited || actions.busy}
+                            disabled={
+                              selected > maxEdited || actions.busy || !reachable
+                            }
                             onSelect={() => void actions.cut([...selection])}
                           >
                             {t("canvas.cut")}
                           </MenuItem>
                           <MenuItem
-                            disabled={selected > maxEdited || actions.busy}
+                            disabled={
+                              selected > maxEdited || actions.busy || !reachable
+                            }
                             onSelect={() =>
                               void actions.duplicate([...selection])
                             }
@@ -2788,7 +2829,13 @@ function BoardCanvasOf({
             <PasteDialog
               report={pasting.report}
               opener={pasting.opener}
+              unavailable={waitsNote}
               onPaste={(create) => {
+                // Not while the page cannot reach the server, as the dialog
+                // says, which it lost after the dialog opened (waitsNote).
+                if (!reachableNow.current) {
+                  return;
+                }
                 setPasting(undefined);
                 if (editableNow.current) {
                   void actions.paste(

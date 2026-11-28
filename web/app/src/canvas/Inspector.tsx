@@ -43,11 +43,12 @@ import { hundredths } from "../document/hundredths";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { ExpressionEditor } from "../expr/ExpressionEditor";
 import { sourceOf, typedExpression, useTypedSource } from "../expr/fields";
+import { useServerCopyWaits } from "../offline/pending";
 import { colorName, type PaletteColor, paletteColors } from "../project/colors";
 import { payloadField } from "../project/dialogs";
 import type { Command } from "../project/queries";
 import { NodeStatistics } from "../statistics/NodeStatistics";
-import { Button } from "../ui/Button";
+import { Button, LastingButton } from "../ui/Button";
 import {
   CheckboxField,
   SelectField,
@@ -136,6 +137,12 @@ export function Inspector({
 }: InspectorProps) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
+  // Duplicate reads the server (plan note N71), which the page may not
+  // reach now, as offline, or whose copy lacks the changes that the
+  // device's queue keeps meanwhile, as the canvas's clipboard says (PRD
+  // FR-OFF-03 AC3, plan note N98).
+  const waits = useServerCopyWaits(doc);
+  const reachable = waits === undefined;
   // The inspector's heading takes the focus as a button of the inspector
   // has it show another thing in place of what the button was of, as a
   // choice's Edit, which shows the connection's form, and which goes with
@@ -335,16 +342,21 @@ export function Inspector({
               meanwhile, as the selection holds the copies to come: the
               heading takes the focus, which the button would else leave to
               the page's content as it goes; and it is offered while no
-              copy, paste, or duplicate of the canvas is under way. */}
-              <Button
+              copy, paste, or duplicate of the canvas is under way, and
+              says that it is unavailable while the page cannot reach the
+              server, as the note below says, rather than be disabled, so
+              that it keeps the keyboard's focus as the connection comes and
+              goes (LastingButton). */}
+              <LastingButton
                 disabled={tooMany || actions.busy}
+                unavailable={!reachable}
                 onClick={() => {
                   void actions.duplicate(nodes.map((n) => n.id));
                   toHeading();
                 }}
               >
                 {t("canvas.duplicate")}
-              </Button>
+              </LastingButton>
               <Button
                 variant="danger"
                 onClick={() => void actions.remove(nodes.map((n) => n.id))}
@@ -352,6 +364,15 @@ export function Inspector({
                 {t("canvas.delete")}
               </Button>
             </div>
+            {waits !== undefined && (
+              <p className="text-fg-muted">
+                {waits === "offline"
+                  ? t("inspector.duplicate_offline")
+                  : waits === "review"
+                    ? t("inspector.duplicate_waits_for_review")
+                    : t("inspector.duplicate_waits_for_queue")}
+              </p>
+            )}
           </section>
           {single !== undefined &&
             // Made anew for another node, under a key of its own, which the

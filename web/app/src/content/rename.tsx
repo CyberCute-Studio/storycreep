@@ -19,6 +19,8 @@ import { type FormEvent, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, pagedQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
+import { useProjectDocument } from "../document/react";
+import { useServerReachable } from "../offline/pending";
 import { payloadField, useExpected } from "../project/dialogs";
 import { useCommands } from "../project/queries";
 import { Button, MoreButton } from "../ui/Button";
@@ -186,6 +188,11 @@ export function RenameKeyDialog({
   const [previewed, setPreviewed] = useState<string>();
   const commands = useCommands(projectId);
   const rev = useExpected(renamed.rev, commands.error);
+  // The preview is the server's, which the page may not reach now, as
+  // offline: the dialog renames without it then, a change that the device
+  // keeps, and the server rewrites what names the key once it is sent (PRD
+  // FR-OFF-03), as the dialog says.
+  const reachable = useServerReachable(useProjectDocument(projectId));
   const renamedQuery = renamePreviewQuery(
     projectId,
     renamed,
@@ -233,36 +240,46 @@ export function RenameKeyDialog({
     previewed === key &&
     lists.every((list) => list.isSuccess && !list.isRefetching) &&
     !tooLong;
+  // Whether the server refused the read of list for the key, as one that
+  // another of its scope has, or that is no identifier, which it would
+  // refuse again, and the rename with it; not for when or by whom it was
+  // asked, a session that ended or was replaced (401), credentials or a
+  // role that did not allow it (403), a request that took too long (408),
+  // or one of too many (429), which it may not refuse later, as the
+  // document's queue does not take them for a refusal of what a change does
+  // either (store.ts, refusedForWhen).
+  const refusedKey = (list: (typeof lists)[number]) =>
+    list.error instanceof ApiError &&
+    list.error.status < 500 &&
+    ![401, 403, 408, 429].includes(list.error.status);
+  // A preview of the key, read before the page lost the server, that finds
+  // an expression which the rename would make too long, or that the server
+  // refused, as the field says, refuses the rename offline too, as the
+  // server would once it is sent, which would hold the changes after it
+  // until the user decides.
+  const knownTooLong = previewed === key && tooLong;
+  const knownRefused =
+    knownTooLong ||
+    (previewed === key &&
+      lists.some((list) => list.isError && refusedKey(list)));
   // A preview whose read failed, as once the browser's connection was lost,
   // is read again once the user asks for it again, but for one that the
-  // server refused, which it would refuse again; one that it refused for
-  // when it was asked, a request that took too long (408) or one of too
-  // many (429), which it may not refuse later, is read again too.
+  // server refused for the key (refusedKey).
   const failed =
     previewed === key &&
-    lists.some(
-      (list) =>
-        list.isError &&
-        !list.isFetching &&
-        !(
-          list.error instanceof ApiError &&
-          list.error.status < 500 &&
-          list.error.status !== 408 &&
-          list.error.status !== 429
-        ),
-    );
+    lists.some((list) => list.isError && !list.isFetching && !refusedKey(list));
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (unchanged) {
       onClose();
       return;
     }
-    if (previewed !== key) {
+    if (previewed !== key && reachable) {
       commands.reset();
       setPreviewed(key);
       return;
     }
-    if (failed) {
+    if (failed && reachable) {
       for (const list of lists) {
         if (list.isError) {
           void list.refetch();
@@ -270,7 +287,7 @@ export function RenameKeyDialog({
       }
       return;
     }
-    if (!ready) {
+    if (!ready && (reachable || knownRefused)) {
       return;
     }
     commands.mutate(
@@ -317,7 +334,13 @@ export function RenameKeyDialog({
             }}
             error={refusal?.fields.key}
           />
-          {previewed === key && !unchanged && (
+          {!reachable && !unchanged && !knownRefused && (
+            <p className="text-fg-muted">{t("rename.preview_offline")}</p>
+          )}
+          {!reachable && !unchanged && knownTooLong && (
+            <p className="text-danger">{t("rename.too_long")}</p>
+          )}
+          {reachable && previewed === key && !unchanged && (
             <div className="space-y-4">
               <PreviewList
                 query={renamedQuery}
@@ -345,10 +368,15 @@ export function RenameKeyDialog({
               variant="primary"
               disabled={
                 commands.isPending ||
-                (previewed === key && !unchanged && !ready && !failed)
+                (!reachable && !unchanged && knownRefused) ||
+                (reachable &&
+                  previewed === key &&
+                  !unchanged &&
+                  !ready &&
+                  !failed)
               }
             >
-              {(previewed === key && !failed) || unchanged
+              {(previewed === key && !failed) || unchanged || !reachable
                 ? t("rename.submit")
                 : t("rename.preview")}
             </Button>

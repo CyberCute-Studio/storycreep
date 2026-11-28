@@ -1,10 +1,12 @@
-import type {
-  Attribute,
-  Board,
-  ComponentType,
-  Connection,
-  Node,
-  PlayStateBody,
+import "fake-indexeddb/auto";
+import {
+  type Attribute,
+  type Board,
+  type ComponentType,
+  type Connection,
+  NetworkError,
+  type Node,
+  type PlayStateBody,
 } from "@storycreep/shared/api";
 import {
   act,
@@ -14,6 +16,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { IDBFactory } from "fake-indexeddb";
 import {
   afterEach,
   beforeEach,
@@ -2346,6 +2349,89 @@ describe("saved play states", () => {
     await within(panel).findByText("Romance path");
     expect(alerts(panel)).not.toContain("The saved states could not be read.");
     expect(field.isConnected).toBe(true);
+    expect((field as HTMLInputElement).value).toBe("Storm");
+  });
+
+  // While the page cannot reach the server, as once a try got no answer,
+  // the list is hidden rather than taken away, and a rename under way comes
+  // back with the name typed once a try is answered (DocumentState.holding).
+  it("keeps a rename under way, with the name typed, while the page cannot reach the server after a try that got no answer, until one is answered", async () => {
+    globalThis.indexedDB = new IDBFactory();
+    const user = userEvent.setup();
+    const saved = savedStates([
+      {
+        id: id("pst", "1"),
+        project_id: project.id,
+        name: "After act 1",
+        rev: 1,
+        created_by: "usr_other",
+        updated_by: "usr_other",
+        created_at: at,
+        updated_at: at,
+        state: {
+          attributes: {},
+          projectId: project.id,
+          schemaVersion: 1,
+          stateVersion: 1,
+          variables: {},
+          visits: {},
+        },
+        names: {},
+      },
+    ]);
+    let unanswered = false;
+    playProject(undefined, undefined, (operation, input) => {
+      if (operation === "applyCommands" && unanswered) {
+        unanswered = false;
+        throw new NetworkError(new TypeError("Failed to fetch"));
+      }
+      return saved.answer(operation, input);
+    });
+    const { documents } = renderApp(
+      `/projects/${project.id}/boards/${harbour.id}`,
+      { session: testSession, offline: { online: () => true } },
+    );
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "Rename “After act 1”",
+      }),
+    );
+    const field = within(panel).getByRole("textbox", {
+      name: "New name of “After act 1”",
+    });
+    await user.clear(field);
+    await user.type(field, "Storm");
+    // A change of the board's gets no answer, which the device's queue keeps.
+    unanswered = true;
+    await act(() =>
+      documents.get(project.id).send([
+        {
+          type: "board.rename",
+          payload: { id: harbour.id, name: "Quay" },
+          expected_rev: { [harbour.id]: harbour.rev },
+        },
+      ]),
+    );
+    await within(panel).findByText(
+      "The saved states need the server, which this device cannot reach now. Play runs on the project all the same.",
+    );
+    // The next try is answered.
+    act(() => {
+      window.dispatchEvent(new Event("online"));
+    });
+    await waitFor(() =>
+      expect(
+        within(panel).queryByText(/The saved states need a connection/),
+      ).toBeNull(),
+    );
+    expect(
+      within(panel).getByRole("textbox", { name: "New name of “After act 1”" }),
+    ).toBe(field);
     expect((field as HTMLInputElement).value).toBe("Storm");
   });
 

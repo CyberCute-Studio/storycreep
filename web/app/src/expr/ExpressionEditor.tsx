@@ -26,6 +26,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { boardNameOf, siteText, variableUsagesQuery } from "../content/usages";
+import { ReadingNote } from "../offline/OfflinePages";
 import { Button, pressedClass } from "../ui/Button";
 import { OfferFrame, OfferList, OfferOption } from "../ui/Offers";
 import {
@@ -266,9 +267,7 @@ function Writes({ projectId, id }: { projectId: string; id: string }) {
     enabled: waited,
   });
   if (writes.isPending) {
-    return (
-      <span className="text-fg-muted">{t("expr.offer.writes_loading")}</span>
-    );
+    return <ReadingNote reading={t("expr.offer.writes_loading")} inline />;
   }
   if (writes.isError) {
     return (

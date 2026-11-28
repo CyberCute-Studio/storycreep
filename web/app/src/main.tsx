@@ -30,6 +30,7 @@ import { copySource, OfflineDatabase } from "./offline/db";
 import { OfflineKeeper, tabsBroadcast, writerLock } from "./offline/keeper";
 import { askForOwnSession, keepReads } from "./offline/kept";
 import { onConnection, online } from "./offline/online";
+import { deviceQueue, queueBroadcast, webLocks } from "./offline/queue";
 import { startShell } from "./pwa/worker";
 import { createAppRouter } from "./router";
 import "./styles.css";
@@ -71,8 +72,10 @@ const realtime = createRealtime({
 });
 // What the device keeps of the projects that the account keeps offline
 // (PRD FR-OFF-02), which a project's document starts from, and which the
-// page's queries read once the server does not answer, as offline, in a
-// secure context alone, which a page over plain HTTP is not (FR-OFF-01).
+// page's queries read once the server does not answer, as offline, and the
+// changes that the server has yet to answer (FR-OFF-03), which the page
+// sends once it does, in a secure context alone, which a page over plain
+// HTTP is not (FR-OFF-01).
 const secure = window.isSecureContext;
 const offlineDb = new OfflineDatabase();
 const documents = new Documents({
@@ -83,6 +86,15 @@ const documents = new Documents({
   storage: tabStorage(),
   copies: copySource(offlineDb, secure),
   online: () => online(),
+  onConnection: (listener) => onConnection(listener),
+  queue: deviceQueue(offlineDb, {
+    secure,
+    locks: webLocks(navigator.locks),
+    broadcast: secure ? queueBroadcast() : undefined,
+    storage: deviceStorage(),
+    // A tab that signed out tells the others, whose sessions it ended too.
+    signedOutElsewhere: () => void session.check(),
+  }),
 });
 const offline = new OfflineKeeper({
   queryClient,
@@ -108,13 +120,16 @@ const reloadWait = 10_000;
 
 // The app's service worker, which the build has, and the browser's offer
 // to install the app (PRD FR-OFF-01). Its reload for a new version waits a
-// while for the batches that the page is sending, and for the saves of its
-// forms, as of a project's settings.
+// while for the batches that the page is sending, for the writes of the
+// device's queue that the documents dropped make until they let go of it,
+// as of a try under way as another account signed in (FR-OFF-03), and for
+// the saves of its forms, as of a project's settings.
 const pwa = startShell(window, {
   register: import.meta.env.PROD,
   beforeReload: async () => {
     await Promise.all([
       documents.whenSent(reloadWait),
+      documents.whenLetGo(reloadWait),
       whenSaved(queryClient, reloadWait),
     ]);
   },
@@ -162,6 +177,19 @@ offline.start();
 function tabStorage(): Storage | undefined {
   try {
     return window.sessionStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Returns the browser's local storage, which keeps what signing out could
+ * not take off the device's queue until it has, across a restart (PRD
+ * FR-OFF-03), or undefined where the browser refuses it, as tabStorage.
+ */
+function deviceStorage(): Storage | undefined {
+  try {
+    return window.localStorage;
   } catch {
     return undefined;
   }

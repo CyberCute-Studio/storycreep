@@ -16,6 +16,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { sessionQuery } from "../api";
 import type { ErrorLog } from "../errors/log";
 import { type ClipboardStore, createClipboard } from "./clipboard";
+import type { QueueStore } from "./queue";
 import type { Realtime } from "./realtime";
 import { whenSent } from "./sent";
 import { type CopySource, ProjectDocument } from "./store";
@@ -36,12 +37,36 @@ export interface DocumentsOptions {
   copies?: CopySource;
   /** Reports whether the browser says that it has a connection (DocumentOptions.online). */
   online?: () => boolean;
+  /** Calls listener as the browser's connection comes and goes (DocumentOptions.onConnection). */
+  onConnection?: (listener: (online: boolean) => void) => () => void;
+  /** The device's queue of the batches that the server has yet to answer (DocumentOptions.queue). */
+  queue?: QueueStore;
 }
 
 interface Held {
   doc: ProjectDocument;
+  /** How many hold it: the pages that show it, and the keeper of the copies (acquire). */
   shown: number;
+  /** How many of those are pages, while which the document takes the batches of other documents of the device's queue (ProjectDocument.takeQueue). */
+  pages: number;
   timer?: ReturnType<typeof setTimeout>;
+  /** The timer after which a document that a page asked for, and none shows, takes none of those (asked). */
+  asked?: ReturnType<typeof setTimeout>;
+}
+
+/** Resolves once every one of waits has settled, or once wait milliseconds have passed, leaving no timer behind. */
+async function within(
+  waits: readonly Promise<unknown>[],
+  wait: number,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    Promise.allSettled(waits),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, wait);
+    }),
+  ]);
+  clearTimeout(timer);
 }
 
 /** The page's documents. */
@@ -50,6 +75,8 @@ export class Documents {
   readonly clipboard: ClipboardStore = createClipboard();
   private readonly options: DocumentsOptions;
   private readonly held = new Map<string, Held>();
+  /** The documents dropped that have yet to let go of the device's queue, which may write to it still (drop). */
+  private readonly dropped = new Set<ProjectDocument>();
   private readonly stop: () => void;
 
   constructor(options: DocumentsOptions) {
@@ -96,9 +123,15 @@ export class Documents {
    * Returns the document of projectId, made now if the page has none, or if
    * the one that it has found the project gone, as to the trash, and no page
    * shows it, so that a page that the user opens again, as once the project
-   * is back, asks anew.
+   * is back, asks anew. Where kept says so, as of the keeper of the copies
+   * (offline/keeper.ts), it is asked for by no page, and a document made for
+   * it takes none of the batches of other documents that the device's queue
+   * keeps, as of a tab that closed, which it would hold where no page shows
+   * them, until a page asks for it (ProjectDocument.takeQueue): one that a
+   * page asks for takes them while a page shows it, and, before one does,
+   * as while a route's loader reads it, for a while (asked).
    */
-  get(projectId: string): ProjectDocument {
+  get(projectId: string, kept = false): ProjectDocument {
     let held = this.held.get(projectId);
     if (
       held !== undefined &&
@@ -110,24 +143,51 @@ export class Documents {
     }
     if (held === undefined) {
       held = {
-        doc: new ProjectDocument(projectId, this.options),
+        doc: new ProjectDocument(
+          projectId,
+          kept ? { ...this.options, takesQueue: false } : this.options,
+        ),
         shown: 0,
+        pages: 0,
       };
       this.held.set(projectId, held);
       this.unshown(projectId, held);
+    }
+    if (!kept) {
+      held.doc.takeQueue(true);
+      if (held.pages === 0) {
+        this.asked(held);
+      }
     }
     return held.doc;
   }
 
   /**
-   * Keeps doc, the document of its project that get returned, while a page
-   * of it is shown, until what it returns is called. One that the page's
-   * documents have dropped since get returned it, as with every other once
-   * the session is of another account, is not kept, and it returns
-   * undefined, so that the page asks for the one that they have now, rather
-   * than show one while another is kept.
+   * Has the document of held, which a page asked for, and none shows, take
+   * none of the batches of other documents a while after, unless a page
+   * shows it by then, as of a page whose loader read it, which the user did
+   * not open, while the keeper of the copies, or the batches that it holds
+   * (busy), keep it.
    */
-  acquire(doc: ProjectDocument): (() => void) | undefined {
+  private asked(held: Held): void {
+    clearTimeout(held.asked);
+    held.asked = setTimeout(() => {
+      if (held.pages === 0) {
+        held.doc.takeQueue(false);
+      }
+    }, keptUnshown);
+  }
+
+  /**
+   * Keeps doc, the document of its project that get returned, while a page
+   * of it is shown, or the keeper of the copies holds it, as kept says,
+   * until what it returns is called. One that the page's documents have
+   * dropped since get returned it, as with every other once the session is
+   * of another account, is not kept, and it returns undefined, so that the
+   * page asks for the one that they have now, rather than show one while
+   * another is kept.
+   */
+  acquire(doc: ProjectDocument, kept = false): (() => void) | undefined {
     const projectId = doc.projectId;
     const held = this.held.get(projectId);
     if (held?.doc !== doc) {
@@ -135,6 +195,11 @@ export class Documents {
     }
     held.shown++;
     clearTimeout(held.timer);
+    if (!kept) {
+      held.pages++;
+      clearTimeout(held.asked);
+      doc.takeQueue(true);
+    }
     let released = false;
     return () => {
       if (released || this.held.get(projectId) !== held) {
@@ -142,6 +207,12 @@ export class Documents {
       }
       released = true;
       held.shown--;
+      if (!kept) {
+        held.pages--;
+        if (held.pages === 0) {
+          held.doc.takeQueue(false);
+        }
+      }
       if (held.shown === 0) {
         this.unshown(projectId, held);
       }
@@ -165,8 +236,7 @@ export class Documents {
         this.unshown(projectId, held);
         return;
       }
-      this.held.delete(projectId);
-      held.doc.dispose();
+      this.drop(projectId, held);
     }, keptUnshown);
   }
 
@@ -174,10 +244,23 @@ export class Documents {
   forget(projectId: string): void {
     const held = this.held.get(projectId);
     if (held !== undefined) {
-      clearTimeout(held.timer);
-      this.held.delete(projectId);
-      held.doc.dispose();
+      this.drop(projectId, held);
     }
+  }
+
+  /**
+   * Drops held, the document of projectId, which writes what it was keeping
+   * of the device's queue still, until it lets go of it, as signing out
+   * waits for (whenWritten).
+   */
+  private drop(projectId: string, held: Held): void {
+    clearTimeout(held.timer);
+    clearTimeout(held.asked);
+    this.held.delete(projectId);
+    held.doc.dispose();
+    const doc = held.doc;
+    this.dropped.add(doc);
+    void doc.lettingGo().then(() => this.dropped.delete(doc));
   }
 
   /**
@@ -190,6 +273,75 @@ export class Documents {
     const signal = new AbortController().signal;
     await Promise.all(
       [...this.held.values()].map((held) => whenSent(held.doc, signal, wait)),
+    );
+  }
+
+  /** Whether the page keeps the changes that it cannot send in the device's queue, as it does not over plain HTTP, nor in a browser without Web Locks. */
+  get keepsQueue(): boolean {
+    return this.options.queue !== undefined;
+  }
+
+  /**
+   * Takes the changes of userId's of only, by their projects and IDs, or,
+   * where it is not given, every one, that the device's queue keeps off the
+   * device, as signing out does once the user decided (QueueStore.discard),
+   * resolving once it has; undefined where the page keeps no queue.
+   */
+  discardQueued(
+    userId: string,
+    only?: readonly { project_id: string; id: string }[],
+  ): Promise<void> | undefined {
+    return this.options.queue?.discard(userId, only);
+  }
+
+  /**
+   * Remembers, as the user signs out anyway, that signing out takes the
+   * changes of userId's of only, or, where it is not given, every one made
+   * until now, off the device, before the server has signed the page out,
+   * so that a tab that closes first leaves none of them to be sent, while
+   * no document takes them, nor takes them off it, until the server has
+   * answered (QueueStore.intend); resolves to what settles it, as the page
+   * is still signed in, or is not, or undefined where the page keeps no
+   * queue.
+   */
+  async intendDiscard(
+    userId: string,
+    only?: readonly { project_id: string; id: string }[],
+  ): Promise<((signedOut: boolean) => void) | undefined> {
+    return await this.options.queue?.intend(userId, only);
+  }
+
+  /**
+   * Resolves once every document's writes of the device's queue begun so
+   * far are done, kept or refused (ProjectDocument.queueWritten), those of
+   * the documents dropped that have yet to let go of the queue too, as of a
+   * project found gone, or once wait milliseconds have passed, as of a
+   * database that another tab blocks, so that signing out, which reads the
+   * device after, names a change that a document was still keeping as the
+   * user clicked.
+   */
+  async whenWritten(wait: number): Promise<void> {
+    await within(
+      [...[...this.held.values()].map((held) => held.doc), ...this.dropped].map(
+        (doc) => doc.queueWritten(),
+      ),
+      wait,
+    );
+  }
+
+  /**
+   * Resolves once every document dropped has let go of the device's queue,
+   * after which it writes nothing there (ProjectDocument.lettingGo), as one
+   * whose try under way was answered since, or once wait milliseconds have
+   * passed, as of a try that no answer comes to, so that a reload for a new
+   * version of the app does not cut off a write that keeps a change, as
+   * whenSent waits for those of the documents held, and a test closes the
+   * device's database only once no write that would open it again comes.
+   */
+  async whenLetGo(wait: number): Promise<void> {
+    await within(
+      [...this.dropped].map((doc) => doc.lettingGo()),
+      wait,
     );
   }
 

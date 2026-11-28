@@ -136,6 +136,13 @@ function TrashItem({
   const restore = () => {
     commands.mutateAsync([restoreCommand(item)]).then(
       (result) => {
+        // A restore that the device's queue keeps, as behind a change that
+        // needs review, is the server's once the queue has been sent (PRD
+        // FR-OFF-03), which tells then of the connections that wait.
+        if (result.status === "queued") {
+          onRestored(t("trash.restore_kept", { name }));
+          return;
+        }
         // A node's connections whose node at the other end is still in the
         // trash come back once that node does (PRD FR-PROJ-06 AC1).
         const waiting = result.not_reconnected?.length ?? 0;

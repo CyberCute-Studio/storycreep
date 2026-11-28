@@ -33,6 +33,8 @@ import {
   type ValueType,
   zeroOf,
 } from "../content/values";
+import { useProjectDocument } from "../document/react";
+import { useServerReachable } from "../offline/pending";
 import { Confirm, payloadField, useExpected } from "../project/dialogs";
 import { type Command, useCommands } from "../project/queries";
 import { MoreButton } from "../ui/Button";
@@ -615,8 +617,15 @@ export function RetypeAttributeDialog({
   const [settled, settleNow] = useSettled(options, typingPause);
   const listed = optionsOf(settled);
   const typed = optionsOf(options);
+  // The list is the server's, which the page may not reach now, as
+  // offline: the retype is a change that the device keeps then, and the
+  // server gives the values that do not convert the new default once it is
+  // sent (PRD FR-OFF-03), as the dialog says.
+  const reachable = useServerReachable(useProjectDocument(projectId));
   const lists =
-    conversion === "convert" && (valueType !== "enum" || typed.length > 0);
+    reachable &&
+    conversion === "convert" &&
+    (valueType !== "enum" || typed.length > 0);
   const list = useInfiniteQuery({
     ...unconvertibleQuery(projectId, attribute, valueType, listed),
     enabled: lists && (valueType !== "enum" || listed.length > 0),
@@ -734,6 +743,9 @@ export function RetypeAttributeDialog({
           </GroupField>
           {lists && (valueType !== "enum" || listed.length > 0) && (
             <Unconvertible list={list} />
+          )}
+          {!reachable && conversion === "convert" && (
+            <p className="text-fg-muted">{t("attribute.convert_offline")}</p>
           )}
           <FormButtons
             cancel={t("boards.cancel")}

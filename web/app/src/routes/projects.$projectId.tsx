@@ -19,6 +19,7 @@ import {
   offlinePages,
 } from "../offline/OfflinePages";
 import { useOnline } from "../offline/online";
+import { SyncIndicator } from "../offline/SyncStatus";
 import { HistoryOwned, LayoutHistory } from "../project/History";
 import { editsProject, managesProject, projectQuery } from "../project/queries";
 import { askSearchFocus, forgetSearchFocus } from "../search/focus";
@@ -55,7 +56,7 @@ export const Route = createFileRoute("/projects/$projectId")({
 // it, which its workspace's owners and admins manage, and its settings,
 // under a link back to its workspace's projects, its search (FR-PROJ-03),
 // its writing statistics (FR-TEXT-06), its validation (FR-DEP-03), its
-// dependency view (FR-DEP-02), its releases (FR-SNAP-01, FR-SNAP-02), and its threaded comments (FR-COMMENT-01), the undo and redo of the user's changes (FR-EDIT-08), and the note that an
+// dependency view (FR-DEP-02), its releases (FR-SNAP-01, FR-SNAP-02), and its threaded comments (FR-COMMENT-01), the undo and redo of the user's changes (FR-EDIT-08), whether those are saved on the server (FR-OFF-06), and the note that an
 // archived project is read-only. The palette goes to each of its pages, and
 // Ctrl+/, on macOS too, to its search, with the focus in the search's
 // field (FR-EDIT-10, plan note N72). They follow the project's document while they are shown (PRD
@@ -102,6 +103,9 @@ function ProjectPages({ projectId }: { projectId: string }) {
   const params = { projectId };
   const settings =
     managesProject(project.role) || managesWorkspace(workspace.role);
+  // Whether the user changes the project, which the history's controls,
+  // and what the pages say of the changes kept offline, are for.
+  const edits = editsProject(project.role) && project.archived_at === undefined;
   // A page that takes the window's width, as a board's for its canvas,
   // says so of itself (staticData), rather than the layout knowing it.
   const wide = useChildMatches({
@@ -229,15 +233,28 @@ function ProjectPages({ projectId }: { projectId: string }) {
   return (
     <div className={`mx-auto space-y-6 ${wide ? "" : "max-w-3xl"}`}>
       <div className="space-y-4">
-        <p>
-          <Link
-            to="/workspaces/$workspaceId"
-            params={{ workspaceId: workspace.id }}
-            className={textLink}
-          >
-            {t("project.back", { workspace: workspace.name })}
-          </Link>
-        </p>
+        {/* Whether the user's changes are saved on the server, on their
+        way, kept on the device offline, or need review (PRD FR-OFF-06), at
+        the end of the line of the link back to the workspace, beside which
+        it takes no more of the page's height than that line does, but for 4
+        px, so that a board's canvas, which takes the window's height below
+        it, keeps it, and is no lower in the window than before: the button,
+        as tall as a finger needs, reaches 8 px past the line above and below,
+        as far as a control may be from the nav's links under it. */}
+        <div className="flex items-center justify-between gap-4">
+          <p className="min-w-0">
+            <Link
+              to="/workspaces/$workspaceId"
+              params={{ workspaceId: workspace.id }}
+              className={textLink}
+            >
+              {t("project.back", { workspace: workspace.name })}
+            </Link>
+          </p>
+          <div className="-my-2 shrink-0">
+            <SyncIndicator projectId={projectId} edits={edits} />
+          </div>
+        </div>
         <nav aria-label={t("project.nav.label", { name: project.name })}>
           <ul className="flex flex-wrap gap-2 border-b border-border pb-2">
             <li>
@@ -364,9 +381,7 @@ function ProjectPages({ projectId }: { projectId: string }) {
             )}
           </ul>
         </nav>
-        {editsProject(project.role) && project.archived_at === undefined && (
-          <LayoutHistory projectId={projectId} />
-        )}
+        {edits && <LayoutHistory projectId={projectId} />}
         {project.archived_at !== undefined && (
           <p className="rounded-md border border-border bg-surface px-4 py-3">
             {managesProject(project.role)
@@ -374,7 +389,7 @@ function ProjectPages({ projectId }: { projectId: string }) {
               : t("project.archived")}
           </p>
         )}
-        {!connected && <OfflineNotice projectId={projectId} />}
+        {!connected && <OfflineNotice projectId={projectId} edits={edits} />}
       </div>
       {!shown && <NeedsConnection />}
       {(shown || held === pathname) && (

@@ -34,13 +34,15 @@ import type { Realtime } from "../document/realtime";
 import { ErrorConsoleProvider } from "../errors/ErrorConsole";
 import { createErrorLog } from "../errors/log";
 import { createAppI18n } from "../i18n";
-import { copySource, OfflineDatabase } from "../offline/db";
+import { copySource, OfflineDatabase, openWait } from "../offline/db";
 import { OfflineKeeper } from "../offline/keeper";
 import { keepReads } from "../offline/kept";
 import { onConnection } from "../offline/online";
+import { deviceQueue } from "../offline/queue";
 import type { AppShell } from "../pwa/worker";
 import { parseSearch } from "../router";
 import { routeTree } from "../routeTree.gen";
+import { fakeLocks } from "./locks";
 
 /** An instance whose setup has completed, which anyone may register on. */
 export const testInstance: InstanceBody = {
@@ -162,6 +164,15 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
     storage: window.sessionStorage,
     copies: offlineDb === undefined ? undefined : copySource(offlineDb, secure),
     online: connected,
+    onConnection: (listener) => onConnection(listener),
+    queue:
+      offlineDb === undefined
+        ? undefined
+        : deviceQueue(offlineDb, {
+            secure,
+            locks: fakeLocks(),
+            storage: window.localStorage,
+          }),
   });
   const offline =
     offlineDb === undefined
@@ -185,10 +196,16 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
     }
     offline.start();
     // The keeper's change under way is let finish, and none after it begins,
-    // before the database is closed, which a change would else open again.
+    // before the database is closed, which a change would else open again;
+    // and so are the writes of the device's queue that the documents began,
+    // and those that the documents dropped make until they let go of it, as
+    // once a try under way is answered, the documents going first, the hooks
+    // running from the last registered.
     onTestFinished(async () => {
       offline.stop();
       await offline.idle();
+      await documents.whenWritten(openWait);
+      await documents.whenLetGo(openWait);
       await offlineDb?.close();
     });
   }

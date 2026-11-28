@@ -29,8 +29,12 @@ const counts: NodeStatistics = {
 
 /** A document of the project pr_a that sends sending of the page's batches, as its store says. */
 function sendingDocument(sending: number) {
-  const store = createStore<Pick<DocumentState, "sending">>(() => ({
+  const store = createStore<
+    Pick<DocumentState, "sending" | "queued" | "sendsQueued">
+  >(() => ({
     sending,
+    queued: 0,
+    sendsQueued: true,
   }));
   return {
     doc: { projectId: "pr_a", store } as unknown as ProjectDocument,

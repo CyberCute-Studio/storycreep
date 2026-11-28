@@ -12,6 +12,7 @@ import { newId } from "@storycreep/shared/ids";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import {
+  Activity,
   type ChangeEvent,
   type FormEvent,
   memo,
@@ -25,7 +26,7 @@ import { sessionQuery } from "../api";
 import { type Refusal, refusalOf } from "../auth/refusal";
 import { collator } from "../content/textNames";
 import type { ProjectDocument } from "../document/store";
-import { useOnline } from "../offline/online";
+import { useServerReachable } from "../offline/pending";
 import { payloadField, useExpected } from "../project/dialogs";
 import { focusIsNowhere, showInPage } from "../shell/focus";
 import { Button } from "../ui/Button";
@@ -110,7 +111,15 @@ export const SavedStates = memo(function SavedStates({
 }) {
   const { t, i18n } = useTranslation();
   const list = useQuery(playStatesQuery(doc));
-  const online = useOnline();
+  // The saved states are the server's, no part of the project's copy, nor
+  // of the changes that the device keeps (PRD FR-OFF-03): while the page
+  // cannot reach the server, as offline, the section says that they need
+  // it, in place of a list and controls that would fail, even of a
+  // list read before, which is hidden, and its form's Save is disabled, the
+  // forms keeping the names typed, the save's and a rename's, as through a
+  // try that got no answer, which ends once the next is answered
+  // (DocumentState.holding).
+  const online = useServerReachable(doc);
   const userId = useQuery(sessionQuery).data?.user_id;
   const headingRef = useRef<HTMLHeadingElement>(null);
   // The prefix of the IDs of the states' lines of when each last changed,
@@ -339,7 +348,7 @@ export const SavedStates = memo(function SavedStates({
       </h3>
       {editable && (
         <SaveForm
-          disabled={busy}
+          disabled={busy || !online}
           onSave={(name) =>
             act(async () => {
               const now = session.saving();
@@ -372,14 +381,19 @@ export const SavedStates = memo(function SavedStates({
           form's name, which says it there (refusalOf), and says the rest,
           as of a state too large refused with the name. */}
       <Alert message={refusal?.alert ?? refusal?.refusal?.message} />
-      {list.isPending ? (
-        // Offline, the list waits for the browser to be online again, which
-        // the device's copy of the project does not hold (PRD FR-OFF-02).
+      {(list.isPending || !online) && (
+        // Offline, the list waits for the page to reach the server again,
+        // which the device's copy of the project does not hold (PRD
+        // FR-OFF-02).
         <p className="text-fg-muted">
           {online ? t("play.saved.reading") : t("play.saved.offline")}
         </p>
-      ) : (
-        <>
+      )}
+      {/* A list read is hidden meanwhile, rather than taken away, so that a
+          rename under way keeps the name typed, and the revision that its
+          field opened with, as through a try that got no answer. */}
+      {!list.isPending && (
+        <Activity mode={online ? "visible" : "hidden"}>
           {/* A list that could not be read says why, and one that could
               not be read again says it beside the states that it read last,
               as the list of the tokens does, rather than take them away,
@@ -525,7 +539,7 @@ export const SavedStates = memo(function SavedStates({
               ))}
             </ul>
           )}
-        </>
+        </Activity>
       )}
     </section>
   );

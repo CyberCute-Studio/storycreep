@@ -18,12 +18,7 @@
 // would else not see where the one before put its nodes, and put its own
 // over them, or paste what the clipboard held before the copy just asked.
 
-import type {
-  Clipboard,
-  ClipboardReport,
-  CommandResultBody,
-  Node,
-} from "@storycreep/shared/api";
+import type { Clipboard, ClipboardReport, Node } from "@storycreep/shared/api";
 import { newId } from "@storycreep/shared/ids";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useRef, useState } from "react";
@@ -32,6 +27,7 @@ import { csrfHeaders } from "../auth/session";
 import { holdCopy } from "../document/clipboard";
 import { boardPart } from "../document/doc";
 import { useDocuments, useProjectDocument } from "../document/react";
+import type { SendResult } from "../document/store";
 import type { PaletteColor } from "../project/colors";
 import type { Command } from "../project/queries";
 import {
@@ -157,7 +153,7 @@ export function useCanvasActions(
     const sendOne = async (
       batch: Command[],
       of: Refused = "edit",
-    ): Promise<CommandResultBody | null | undefined> => {
+    ): Promise<SendResult | null | undefined> => {
       if (batch.length === 0) {
         return null;
       }
@@ -187,6 +183,17 @@ export function useCanvasActions(
       return nodes.length > maxEdited ? Promise.resolve(false) : edit(nodes);
     };
     /**
+     * Reports whether the device's queue keeps changes that the document
+     * does not send, as once one of them came to need review while a copy or
+     * a report waited for the page's batches (ProjectDocument.sent), which
+     * the server's copy lacks: neither is asked then, as the controls say
+     * once it does (serverCopyWaits).
+     */
+    const lacksQueued = (): boolean => {
+      const now = doc.store.getState();
+      return now.holdsQueued && !now.sendsQueued;
+    };
+    /**
      * Copies the nodes of ids that the board has, at most maxEdited of
      * them, as many as a clipboard holds, and resolves with the clipboard
      * that the server answers with, or with undefined once it was refused,
@@ -196,7 +203,9 @@ export function useCanvasActions(
      * answered (ProjectDocument.sent), as the server copies what it has: a
      * node that the page has just added, moved, or changed, whose batch is
      * under way, would else be copied as it was before, or refused, and a
-     * node whose batch was refused meanwhile is not asked for.
+     * node whose batch was refused meanwhile is not asked for; and it asks
+     * nothing while the queue keeps changes that it does not send
+     * (lacksQueued).
      */
     const copyOf = async (
       ids: Iterable<string>,
@@ -209,6 +218,9 @@ export function useCanvasActions(
       }
       setRefusal(undefined);
       await doc.sent();
+      if (lacksQueued()) {
+        return undefined;
+      }
       const nodes = nodesOf(asked).map((n) => n.id);
       if (nodes.length === 0) {
         return undefined;
@@ -304,7 +316,13 @@ export function useCanvasActions(
           if (answer === undefined) {
             return false;
           }
-          if (batch.includes(command) && answer !== null) {
+          // A paste that the device's queue keeps, as one that no answer
+          // came to, shows its nodes once the server has answered it.
+          if (
+            batch.includes(command) &&
+            answer !== null &&
+            answer.status !== "queued"
+          ) {
             await doc.shown(answer.seq, boardPart(boardId));
           }
         }
@@ -324,7 +342,7 @@ export function useCanvasActions(
     const place = async (
       places: ReadonlyMap<string, Point>,
       expected?: ReadonlyMap<string, number>,
-    ): Promise<{ applied: boolean; answer?: CommandResultBody }> => {
+    ): Promise<{ applied: boolean; answer?: SendResult }> => {
       if (places.size === 0) {
         return { applied: true };
       }
@@ -451,12 +469,18 @@ export function useCanvasActions(
        * answered (ProjectDocument.sent), as copyOf asks the copy, as the
        * server reports of what it has: an undo of a paste that created a
        * variable, under way, would else be reported as the variable that
-       * the project has still, and the paste after it sent without it.
+       * the project has still, and the paste after it sent without it. It
+       * asks nothing while the queue keeps changes that it does not send
+       * (lacksQueued), whose report would leave out what they create, as a
+       * variable, which the paste would create again.
        */
       resolve(clipboard: Clipboard): Promise<ClipboardReport | undefined> {
         return oneAtATime(async () => {
           setRefusal(undefined);
           await doc.sent();
+          if (lacksQueued()) {
+            return undefined;
+          }
           try {
             return await resolveClipboard(clipboard);
           } catch (error) {

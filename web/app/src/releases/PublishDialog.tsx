@@ -173,6 +173,9 @@ function PublishForm({
   // A publication reads the draft as the server has it, so it waits for the
   // page's batches, whose edits the page already shows.
   const saving = useDocumentState(doc, (state) => state.sending > 0);
+  // Changes that the server refused, which the device keeps for the user's
+  // review, are not being saved, and wait for the user (PRD FR-OFF-03).
+  const review = useDocumentState(doc, (state) => state.review > 0);
   const [typedVersion, setTypedVersion] = useState<string>();
   const [note, setNote] = useState("");
   const [ackedKey, setAckedKey] = useState<string>();
@@ -428,7 +431,15 @@ function PublishForm({
               }
         }
       />
-      <Status message={saving ? t("releases.publish.saving") : undefined} />
+      <Status
+        message={
+          review
+            ? t("releases.publish.review")
+            : saving
+              ? t("releases.publish.saving")
+              : undefined
+        }
+      />
       <FormButtons
         cancel={t("releases.publish.cancel")}
         submit={t("releases.publish.submit")}

@@ -1,3 +1,4 @@
+import "fake-indexeddb/auto";
 import type {
   Board,
   Clipboard,
@@ -14,6 +15,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sessionQuery } from "../api";
 import { holdCopy } from "../document/clipboard";
@@ -339,6 +341,18 @@ function clipboardButton(name: string): HTMLElement {
   return within(screen.getByRole("group", { name: "Clipboard" })).getByRole(
     "button",
     { name },
+  );
+}
+
+/**
+ * Reports whether button says that it is unavailable, as the clipboard's
+ * buttons do while the page cannot reach the server, rather than be
+ * disabled, so that it keeps the keyboard's focus (LastingButton).
+ */
+function unavailable(button: HTMLElement): boolean {
+  return (
+    button.getAttribute("aria-disabled") === "true" &&
+    !(button as HTMLButtonElement).disabled
   );
 }
 
@@ -964,5 +978,249 @@ describe("the canvas's clipboard", () => {
     expect(batches(calls)).toEqual([]);
     expect(screen.queryByText(/could not be saved/)).toBeNull();
     expect(documents.clipboard.getState()).toBeUndefined();
+  });
+});
+
+describe("the canvas's clipboard offline", () => {
+  // Verifies: FR-OFF-03/AC3
+  it("is not offered while the browser has no connection, as it reads the server, and says why", async () => {
+    const { nodes, connections } = quayAndDock();
+    const calls = clipboardPage({ nodes, connections });
+    const { canvas } = await openHarbour();
+    await selectAll(canvas, 2);
+    // Copied first, so that Paste has what to paste, and the focus is on
+    // Copy, which it keeps as the connection goes (LastingButton).
+    await userEvent.click(clipboardButton("Copy"));
+    expect(await screen.findByText("2 nodes on the clipboard")).toBeDefined();
+    expect(document.activeElement).toBe(clipboardButton("Copy"));
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    try {
+      for (const name of ["Copy", "Cut", "Paste"]) {
+        expect(unavailable(clipboardButton(name))).toBe(true);
+      }
+      expect(
+        unavailable(
+          within(
+            screen.getByRole("group", { name: "Edit the board" }),
+          ).getByRole("button", { name: "Duplicate" }),
+        ),
+      ).toBe(true);
+      expect(
+        screen.getByText("Copy, cut, paste, and duplicate need a connection."),
+      ).toBeDefined();
+      expect(document.activeElement).toBe(clipboardButton("Copy"));
+      // Nor do the keys copy, nor a press.
+      await userEvent.keyboard("{Control>}c{/Control}");
+      await userEvent.click(clipboardButton("Copy"));
+      expect(bodiesOf(calls, "copyNodes")).toHaveLength(1);
+    } finally {
+      vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+      act(() => {
+        window.dispatchEvent(new Event("online"));
+      });
+    }
+    expect(clipboardButton("Copy")).toHaveProperty("disabled", false);
+    expect(unavailable(clipboardButton("Copy"))).toBe(false);
+  });
+
+  it("leaves the inspector's Duplicate unavailable while the browser has no connection, with the focus that it has, and says why", async () => {
+    const { nodes, connections } = quayAndDock();
+    const calls = clipboardPage({ nodes, connections });
+    await openHarbour("?node=nd_quay");
+    const inspector = await screen.findByRole("region", { name: "Quay" });
+    const duplicate = () =>
+      within(inspector).getByRole("button", { name: "Duplicate" });
+    duplicate().focus();
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    try {
+      expect(unavailable(duplicate())).toBe(true);
+      expect(document.activeElement).toBe(duplicate());
+      expect(
+        within(inspector).getByText("Duplicating needs a connection."),
+      ).toBeDefined();
+      await userEvent.click(duplicate());
+      expect(bodiesOf(calls, "copyNodes")).toEqual([]);
+    } finally {
+      vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+      act(() => {
+        window.dispatchEvent(new Event("online"));
+      });
+    }
+    expect(duplicate()).toHaveProperty("disabled", false);
+    expect(unavailable(duplicate())).toBe(false);
+  });
+
+  it("waits while a change that the device's queue keeps needs review, which the server's copy lacks, and says why", async () => {
+    globalThis.indexedDB = new IDBFactory();
+    const { nodes, connections } = quayAndDock();
+    // The server refuses each change for what it does.
+    const calls = clipboardPage({
+      nodes,
+      connections,
+      apply: async () => {
+        throw refused(422, { code: "validation_failed" });
+      },
+    });
+    const setOnline = (online: boolean) => {
+      vi.spyOn(navigator, "onLine", "get").mockReturnValue(online);
+      act(() => {
+        window.dispatchEvent(new Event(online ? "online" : "offline"));
+      });
+    };
+    const app = renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+      offline: { online: () => navigator.onLine },
+    });
+    const canvas = await canvasOf("Harbour");
+    await selectAll(canvas, 2);
+    // Copied first, so that Paste has what to paste.
+    await userEvent.click(clipboardButton("Copy"));
+    expect(await screen.findByText("2 nodes on the clipboard")).toBeDefined();
+    // A change made offline, which the server refuses once it is sent.
+    setOnline(false);
+    const doc = app.documents.get(testProject.id);
+    await act(() =>
+      doc.send([
+        {
+          type: "board.rename",
+          payload: { id: "bd_a", name: "Pier" },
+          expected_rev: { bd_a: 3 },
+        },
+      ]),
+    );
+    setOnline(true);
+    expect(
+      await screen.findByText(
+        "Copy, cut, paste, and duplicate wait until you decide what becomes of the changes that the server refused.",
+      ),
+    ).toBeDefined();
+    for (const name of ["Copy", "Cut", "Paste"]) {
+      expect(unavailable(clipboardButton(name))).toBe(true);
+    }
+    expect(
+      unavailable(
+        within(screen.getByRole("group", { name: "Edit the board" })).getByRole(
+          "button",
+          { name: "Duplicate" },
+        ),
+      ),
+    ).toBe(true);
+    // Nor do the keys copy.
+    await userEvent.keyboard("{Control>}c{/Control}");
+    expect(bodiesOf(calls, "copyNodes")).toHaveLength(1);
+  });
+
+  it("asks no paste's report once a change that the device's queue keeps comes to need review as the paste waits for it to be sent, which the server's report would lack", async () => {
+    globalThis.indexedDB = new IDBFactory();
+    const { nodes, connections } = quayAndDock();
+    // The server refuses the queued change for what it does, once the test
+    // says so.
+    let refuse = () => {};
+    let holding = false;
+    const calls = clipboardPage({
+      nodes,
+      connections,
+      apply: () =>
+        holding
+          ? new Promise<void>((_, reject) => {
+              refuse = () =>
+                reject(refused(422, { code: "validation_failed" }));
+            })
+          : Promise.resolve(),
+    });
+    const setOnline = (online: boolean) => {
+      vi.spyOn(navigator, "onLine", "get").mockReturnValue(online);
+      act(() => {
+        window.dispatchEvent(new Event(online ? "online" : "offline"));
+      });
+    };
+    const app = renderApp(
+      `/projects/${testProject.id}/boards/bd_a?node=nd_quay`,
+      {
+        session: testSession,
+        offline: { online: () => navigator.onLine },
+      },
+    );
+    await canvasOf("Harbour");
+    await userEvent.click(clipboardButton("Copy"));
+    await screen.findByText("1 node on the clipboard");
+    // A change made offline, on its way once the browser is online again,
+    // as Paste is pressed.
+    setOnline(false);
+    const doc = app.documents.get(testProject.id);
+    holding = true;
+    await act(() =>
+      doc.send([
+        {
+          type: "board.rename",
+          payload: { id: "bd_a", name: "Pier" },
+          expected_rev: { bd_a: 3 },
+        },
+      ]),
+    );
+    setOnline(true);
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    await userEvent.click(clipboardButton("Paste"));
+    await act(async () => {});
+    expect(bodiesOf(calls, "resolveClipboard")).toEqual([]);
+    refuse();
+    expect(
+      await screen.findByText(
+        "Copy, cut, paste, and duplicate wait until you decide what becomes of the changes that the server refused.",
+      ),
+    ).toBeDefined();
+    await act(async () => {});
+    expect(bodiesOf(calls, "resolveClipboard")).toEqual([]);
+    expect(batches(calls)).toHaveLength(1);
+  });
+
+  it("pastes nothing from the report's dialog once the browser has lost its connection, which the dialog says, and pastes once it is back", async () => {
+    const { nodes, connections } = quayAndDock();
+    const report: ClipboardReport = {
+      ...nothing,
+      variables: [
+        { id: "var_trust", key: "trust", type: "int", scope: "global" },
+      ],
+    };
+    const calls = clipboardPage({ nodes, connections, report: () => report });
+    const { router } = await openHarbour("?node=nd_quay");
+    await userEvent.click(clipboardButton("Copy"));
+    await screen.findByText("1 node on the clipboard");
+    await openLighthouse(router);
+    await userEvent.click(clipboardButton("Paste"));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Some of what the nodes name is missing here",
+    });
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    try {
+      expect(
+        within(dialog).getByText(
+          "Copy, cut, paste, and duplicate need a connection.",
+        ),
+      ).toBeDefined();
+      await userEvent.click(
+        within(dialog).getByRole("button", { name: "Create and paste" }),
+      );
+      expect(batches(calls)).toEqual([]);
+      expect(screen.getByRole("dialog")).toBe(dialog);
+    } finally {
+      vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+      act(() => {
+        window.dispatchEvent(new Event("online"));
+      });
+    }
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Create and paste" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
   });
 });

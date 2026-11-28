@@ -1842,7 +1842,7 @@ describe("undo and redo (FR-EDIT-08)", () => {
       [{ type: "comment.delete", payload: { id: "cmt_a" } }],
       { history: false },
     );
-    expect(answer.undo).toEqual([deleteBack]);
+    expect((answer as CommandResultBody).undo).toEqual([deleteBack]);
     expect(doc.store.getState()).toMatchObject({
       undoable: 0,
       redoable: 1,

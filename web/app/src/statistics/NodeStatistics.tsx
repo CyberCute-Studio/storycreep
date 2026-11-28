@@ -11,6 +11,7 @@ import { useId } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
 import { useProjectDocument } from "../document/react";
+import { ReadingNote } from "../offline/OfflinePages";
 import { Alert } from "../ui/Page";
 import { CountList } from "./Counts";
 import { nodeStatisticsQuery } from "./queries";
@@ -34,7 +35,7 @@ export function NodeStatistics({
       </h3>
       <p className="text-sm text-fg-muted">{t("inspector.statistics_hint")}</p>
       {stats.isPending ? (
-        <p className="text-fg-muted">{t("usage.loading")}</p>
+        <ReadingNote reading={t("usage.loading")} />
       ) : stats.isError ? (
         <Alert message={refusalOf(stats.error, t)?.message} />
       ) : (

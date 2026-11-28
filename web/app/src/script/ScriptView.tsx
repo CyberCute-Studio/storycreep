@@ -71,10 +71,11 @@ import { boardPart } from "../document/doc";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { equal } from "../document/reconcile";
 import type { Overlap } from "../document/store";
+import { analyze } from "../expr/analyze";
 import type { Words } from "../expr/messages";
 import { Parts } from "../expr/Names";
 import { type Part, plainOf } from "../expr/plain";
-import type { ScopeSources } from "../expr/scope";
+import { type ScopeSources, sharedProjectOf } from "../expr/scope";
 import { payloadField } from "../project/dialogs";
 import { loadPart, useCommands } from "../project/queries";
 import type { RichTextValue } from "../richtext/convert";
@@ -124,6 +125,12 @@ interface Shared {
   names: TextNames;
   /** What conditions name, and jumpers target, with the board's nodes' titles. */
   scope: ScopeSources;
+  /**
+   * Whether the document has read the project's variables and components,
+   * which a condition that the server has yet to compile is compiled
+   * against here, and checked for its syntax alone until then (compiledOf).
+   */
+  namesHeld: boolean;
   /**
    * What tells of a jumper's target that the document does not hold: that
    * it was deleted, where the document has read the target's board, or
@@ -261,6 +268,12 @@ export function ScriptView({
   const variables = useDocumentState(doc, (s) => s.view.variables);
   const components = useDocumentState(doc, (s) => s.view.components);
   const componentTypes = useDocumentState(doc, (s) => s.view.componentTypes);
+  // Whether the document has read the names that a condition saved offline
+  // is compiled against here (compiledOf).
+  const namesHeld = useDocumentState(
+    doc,
+    () => doc.hasRead("variables") && doc.hasRead("components"),
+  );
   const boards = useDocumentState(doc, (s) => s.view.boards);
   const gone = useDocumentState(doc, (s) => s.view.gone);
   const titled = useTitled(nodes);
@@ -517,6 +530,7 @@ export function ScriptView({
         nodes: titled,
         gone,
       },
+      namesHeld,
       targets,
       onEdit,
       onClose,
@@ -535,6 +549,7 @@ export function ScriptView({
       boards,
       titled,
       gone,
+      namesHeld,
       targets,
       onEdit,
       onClose,
@@ -785,9 +800,53 @@ function goneIn(
 const decoded = new WeakMap<Expression, Ast | null>();
 
 /**
+ * What the view compiled of the conditions that the server has yet to
+ * compile, by their expression, with the names that it compiled each
+ * against, which it compiles it against again once they change.
+ */
+const compiledHere = new WeakMap<
+  Expression,
+  { scope: ScopeSources; ast: Ast | null; valid: boolean }
+>();
+
+/**
+ * Returns the AST of condition, a source that the page changed, which the
+ * server has yet to compile, as one changed offline, whose appliers hold it
+ * as not compiling until the server answers (appliers/node.ts, scripted),
+ * as the view compiles it against the names of shared's board, as the
+ * expression editor does (analyze.ts), and whether it compiled, or may, as
+ * while the page has not read the names (namesHeld), which the server then
+ * says.
+ */
+function compiledOf(
+  condition: Expression,
+  shared: Shared,
+): { ast: Ast | null; valid: boolean } {
+  const held = compiledHere.get(condition);
+  if (held?.scope === shared.scope) {
+    return held;
+  }
+  const analysis = analyze(condition.source, "condition", {
+    boardId: shared.boardId,
+    view: shared.scope,
+    project: shared.namesHeld ? sharedProjectOf(shared.scope) : undefined,
+  });
+  const compiled = {
+    scope: shared.scope,
+    ast: analysis.ast ?? null,
+    valid: analysis.ast !== undefined || analysis.error === undefined,
+  };
+  compiledHere.set(condition, compiled);
+  return compiled;
+}
+
+/**
  * Returns what a condition says, as the view shows it: in plain language,
  * from its AST, of a condition that compiles, as the expression editor says
- * it (plain.ts); or else its source, on one line, as code.
+ * it (plain.ts); or else its source, on one line, as code. A source that the
+ * server has yet to compile, with neither its AST nor its error, as one
+ * saved offline, is compiled here (compiledOf), rather than shown as one
+ * that does not compile until the server has answered.
  */
 function conditionParts(
   condition: Expression,
@@ -805,6 +864,15 @@ function conditionParts(
     }
     decoded.set(condition, ast);
   }
+  let valid = condition.is_valid;
+  if (
+    ast === null &&
+    !condition.is_valid &&
+    condition.ast === undefined &&
+    condition.error === undefined
+  ) {
+    ({ ast, valid } = compiledOf(condition, shared));
+  }
   if (ast !== null) {
     return {
       parts: plainOf(ast, shared.words, shared.scope, shared.boardId)[0] ?? [],
@@ -813,7 +881,7 @@ function conditionParts(
   }
   return {
     parts: [{ kind: "code", text: oneLine(condition.source) }],
-    valid: condition.is_valid,
+    valid,
   };
 }
 

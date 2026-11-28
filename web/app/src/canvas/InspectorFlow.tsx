@@ -47,6 +47,7 @@ import {
   typedExpression,
   useTypedSource,
 } from "../expr/fields";
+import { ReadingNote } from "../offline/OfflinePages";
 import { Confirm, payloadField } from "../project/dialogs";
 import { type Command, loadPart, referrersShown } from "../project/queries";
 import type { RichTextValue } from "../richtext/convert";
@@ -1210,7 +1211,7 @@ export function ReferencedBy({
         {t("inspector.referenced_by")}
       </h3>
       {list.isPending ? (
-        <p className="text-fg-muted">{t("usage.loading")}</p>
+        <ReadingNote reading={t("usage.loading")} />
       ) : list.isError ? (
         <Alert message={refusalOf(list.error, t)?.message} />
       ) : list.data.items.length === 0 ? (

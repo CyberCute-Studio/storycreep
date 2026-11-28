@@ -523,3 +523,130 @@ describe("where a project's document finds the device's copy", () => {
     expect([...(copy?.doc.nodes.keys() ?? [])]).toEqual([]);
   });
 });
+
+describe("the device's queue of changes", () => {
+  /** Returns a batch of the queue of user's test project, of id, made at order. */
+  function batch(id: string, order: number, owner = "own") {
+    return {
+      id,
+      owner,
+      maker: owner,
+      atop: [],
+      order,
+      format: 1,
+      time: "2026-11-27T10:00:00Z",
+      commands: [],
+      key: "[]",
+      base: [],
+      before: [],
+      parts: [],
+      retries: 3,
+      sent: false,
+      history: true,
+      state: "pending" as const,
+    };
+  }
+
+  it("keeps an account's changes, in order, until they are removed, through an ended session and another account's signing in", async () => {
+    await db.saveQueued(
+      user,
+      testProject.id,
+      [batch("b2", 2), batch("b1", 1)],
+      [],
+    );
+    await db.saveQueued("usr_other", testProject.id, [batch("b3", 3)], []);
+    expect((await db.queued(user)).map((b) => b.id)).toEqual(["b1", "b2"]);
+    // Another account signs in on the device, and then the session ends.
+    await db.deleteAllBut("usr_other");
+    await db.deleteAllBut(undefined);
+    expect((await db.queued(user)).map((b) => b.id)).toEqual(["b1", "b2"]);
+    expect((await db.queued("usr_other")).map((b) => b.id)).toEqual(["b3"]);
+    await db.saveQueued(user, testProject.id, [], ["b1"]);
+    expect((await db.queued(user)).map((b) => b.id)).toEqual(["b2"]);
+    // Signing out, once the user decided.
+    await db.deleteQueued(user);
+    expect(await db.queued(user)).toEqual([]);
+    expect(await db.queued("usr_other")).toHaveLength(1);
+  });
+
+  it("writes a batch written before again only where it still keeps it, as signing out may have taken it off the device since", async () => {
+    await db.saveQueued(user, testProject.id, [batch("b1", 1)], []);
+    await db.saveQueued(
+      user,
+      testProject.id,
+      [{ ...batch("b1", 1), sent: true }],
+      [],
+      [],
+    );
+    expect((await db.queued(user)).map((b) => [b.id, b.sent])).toEqual([
+      ["b1", true],
+    ]);
+    await db.deleteQueued(user);
+    await db.saveQueued(
+      user,
+      testProject.id,
+      [{ ...batch("b1", 1), sent: false }, batch("b2", 2)],
+      [],
+      ["b2"],
+    );
+    expect((await db.queued(user)).map((b) => b.id)).toEqual(["b2"]);
+  });
+
+  it("gives a document the batches of the owners that it may take, as its own, and none of another format", async () => {
+    await db.saveQueued(
+      user,
+      testProject.id,
+      [
+        batch("b1", 1, "gone"),
+        batch("b2", 2, "open"),
+        { ...batch("b3", 3, "gone"), format: 2 },
+      ],
+      [],
+    );
+    const taken = await db.takeQueued(
+      user,
+      testProject.id,
+      "me",
+      async () => (owner) => owner === "gone",
+    );
+    expect(taken.map((b) => [b.id, b.owner])).toEqual([["b1", "me"]]);
+    expect(
+      (await db.queued(user, testProject.id)).map((b) => [b.id, b.owner]),
+    ).toEqual([
+      ["b1", "me"],
+      ["b2", "open"],
+      ["b3", "gone"],
+    ]);
+  });
+
+  it("asks which owners a document may take the batches of once it has read them, and takes none written, or taken by another, after", async () => {
+    await db.saveQueued(
+      user,
+      testProject.id,
+      [batch("b1", 1, "gone"), batch("b2", 2, "gone")],
+      [],
+    );
+    const taken = await db.takeQueued(user, testProject.id, "me", async () => {
+      // A document that starts as the locks are read writes a batch, as
+      // one whose lock it holds, though no lock of it was held as they
+      // were read; and another document takes one of those read.
+      await db.saveQueued(user, testProject.id, [batch("b3", 3, "new")], []);
+      await db.saveQueued(
+        user,
+        testProject.id,
+        [batch("b2", 2, "other")],
+        [],
+        [],
+      );
+      return () => true;
+    });
+    expect(taken.map((b) => [b.id, b.owner])).toEqual([["b1", "me"]]);
+    expect(
+      (await db.queued(user, testProject.id)).map((b) => [b.id, b.owner]),
+    ).toEqual([
+      ["b1", "me"],
+      ["b2", "other"],
+      ["b3", "new"],
+    ]);
+  });
+});
