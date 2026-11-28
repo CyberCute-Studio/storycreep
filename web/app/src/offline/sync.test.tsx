@@ -507,6 +507,14 @@ describe("the history's controls", () => {
         "Undoing or redoing a change that the server already has waits until you decide what becomes of the changes that the server refused.",
       ),
     ).toBeDefined();
+    // Unavailable rather than disabled, so that it keeps the focus that it
+    // has as the page comes to wait (LastingButton).
+    const undos = screen.getAllByRole("button", { name: "Undo" });
+    expect(undos.length).toBeGreaterThan(0);
+    for (const undo of undos) {
+      expect(undo.getAttribute("aria-disabled")).toBe("true");
+      expect((undo as HTMLButtonElement).disabled).toBe(false);
+    }
   });
 });
 

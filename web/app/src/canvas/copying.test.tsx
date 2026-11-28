@@ -344,6 +344,18 @@ function clipboardButton(name: string): HTMLElement {
   );
 }
 
+/**
+ * Reports whether button says that it is unavailable, as the clipboard's
+ * buttons do while the page cannot reach the server, rather than be
+ * disabled, so that it keeps the keyboard's focus (LastingButton).
+ */
+function unavailable(button: HTMLElement): boolean {
+  return (
+    button.getAttribute("aria-disabled") === "true" &&
+    !(button as HTMLButtonElement).disabled
+  );
+}
+
 /** Returns the offset that pastes nodes whose middle is middle onto canvas's centre, on the grid. */
 function centredOffset(canvas: HTMLElement, middle: { x: number; y: number }) {
   const zoom = Number(canvas.dataset.zoom);
@@ -976,27 +988,34 @@ describe("the canvas's clipboard offline", () => {
     const calls = clipboardPage({ nodes, connections });
     const { canvas } = await openHarbour();
     await selectAll(canvas, 2);
-    expect(clipboardButton("Copy")).toHaveProperty("disabled", false);
+    // Copied first, so that Paste has what to paste, and the focus is on
+    // Copy, which it keeps as the connection goes (LastingButton).
+    await userEvent.click(clipboardButton("Copy"));
+    expect(await screen.findByText("2 nodes on the clipboard")).toBeDefined();
+    expect(document.activeElement).toBe(clipboardButton("Copy"));
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
     act(() => {
       window.dispatchEvent(new Event("offline"));
     });
     try {
       for (const name of ["Copy", "Cut", "Paste"]) {
-        expect(clipboardButton(name)).toHaveProperty("disabled", true);
+        expect(unavailable(clipboardButton(name))).toBe(true);
       }
       expect(
-        within(screen.getByRole("group", { name: "Edit the board" })).getByRole(
-          "button",
-          { name: "Duplicate" },
+        unavailable(
+          within(
+            screen.getByRole("group", { name: "Edit the board" }),
+          ).getByRole("button", { name: "Duplicate" }),
         ),
-      ).toHaveProperty("disabled", true);
+      ).toBe(true);
       expect(
         screen.getByText("Copy, cut, paste, and duplicate need a connection."),
       ).toBeDefined();
-      // Nor do the keys copy.
+      expect(document.activeElement).toBe(clipboardButton("Copy"));
+      // Nor do the keys copy, nor a press.
       await userEvent.keyboard("{Control>}c{/Control}");
-      expect(bodiesOf(calls, "copyNodes")).toEqual([]);
+      await userEvent.click(clipboardButton("Copy"));
+      expect(bodiesOf(calls, "copyNodes")).toHaveLength(1);
     } finally {
       vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
       act(() => {
@@ -1004,6 +1023,37 @@ describe("the canvas's clipboard offline", () => {
       });
     }
     expect(clipboardButton("Copy")).toHaveProperty("disabled", false);
+    expect(unavailable(clipboardButton("Copy"))).toBe(false);
+  });
+
+  it("leaves the inspector's Duplicate unavailable while the browser has no connection, with the focus that it has, and says why", async () => {
+    const { nodes, connections } = quayAndDock();
+    const calls = clipboardPage({ nodes, connections });
+    await openHarbour("?node=nd_quay");
+    const inspector = await screen.findByRole("region", { name: "Quay" });
+    const duplicate = () =>
+      within(inspector).getByRole("button", { name: "Duplicate" });
+    duplicate().focus();
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    try {
+      expect(unavailable(duplicate())).toBe(true);
+      expect(document.activeElement).toBe(duplicate());
+      expect(
+        within(inspector).getByText("Duplicating needs a connection."),
+      ).toBeDefined();
+      await userEvent.click(duplicate());
+      expect(bodiesOf(calls, "copyNodes")).toEqual([]);
+    } finally {
+      vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+      act(() => {
+        window.dispatchEvent(new Event("online"));
+      });
+    }
+    expect(duplicate()).toHaveProperty("disabled", false);
+    expect(unavailable(duplicate())).toBe(false);
   });
 
   it("waits while a change that the device's queue keeps needs review, which the server's copy lacks, and says why", async () => {
@@ -1029,7 +1079,9 @@ describe("the canvas's clipboard offline", () => {
     });
     const canvas = await canvasOf("Harbour");
     await selectAll(canvas, 2);
-    expect(clipboardButton("Copy")).toHaveProperty("disabled", false);
+    // Copied first, so that Paste has what to paste.
+    await userEvent.click(clipboardButton("Copy"));
+    expect(await screen.findByText("2 nodes on the clipboard")).toBeDefined();
     // A change made offline, which the server refuses once it is sent.
     setOnline(false);
     const doc = app.documents.get(testProject.id);
@@ -1049,17 +1101,19 @@ describe("the canvas's clipboard offline", () => {
       ),
     ).toBeDefined();
     for (const name of ["Copy", "Cut", "Paste"]) {
-      expect(clipboardButton(name)).toHaveProperty("disabled", true);
+      expect(unavailable(clipboardButton(name))).toBe(true);
     }
     expect(
-      within(screen.getByRole("group", { name: "Edit the board" })).getByRole(
-        "button",
-        { name: "Duplicate" },
+      unavailable(
+        within(screen.getByRole("group", { name: "Edit the board" })).getByRole(
+          "button",
+          { name: "Duplicate" },
+        ),
       ),
-    ).toHaveProperty("disabled", true);
+    ).toBe(true);
     // Nor do the keys copy.
     await userEvent.keyboard("{Control>}c{/Control}");
-    expect(bodiesOf(calls, "copyNodes")).toEqual([]);
+    expect(bodiesOf(calls, "copyNodes")).toHaveLength(1);
   });
 
   it("asks no paste's report once a change that the device's queue keeps comes to need review as the paste waits for it to be sent, which the server's report would lack", async () => {

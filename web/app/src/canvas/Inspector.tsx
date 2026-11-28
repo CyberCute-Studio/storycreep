@@ -48,7 +48,7 @@ import { colorName, type PaletteColor, paletteColors } from "../project/colors";
 import { payloadField } from "../project/dialogs";
 import type { Command } from "../project/queries";
 import { NodeStatistics } from "../statistics/NodeStatistics";
-import { Button } from "../ui/Button";
+import { Button, LastingButton } from "../ui/Button";
 import {
   CheckboxField,
   SelectField,
@@ -342,16 +342,21 @@ export function Inspector({
               meanwhile, as the selection holds the copies to come: the
               heading takes the focus, which the button would else leave to
               the page's content as it goes; and it is offered while no
-              copy, paste, or duplicate of the canvas is under way. */}
-              <Button
-                disabled={tooMany || actions.busy || !reachable}
+              copy, paste, or duplicate of the canvas is under way, and
+              says that it is unavailable while the page cannot reach the
+              server, as the note below says, rather than be disabled, so
+              that it keeps the keyboard's focus as the connection comes and
+              goes (LastingButton). */}
+              <LastingButton
+                disabled={tooMany || actions.busy}
+                unavailable={!reachable}
                 onClick={() => {
                   void actions.duplicate(nodes.map((n) => n.id));
                   toHeading();
                 }}
               >
                 {t("canvas.duplicate")}
-              </Button>
+              </LastingButton>
               <Button
                 variant="danger"
                 onClick={() => void actions.remove(nodes.map((n) => n.id))}

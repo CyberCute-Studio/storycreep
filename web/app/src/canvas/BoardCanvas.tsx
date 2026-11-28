@@ -1800,8 +1800,12 @@ function BoardCanvasOf({
   useLayoutEffect(() => {
     reachableNow.current = reachable;
   });
-  const clipboardReady =
-    content === "ready" && copied !== undefined && reachable;
+  // Whether the page's clipboard holds what Paste would paste here, once the
+  // canvas is placed on the board's nodes, whether or not it reaches the
+  // server now, which the toolbar's Paste is disabled without, rather than
+  // unavailable, as while the server cannot be reached (LastingButton).
+  const clipboardHeld = content === "ready" && copied !== undefined;
+  const clipboardReady = clipboardHeld && reachable;
   const pastable = editable && clipboardReady && !actions.busy;
   // Pastes what the page's clipboard holds, its nodes' middle at at of the
   // board, or at the canvas's centre, where at is not given: at once where
@@ -2241,15 +2245,17 @@ function BoardCanvasOf({
         {/* The page's clipboard (FR-EDIT-07, plan note N71): Copy, on any
         board, as a viewer may copy what they read, and Cut and Paste on a
         board that may be changed. While a copy, a paste, or a duplicate is
-        under way, as a press of one of them starts, each of them, and
-        Duplicate, says that it is unavailable, rather than be disabled,
-        and keeps the keyboard's focus that it has, which the dialog of a
-        paste gives back to Paste as it closes (LastingButton). */}
+        under way, as a press of one of them starts, or the page cannot
+        reach the server, or its copy lacks the queue's changes, as the note
+        beside them says (waitsNote), each of them, and Duplicate, says that
+        it is unavailable, rather than be disabled, and keeps the keyboard's
+        focus that it has, as the connection comes and goes, which the
+        dialog of a paste gives back to Paste as it closes (LastingButton). */}
         <fieldset className="flex min-w-0 flex-wrap gap-2">
           <legend className="sr-only">{t("canvas.clipboard")}</legend>
           <LastingButton
-            disabled={!fits || !reachable}
-            unavailable={actions.busy}
+            disabled={!fits}
+            unavailable={actions.busy || !reachable}
             onClick={() => void actions.copy([...selection])}
           >
             {t("canvas.copy")}
@@ -2257,16 +2263,16 @@ function BoardCanvasOf({
           {editable && (
             <>
               <LastingButton
-                disabled={!fits || !reachable}
-                unavailable={actions.busy}
+                disabled={!fits}
+                unavailable={actions.busy || !reachable}
                 onClick={() => void actions.cut([...selection])}
               >
                 {t("canvas.cut")}
               </LastingButton>
               <LastingButton
                 ref={pasteButton}
-                disabled={!clipboardReady}
-                unavailable={actions.busy}
+                disabled={!clipboardHeld}
+                unavailable={actions.busy || !reachable}
                 onClick={() =>
                   void pasteAt(undefined, () => pasteButton.current)
                 }
@@ -2301,8 +2307,8 @@ function BoardCanvasOf({
               </MenuItem>
             </Menu>
             <LastingButton
-              disabled={!fits || !reachable}
-              unavailable={actions.busy}
+              disabled={!fits}
+              unavailable={actions.busy || !reachable}
               onClick={() => void actions.duplicate([...selection])}
             >
               {t("canvas.duplicate")}

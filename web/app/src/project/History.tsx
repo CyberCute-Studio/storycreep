@@ -29,7 +29,7 @@ import { refusalOf } from "../auth/refusal";
 import { type Handlers, useCommandHandlers } from "../commands/registry";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { useServerReachable } from "../offline/pending";
-import { Button } from "../ui/Button";
+import { LastingButton } from "../ui/Button";
 import { Alert, Status } from "../ui/Page";
 
 /** The undo and redo of a project's page, which its controls and what they say share (useHistory). */
@@ -184,24 +184,35 @@ export function historyHandlers(history: HistoryOf): Handlers {
   };
 }
 
-/** The buttons of the undo and the redo. */
+/**
+ * The buttons of the undo and the redo: disabled without a step, or while
+ * one is under way, and unavailable, rather than disabled, while the step
+ * waits for the connection, or for the queue, as the status beside them
+ * says (HistoryStatus), so that one keeps the keyboard's focus that it has
+ * as the connection comes and goes (LastingButton).
+ */
 export function HistoryButtons({ history }: { history: HistoryOf }) {
   const { t } = useTranslation();
   const { step } = history;
+  const has = (which: "undo" | "redo") =>
+    (which === "undo" ? history.undoable : history.redoable) > 0 &&
+    !history.stepping;
   return (
     <>
-      <Button
-        disabled={!canStep(history, "undo")}
+      <LastingButton
+        disabled={!has("undo")}
+        unavailable={!canStep(history, "undo")}
         onClick={() => step.mutate("undo")}
       >
         {t("history.undo")}
-      </Button>
-      <Button
-        disabled={!canStep(history, "redo")}
+      </LastingButton>
+      <LastingButton
+        disabled={!has("redo")}
+        unavailable={!canStep(history, "redo")}
         onClick={() => step.mutate("redo")}
       >
         {t("history.redo")}
-      </Button>
+      </LastingButton>
     </>
   );
 }
