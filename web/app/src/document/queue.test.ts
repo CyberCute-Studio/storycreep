@@ -1260,7 +1260,69 @@ describe("the device's queue of the page's batches", () => {
     await db.close();
   });
 
-  it("keeps a batch made while an undo's read of the project has had no answer for a while, which goes on before it, and sends no undo after it", async () => {
+  it("keeps a batch made while an undo waits for a comment's try that has had no answer for a while, which it waits for no longer, and sends no undo after it", async () => {
+    let seq = testProject.seq;
+    let rev = 3;
+    let answer = (_: CommandResultBody) => {};
+    const batches = serve(
+      (commands) => {
+        if (commands[0]?.type === "comment.delete") {
+          return new Promise<CommandResultBody>((resolve) => {
+            answer = resolve;
+          });
+        }
+        seq++;
+        rev++;
+        return applied(
+          seq,
+          [{ id: "bd_a", rev }],
+          [renameBack("bd_a", "Harbour", rev)],
+        );
+      },
+      () => seq,
+    );
+    const db = new OfflineDatabase();
+    const locks = fakeLocks();
+    const { doc } = await open(
+      db,
+      locks,
+      connection(true),
+      testSession,
+      deviceQueue(db, { secure: true, locks }),
+      { answerWait: 20 },
+    );
+    await doc.send([rename("bd_a", "Quay", 3)]);
+    // A comment's batch, which the queue does not keep, and which the undo
+    // asked for after it waits for, as for any batch sent before it.
+    const comment = doc.send(
+      [{ type: "comment.delete", payload: { id: "cmt_a" } }],
+      { history: false },
+    );
+    const undo = doc.undo();
+    const pier = doc.send([rename("bd_a", "Pier", 4)]);
+    expect(await pier).toEqual({ status: "queued" });
+    expect(doc.store.getState().holding).toBe(true);
+    expect(
+      (await db.queued(user, testProject.id)).map((b) => nameOf(b.commands)),
+    ).toEqual(["Pier"]);
+    expect(batches.map((b) => b[0]?.type)).toEqual([
+      "board.rename",
+      "comment.delete",
+    ]);
+    seq++;
+    answer(applied(seq, []));
+    await comment;
+    expect(await undo).toBe(false);
+    await until(doc, (s) => s.queued === 0 && !s.holding);
+    expect(batches.map(nameOf)).toEqual(["Quay", undefined, "Pier"]);
+    expect(await db.queued(user, testProject.id)).toEqual([]);
+    expect(shownName(doc)).toBe("Pier");
+    doc.dispose();
+    await doc.lettingGo();
+    await db.close();
+  });
+
+  it("keeps a batch made while an undo's read of the project has had no answer for a while at once, which goes on before it once the read settles, and sends no undo after it", async () => {
     let seq = testProject.seq;
     // The next read of the project gets no answer until read is called.
     let hang = false;
@@ -1321,8 +1383,13 @@ describe("the device's queue of the page's batches", () => {
     expect(
       (await db.queued(user, testProject.id)).map((b) => nameOf(b.commands)),
     ).toEqual(["Pier"]);
+    // Kept rather than sent, as the page cannot reach the server until the
+    // read settles.
+    expect(doc.store.getState().holding).toBe(true);
+    expect(batches.map(nameOf)).toEqual(["Quay"]);
     read();
     expect(await undo).toBe(false);
+    await vi.waitFor(() => expect(batches).toHaveLength(2));
     seq++;
     answer(applied(seq, [{ id: "bd_a", rev: 5 }]));
     await until(doc, (s) => s.queued === 0 && !s.holding);
@@ -2028,6 +2095,46 @@ describe("the device's queue of the page's batches", () => {
       "comment.delete",
     ]);
     doc.dispose();
+    await db.close();
+  });
+
+  it("spaces the tries after an answer as the first of a run, though the tries before it got none", async () => {
+    // When each try was sent, in milliseconds.
+    const at: number[] = [];
+    const batches = serve(() => {
+      at.push(performance.now());
+      // Five tries get no answer, as the server is down; the sixth is
+      // answered, refused for too many requests, after which the seventh
+      // gets none again, and the eighth applies.
+      if (at.length === 6) {
+        throw refused(429, { code: "rate_limited" });
+      }
+      if (at.length < 8) {
+        throw new NetworkError(new TypeError("Failed to fetch"));
+      }
+      return applied(testProject.seq + 1, [{ id: "bd_a", rev: 4 }]);
+    });
+    const db = new OfflineDatabase();
+    const locks = fakeLocks();
+    // Each wait is 2% of its ceiling: 20 ms for the first of a run, and
+    // 640 ms after five in a row.
+    const { doc } = await open(
+      db,
+      locks,
+      connection(true),
+      testSession,
+      deviceQueue(db, { secure: true, locks }),
+      { random: () => 0.02 },
+    );
+    expect(await doc.send([rename("bd_a", "Quay", 3)])).toEqual({
+      status: "queued",
+    });
+    await vi.waitFor(() => expect(batches).toHaveLength(8), { timeout: 5000 });
+    await until(doc, (s) => s.queued === 0);
+    const [sixth = 0, seventh = 0] = at.slice(5, 7);
+    expect(seventh - sixth).toBeLessThan(300);
+    doc.dispose();
+    await doc.lettingGo();
     await db.close();
   });
 

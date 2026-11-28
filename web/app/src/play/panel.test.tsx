@@ -2418,7 +2418,7 @@ describe("saved play states", () => {
       ]),
     );
     await within(panel).findByText(
-      "The saved states need a connection, which this device does not have now. Play runs on the project all the same.",
+      "The saved states need the server, which this device cannot reach now. Play runs on the project all the same.",
     );
     // The next try is answered.
     act(() => {

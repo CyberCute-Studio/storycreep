@@ -384,8 +384,8 @@ export function Comments({
   const list = useQuery(targetCommentsQuery(doc, target.id));
   // The comments are the server's, no part of the project's copy, nor of
   // the changes that the device keeps (PRD FR-OFF-03): while the page cannot
-  // reach the server, as offline, the section says that they need a
-  // connection, in place of threads and forms that would fail.
+  // reach the server, as offline, the section says that they need it, in
+  // place of threads and forms that would fail.
   const reachable = useServerReachable(doc);
   const ownId = useId();
   const titleId = headingId ?? `${ownId}-title`;

@@ -386,9 +386,9 @@ function refusedForGood(error: unknown): boolean {
  * The undo or the redo under way (ProjectDocument.step), which settles as
  * done does, and, of one sent to the server, which the page's batches made
  * meanwhile wait for (sendAfterSteps), what they wait for no longer, once
- * its read of the server, or its try, has had no answer for answerWait
- * (givingWayAfter, stalled): that it gave way (gaveWay), as it says (given),
- * which giveWay gives.
+ * its read of the server, or its try, or one that it waits for, has had no
+ * answer for answerWait (givingWayAfter, stalled): that it gave way
+ * (gaveWay), as it says (given), which giveWay gives.
  */
 interface StepUnderWay {
   which: "undo" | "redo";
@@ -1148,7 +1148,19 @@ export class ProjectDocument {
    * (retryReason), which goes on.
    */
   private stalledTry = false;
-  /** How many tries in a row the server gave no answer to, which spaces the next (backoff). */
+  /**
+   * Whether the read of the project that a step of the history under way
+   * makes before it is sent has had no answer for answerWait
+   * (givingWayAfter), after which the page cannot reach the server until
+   * the read settles (unreachable), as through a try that none came to.
+   */
+  private stalledRead = false;
+  /**
+   * How many tries in a row the server gave no answer to, or refused for
+   * when or by whom they were sent, which spaces the next (backoff): an
+   * answer of the server's own ends a run of those that no answer came to
+   * (reached).
+   */
   private retryFailures = 0;
   /** Counts the changes of what the sync panel lists (DocumentState.queueVersion), and of what undo and redo would take out of the queue, or put back. */
   private queueChanges = 0;
@@ -3392,15 +3404,17 @@ export class ProjectDocument {
    * at once all the same, on top of what is queued (waiting), as a board
    * dropped in the tree where it was dropped, rather than where it was
    * until the step has settled. A step whose read of the server, or whose
-   * try, has had no answer for answerWait, which the browser may take
-   * minutes to give up on, gives way (givingWayAfter, stalled): the batch is
-   * queued now, before the step, which is then not sent (stepped), or behind
-   * its try, and so is kept in the device's queue, as are the batches after
-   * any try that no answer comes to, rather than in the page alone, which a
-   * tab that closes meanwhile would lose (PRD FR-OFF-03); but for those of a
-   * step that the server refuses as too large, which it sends in parts, and
-   * whose parts after then come after the batch, which may change what they
-   * undo.
+   * try, or a try that it waits for, has had no answer for answerWait,
+   * which the browser may take minutes to give up on, gives way
+   * (givingWayAfter, stalled): the batch is queued now, behind that try, or
+   * the read, before the step, which is then not sent (stepped), or after
+   * its try, and so is kept in the device's queue, as the page cannot reach
+   * the server until the try, or the read, settles, as are the batches
+   * after any try that no answer comes to, rather than in the page alone,
+   * which a tab that closes meanwhile would lose (PRD FR-OFF-03); but for
+   * those of a step that the server refuses as too large, which it sends in
+   * parts, and whose parts after then come after the batch, which may change
+   * what they undo.
    */
   private sendAfterSteps(
     commands: readonly Command[],
@@ -3851,8 +3865,11 @@ export class ProjectDocument {
       // a tab that closes, come after the step (adoptMore).
       await this.adoptQueue();
       // One that the device's queue kept meanwhile, as no answer came to it,
-      // comes before the step still, which waits for it, as step does.
-      if (this.holdsQueued()) {
+      // comes before the step still, which waits for it, as step does; and so
+      // do the page's batches made since, which went on, as a try that the
+      // step waited for, as a comment's, had no answer for a while (stalled),
+      // and which are the latest changes once they apply.
+      if (this.holdsQueued() || this.gaveWay()) {
         return false;
       }
       const step = newest();
@@ -3865,18 +3882,19 @@ export class ProjectDocument {
       // anew, as once an answer was past what the document had while the
       // channel was not, which settles the batches that it read. Nothing
       // changes the history meanwhile, as the page's batches made since wait
-      // for the step. Once the channel is not live after that, nothing would
-      // tell the document of a database restored from an older backup
-      // meanwhile, behind those batches, but a seq that the server gives, as
-      // the project's, which it reads first (seqChecked): the project read
-      // anew may have failed, and wait to try again, or be slower than the
-      // wait, or have read the project before the step was asked for. A
-      // socket lost a moment before, whose answers' reading anew waits a
-      // while for it to be back (lostTimer), would leave the step without
-      // those batches, and so without what it moves, after which the other
-      // steps, which go on expecting what the document held before them,
-      // would be refused for the user's own step, and dropped: the project is
-      // read anew now, as of them, rather than once that while has passed.
+      // for the step, or, once it gives way, have it not sent (below). Once
+      // the channel is not live after that, nothing would tell the document
+      // of a database restored from an older backup meanwhile, behind those
+      // batches, but a seq that the server gives, as the project's, which it
+      // reads first (seqChecked): the project read anew may have failed, and
+      // wait to try again, or be slower than the wait, or have read the
+      // project before the step was asked for. A socket lost a moment
+      // before, whose answers' reading anew waits a while for it to be back
+      // (lostTimer), would leave the step without those batches, and so
+      // without what it moves, after which the other steps, which go on
+      // expecting what the document held before them, would be refused for
+      // the user's own step, and dropped: the project is read anew now, as of
+      // them, rather than once that while has passed.
       const restores = this.restores;
       const last = Math.max(...step.seqs);
       if (
@@ -3897,11 +3915,11 @@ export class ProjectDocument {
         // The project can no longer be read, which its pages show.
         return false;
       }
-      // The page's batches made meanwhile went on, as the read had no answer
-      // for a while (givingWayAfter), and are the latest changes once they
-      // apply: the step is not sent after them, as it is not after one that
-      // the device's queue kept (holdsQueued).
-      if (this.stepUnderWay?.given === true) {
+      // The page's batches made meanwhile went on, as the read, or a try, had
+      // no answer for a while (givingWayAfter, stalled), and are the latest
+      // changes once they apply: the step is not sent after them, as it is
+      // not after one that the device's queue kept (holdsQueued).
+      if (this.gaveWay()) {
         return false;
       }
       if (this.restores !== restores) {
@@ -4004,26 +4022,40 @@ export class ProjectDocument {
     }
   }
 
+  /** Reports whether the step under way gave way to the page's batches made meanwhile, which then go on before it (StepUnderWay.given). */
+  private gaveWay(): boolean {
+    return this.stepUnderWay?.given === true;
+  }
+
   /**
    * Resolves as reading does, the step under way's read of the server,
    * which has the page's batches made meanwhile wait for the step no longer
    * once it has had no answer for answerWait, as on a network whose
-   * connection stalls, where the page keeps a queue, so that they are kept
-   * there, as are those after any try that no answer comes to, rather than
-   * in the page alone (sendAfterSteps).
+   * connection stalls, where the page keeps a queue: the page cannot reach
+   * the server until the read settles (stalledRead), so that they are kept
+   * there at once, as are those after any try that no answer comes to,
+   * rather than in the page alone (sendAfterSteps), and sent once it has.
    */
   private async givingWayAfter<T>(reading: Promise<T>): Promise<T> {
+    let stalled = false;
     const timer =
       this.queue === undefined
         ? undefined
-        : setTimeout(
-            () => this.stepUnderWay?.giveWay?.(),
-            this.options.answerWait ?? answerWait,
-          );
+        : setTimeout(() => {
+            stalled = true;
+            this.stalledRead = true;
+            this.show();
+            this.stepUnderWay?.giveWay?.();
+          }, this.options.answerWait ?? answerWait);
     try {
       return await reading;
     } finally {
       clearTimeout(timer);
+      if (stalled) {
+        this.stalledRead = false;
+        this.show();
+        void this.pump();
+      }
     }
   }
 
@@ -4266,7 +4298,8 @@ export class ProjectDocument {
    * (retryTimer), and through the next, until it is answered, so that what
    * needs the server is not offered at each try only to be taken back as it
    * fails; a try that none came to for answerWait, until it settles, though
-   * the channel is live again meanwhile (stalledTry); or a page that holds
+   * the channel is live again meanwhile (stalledTry), and so a step's read
+   * of the project before it is sent (stalledRead); or a page that holds
    * the session that the device kept, without its CSRF token, which no
    * change can be sent with, until the page has its own (PRD FR-OFF-02).
    */
@@ -4279,6 +4312,7 @@ export class ProjectDocument {
     }
     if (
       this.stalledTry ||
+      this.stalledRead ||
       (this.retryReason === "unanswered" &&
         (this.retryTimer !== undefined || this.inflight))
     ) {
@@ -4620,6 +4654,12 @@ export class ProjectDocument {
    * asks, though the try answered had none for answerWait (stalledTry).
    */
   private reached(): void {
+    // The tries that no answer came to in a row end, which spaced the next
+    // (backoff), unlike those that the server refused for when they were
+    // sent, which a refusal of the same goes on spacing.
+    if (this.retryReason !== "refused") {
+      this.retryFailures = 0;
+    }
     if (this.retryReason === "unanswered") {
       this.retryReason = undefined;
       clearTimeout(this.retryTimer);
@@ -4900,10 +4940,12 @@ export class ProjectDocument {
    * rather than in the page alone, which a tab that closes before the
    * browser gives up on the try would lose; its caller hears that it is
    * queued once it is written. The try goes on, and its answer, or its
-   * failure, settles the batch as one of the queue's (queueKept). The try
-   * of a step of the history, which is never kept, has the page's batches
-   * that wait for the step wait no longer, which are queued behind it, and
-   * kept, as the batches after any try are (giveWay).
+   * failure, settles the batch as one of the queue's (queueKept). A step
+   * of the history under way, whose try it is, which is never kept, or
+   * which waits for it, as for a comment's sent before it, has the page's
+   * batches that wait for the step wait no longer, which are queued behind
+   * the try, and kept, as the batches after any try are (giveWay), and the
+   * step, not sent yet, is then not sent after them (stepped).
    */
   private stalled(entry: Entry): void {
     if (this.queue === undefined || !this.inflight || !entry.sent) {
@@ -4912,7 +4954,7 @@ export class ProjectDocument {
     this.stalledTry = true;
     // A document dropped as the page signed out keeps nothing anew (pump).
     const signedOut = this.signedOutOf();
-    if (entry.step && !signedOut) {
+    if (!signedOut) {
       this.stepUnderWay?.giveWay?.();
     }
     if (

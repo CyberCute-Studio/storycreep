@@ -113,8 +113,8 @@ export const SavedStates = memo(function SavedStates({
   const list = useQuery(playStatesQuery(doc));
   // The saved states are the server's, no part of the project's copy, nor
   // of the changes that the device keeps (PRD FR-OFF-03): while the page
-  // cannot reach the server, as offline, the section says that they need a
-  // connection, in place of a list and controls that would fail, even of a
+  // cannot reach the server, as offline, the section says that they need
+  // it, in place of a list and controls that would fail, even of a
   // list read before, which is hidden, and its form's Save is disabled, the
   // forms keeping the names typed, the save's and a rename's, as through a
   // try that got no answer, which ends once the next is answered
@@ -382,8 +382,9 @@ export const SavedStates = memo(function SavedStates({
           as of a state too large refused with the name. */}
       <Alert message={refusal?.alert ?? refusal?.refusal?.message} />
       {(list.isPending || !online) && (
-        // Offline, the list waits for the browser to be online again, which
-        // the device's copy of the project does not hold (PRD FR-OFF-02).
+        // Offline, the list waits for the page to reach the server again,
+        // which the device's copy of the project does not hold (PRD
+        // FR-OFF-02).
         <p className="text-fg-muted">
           {online ? t("play.saved.reading") : t("play.saved.offline")}
         </p>
