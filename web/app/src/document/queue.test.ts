@@ -1508,6 +1508,74 @@ describe("the device's queue of the page's batches", () => {
     await db.close();
   });
 
+  it("sends an undo whose read of the project had no answer for a while once it settles, though a comment's batch went on before it meanwhile, which is no change of the history's", async () => {
+    let seq = testProject.seq;
+    let rev = 3;
+    // The next read of the project gets no answer until read is called.
+    let hang = false;
+    let read = () => {};
+    const batches: CommandBody[][] = [];
+    fakeApi((operation, input) => {
+      switch (operation) {
+        case "getProject":
+          if (hang) {
+            hang = false;
+            return new Promise((resolve) => {
+              read = () => resolve({ ...testProject, seq });
+            });
+          }
+          return { ...testProject, seq };
+        case "listFolders":
+          return { items: [], next_cursor: null };
+        case "listBoards":
+          return { items: [board("bd_a", "Harbour")], next_cursor: null };
+        case "applyCommands": {
+          const commands = (input as { body: { commands: CommandBody[] } }).body
+            .commands;
+          batches.push(structuredClone(commands));
+          seq++;
+          if (commands[0]?.type === "comment.delete") {
+            return applied(seq, []);
+          }
+          rev++;
+          return applied(
+            seq,
+            [{ id: "bd_a", rev }],
+            [renameBack("bd_a", "Harbour", rev)],
+          );
+        }
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const db = new OfflineDatabase();
+    const locks = fakeLocks();
+    const { doc } = await open(
+      db,
+      locks,
+      connection(true),
+      testSession,
+      deviceQueue(db, { secure: true, locks }),
+      { answerWait: 20 },
+    );
+    await doc.send([rename("bd_a", "Quay", 3)]);
+    await vi.waitFor(() => expect(doc.busy).toBe(false));
+    hang = true;
+    const undo = doc.undo();
+    await doc.send([{ type: "comment.delete", payload: { id: "cmt_a" } }], {
+      history: false,
+    });
+    expect(batches.map(nameOf)).toEqual(["Quay", undefined]);
+    read();
+    // The undo is the latest change still.
+    expect(await undo).toBe(true);
+    expect(batches.map(nameOf)).toEqual(["Quay", undefined, "Harbour"]);
+    expect(shownName(doc)).toBe("Harbour");
+    expect(doc.store.getState()).toMatchObject({ undoable: 0, redoable: 1 });
+    doc.dispose();
+    await doc.lettingGo();
+    await db.close();
+  });
+
   it("sends another tab's batch, taken as that tab closed, as it was made, and keeps it for review where this one's changed what it changes, rather than write over it", async () => {
     const batches = serveBoard();
     const net = connection(false);
@@ -2206,6 +2274,91 @@ describe("the device's queue of the page's batches", () => {
     await db.close();
   });
 
+  it("takes a queued change out of the queue by an undo, though a comment's batch sent after it, whose undo joins no history, is still on its way", async () => {
+    let answer = (_: unknown) => {};
+    const batches = serve((commands) => {
+      if (commands[0]?.type === "comment.delete") {
+        return new Promise((resolve) => {
+          answer = resolve;
+        });
+      }
+      throw refused(429, { code: "rate_limited" }, { "Retry-After": "60" });
+    });
+    const net = connection(false);
+    const db = new OfflineDatabase();
+    const locks = fakeLocks();
+    const { doc } = await open(
+      db,
+      locks,
+      net,
+      testSession,
+      deviceQueue(db, { secure: true, locks }),
+    );
+    await doc.send([rename("bd_a", "Quay", 3)]);
+    net.set(true);
+    await vi.waitFor(async () => {
+      const [kept] = await db.queued(user, testProject.id);
+      expect(kept?.refusal?.status).toBe(429);
+    });
+    const comment = doc.send(
+      [{ type: "comment.delete", payload: { id: "cmt_a" } }],
+      { history: false },
+    );
+    await vi.waitFor(() => expect(batches).toHaveLength(2));
+    expect(doc.store.getState().undoLocal).toBe(true);
+    expect(await doc.undo()).toBe(true);
+    expect(shownName(doc)).toBe("Harbour");
+    expect(await db.queued(user, testProject.id)).toEqual([]);
+    answer(applied(testProject.seq + 1, []));
+    await comment;
+    expect(batches.map((b) => b[0]?.type)).toEqual([
+      "board.rename",
+      "comment.delete",
+    ]);
+    doc.dispose();
+    await doc.lettingGo();
+    await db.close();
+  });
+
+  it("goes on spacing the tries of a queued batch that the server refuses for when it was sent, though a comment's batch applies meanwhile", async () => {
+    // When each try of the queued batch was sent, in milliseconds.
+    const at: number[] = [];
+    serve((commands) => {
+      if (commands[0]?.type === "comment.delete") {
+        return applied(testProject.seq + 1, []);
+      }
+      at.push(performance.now());
+      throw refused(429, { code: "rate_limited" });
+    });
+    const net = connection(false);
+    const db = new OfflineDatabase();
+    const locks = fakeLocks();
+    // Each wait is 2% of its ceiling: 20 ms for the first of a run, and
+    // 320 ms after four in a row.
+    const { doc } = await open(
+      db,
+      locks,
+      net,
+      testSession,
+      deviceQueue(db, { secure: true, locks }),
+      { random: () => 0.02 },
+    );
+    await doc.send([rename("bd_a", "Quay", 3)]);
+    net.set(true);
+    await vi.waitFor(() => expect(at).toHaveLength(4));
+    // As the queue waits after its fourth refusal, a comment's batch, which
+    // the queue does not keep, is sent, and applies.
+    await doc.send([{ type: "comment.delete", payload: { id: "cmt_a" } }], {
+      history: false,
+    });
+    await vi.waitFor(() => expect(at).toHaveLength(6), { timeout: 5000 });
+    const [fifth = 0, sixth = 0] = at.slice(4, 6);
+    expect(sixth - fifth).toBeGreaterThan(200);
+    doc.dispose();
+    await doc.lettingGo();
+    await db.close();
+  });
+
   it("spaces the tries after an answer as the first of a run, though the tries before it got none", async () => {
     // When each try was sent, in milliseconds.
     const at: number[] = [];
@@ -2343,6 +2496,40 @@ describe("the device's queue of the page's batches", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(batches).toHaveLength(1);
     doc.dispose();
+    await db.close();
+  });
+
+  it("says that the page reaches the server once a try after one that got no answer settles, though none came to it either, as the channel brought its operation", async () => {
+    const realtime = fakeRealtime();
+    const batches = serve((commands) => {
+      if (batches.length === 2) {
+        realtime.send(testProject.id, commands, [{ id: "bd_a", rev: 4 }]);
+      }
+      throw new NetworkError(new TypeError("Failed to fetch"));
+    });
+    const locks = fakeLocks();
+    const db = new OfflineDatabase();
+    const { doc } = await open(
+      db,
+      locks,
+      connection(true),
+      testSession,
+      deviceQueue(db, { secure: true, locks }),
+      { realtime },
+    );
+    realtime.hold(testProject.id);
+    expect(await doc.send([rename("bd_a", "Quay", 3)])).toEqual({
+      status: "queued",
+    });
+    await vi.waitFor(async () => {
+      expect(await db.queued(user, testProject.id)).toEqual([]);
+    });
+    await until(doc, (s) => s.queued === 0 && s.sending === 0);
+    expect(batches).toHaveLength(2);
+    expect(shownName(doc)).toBe("Quay");
+    await until(doc, (s) => !s.holding);
+    doc.dispose();
+    await doc.lettingGo();
     await db.close();
   });
 

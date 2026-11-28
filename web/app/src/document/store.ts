@@ -389,8 +389,9 @@ function refusedForGood(error: unknown): boolean {
  * its read of the server, or its try, or one that it waits for, has had no
  * answer for answerWait (givingWayAfter, stalled): that it gave way
  * (gaveWay), as it says (given), which giveWay gives, and whether a batch
- * of the page's went on before it since (passed), after which the step,
- * not sent yet, is not sent (stepped).
+ * of the page's whose undo joins the history, as a comment's does not, went
+ * on before it since (passed), after which the step, not sent yet, is not
+ * sent (stepped).
  */
 interface StepUnderWay {
   which: "undo" | "redo";
@@ -3454,8 +3455,10 @@ export class ProjectDocument {
     }
     // One that goes on as the step under way gave way goes before it, which
     // is then not sent after it; a step that none went before is sent once
-    // what it waited for has settled, as it was asked for (stepped).
-    if (underWay !== undefined) {
+    // what it waited for has settled, as it was asked for (stepped), as is
+    // one that a comment's batch alone went before, which is no change of
+    // the history's, and leaves the step the latest.
+    if (underWay !== undefined && options.history !== false) {
       underWay.passed = true;
     }
     const batch = this.sendBatch(commands, waiting?.time, options);
@@ -3645,23 +3648,28 @@ export class ProjectDocument {
    * have applied, and the server has not refused for what it does. The
    * latest is the one made last (latestFirst), as of another tab's batches
    * that the document took after its own as that tab closed, which may have
-   * been made before them, and which none was made on top of.
+   * been made before them, and which none was made on top of; of the
+   * changes of the history's alone, as a comment's batch on its way after
+   * it is none, which undo would not undo.
    */
   private withdrawable(): Entry | undefined {
     const latest = this.latestFirst()[0];
     return latest !== undefined && this.withdraws(latest) ? latest : undefined;
   }
 
-  /** Returns the page's batches, the one made last first, by the queue's order (Entry.order). */
+  /** Returns the page's batches whose undo joins the history (Entry.history), the one made last first, by the queue's order (Entry.order). */
   private latestFirst(): Entry[] {
-    return [...this.entries].reverse().sort((a, b) => {
-      if (a.order !== b.order) {
-        return b.order - a.order;
-      }
-      // As two made at once in two tabs (inQueueOrder).
-      const ids = [a.held?.id ?? "", b.held?.id ?? ""] as const;
-      return ids[0] === ids[1] ? 0 : ids[0] < ids[1] ? 1 : -1;
-    });
+    return this.entries
+      .filter((e) => e.history)
+      .reverse()
+      .sort((a, b) => {
+        if (a.order !== b.order) {
+          return b.order - a.order;
+        }
+        // As two made at once in two tabs (inQueueOrder).
+        const ids = [a.held?.id ?? "", b.held?.id ?? ""] as const;
+        return ids[0] === ids[1] ? 0 : ids[0] < ids[1] ? 1 : -1;
+      });
   }
 
   /** Reports whether undo would take entry out of the device's queue, were it the latest (withdrawable). */
@@ -4816,7 +4824,13 @@ export class ProjectDocument {
         );
       }
       const answer = await this.post(entry.commands, session);
-      this.retryFailures = 0;
+      // A batch that applied ends a run of refusals for when the queue's
+      // batches were sent too, but for a comment's sent while the queue
+      // waits after one, as of too many requests, after which the next try
+      // waits as long as it would have (reached).
+      if (entry.held !== undefined || this.retryTimer === undefined) {
+        this.retryFailures = 0;
+      }
       this.reached();
       // A batch that applied at a seq that the server had had before its
       // commands were first sent tells that its seq went back, as of a
@@ -4932,9 +4946,17 @@ export class ProjectDocument {
       clearTimeout(stall);
       this.inflight = false;
       // The try has settled, which its want of an answer held the page to
-      // (stalled), as what it met says now, as a wait after it.
-      if (this.stalledTry) {
-        this.stalledTry = false;
+      // (stalled), as what it met says now, as a wait after it; and so has
+      // one after a try that no answer came to, which the page was held
+      // through (unreachable), though it met what leaves no wait to say
+      // so, as no answer to a batch whose operation the channel brought
+      // meanwhile, or a refusal of a comment's.
+      const stalled = this.stalledTry;
+      this.stalledTry = false;
+      if (
+        stalled ||
+        this.store.getState().holding !== (this.unreachable() !== undefined)
+      ) {
         this.show();
       }
       void this.pump();

@@ -1264,6 +1264,60 @@ describe("a target's threads", () => {
     expect(second).toBe(first);
   });
 
+  it("hides the forms while the page cannot reach the server, rather than make them anew, so that one whose comment is posted meanwhile empties, and says so, rather than open with what it posted", async () => {
+    const user = userEvent.setup();
+    let answer: (() => void) | undefined;
+    const server = commentProject([], {
+      held: () =>
+        new Promise<void>((resolve) => {
+          answer = resolve;
+        }),
+    });
+    const comments = await openGold();
+    expect(await within(comments).findByText("No comments yet.")).toBeDefined();
+    typeInto(
+      within(comments).getByRole("textbox", { name: "New comment" }),
+      "Is gold ever spent?",
+    );
+    await user.click(
+      within(comments).getByRole("button", { name: "Post comment" }),
+    );
+    await waitFor(() => expect(server.batches()).toHaveLength(1));
+    // The page can no longer reach the server as the post is on its way,
+    // and can again as its answer comes.
+    const onLine = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    try {
+      expect(
+        within(comments).getByText(
+          "The comments need the server, which this device cannot reach now.",
+        ),
+      ).toBeDefined();
+      expect(
+        within(comments).queryByRole("textbox", { name: "New comment" }),
+      ).toBeNull();
+    } finally {
+      onLine.mockReturnValue(true);
+      act(() => {
+        answer?.();
+        window.dispatchEvent(new Event("online"));
+      });
+    }
+    expect(await within(comments).findByText("Comment posted.")).toBeDefined();
+    expect(
+      within(comments).getByRole("textbox", { name: "New comment" })
+        .textContent,
+    ).toBe("");
+    // Nothing is posted again.
+    await user.click(
+      within(comments).getByRole("button", { name: "Post comment" }),
+    );
+    expect(within(comments).getByText("Write a comment.")).toBeDefined();
+    expect(server.batches()).toHaveLength(1);
+  });
+
   it("keeps a form's text read-only while its batch is under way, so that nothing is typed after what it sends, which the form lets go of once it is posted", async () => {
     const user = userEvent.setup();
     const root = thread("cmt_01", "variable", gold.id, "Lanterns?", mira);

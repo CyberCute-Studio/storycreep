@@ -385,7 +385,7 @@ export function Comments({
   // The comments are the server's, no part of the project's copy, nor of
   // the changes that the device keeps (PRD FR-OFF-03): while the page cannot
   // reach the server, as offline, the section says that they need it, in
-  // place of threads and forms that would fail.
+  // place of threads and forms that would fail, which it hides meanwhile.
   const reachable = useServerReachable(doc);
   const ownId = useId();
   const titleId = headingId ?? `${ownId}-title`;
@@ -433,62 +433,65 @@ export function Comments({
       >
         {t("comments.title")}
       </Heading>
-      {!reachable ? (
-        <p className="text-fg-muted">{t("comments.offline")}</p>
-      ) : (
-        <>
-          {list.data !== undefined && (
-            <p className="text-fg-muted">
-              {t("comments.counts", {
-                open,
-                resolved: threads.length - open,
-              })}
-            </p>
-          )}
-          {writable && (
-            // Made anew for another target, as a section that stays shows
-            // another's threads, so that what was typed for one is never posted
-            // on the other.
-            <NewThread
-              key={target.id}
-              doc={doc}
-              target={target}
-              label={t("comments.new")}
-              onSending={() => setSent((n) => n + 1)}
-            />
-          )}
-          {!writable && (
-            <p className="text-fg-muted">
-              {project.archived_at !== undefined
-                ? t("comments.read_only_archived")
-                : t("comments.read_only")}
-            </p>
-          )}
-          {list.isPending ? (
-            <p className="text-fg-muted">{t("comments.reading")}</p>
-          ) : (
-            <>
-              {list.isError && (
-                <ReadFailed
-                  error={list.error}
-                  onRetry={() => void list.refetch()}
-                />
-              )}
-              {list.data !== undefined && (
-                <ThreadList
-                  doc={doc}
-                  threads={threads}
-                  writable={writable}
-                  reread={() => list.refetch()}
-                  heading={heading}
-                  empty={t("comments.none")}
-                  sent={sent}
-                />
-              )}
-            </>
-          )}
-        </>
-      )}
+      {/* Hidden, rather than taken away, while the page cannot reach the
+          server, as through a try that has had no answer for a while, so
+          that a form keeps its editor, and what was typed in it, and one
+          whose comment is posted meanwhile empties, and says so, rather
+          than open anew with what it posted, which a Post would post again,
+          under an ID of its own (keptId). */}
+      <div hidden={!reachable} className="space-y-3">
+        {list.data !== undefined && (
+          <p className="text-fg-muted">
+            {t("comments.counts", {
+              open,
+              resolved: threads.length - open,
+            })}
+          </p>
+        )}
+        {writable && (
+          // Made anew for another target, as a section that stays shows
+          // another's threads, so that what was typed for one is never posted
+          // on the other.
+          <NewThread
+            key={target.id}
+            doc={doc}
+            target={target}
+            label={t("comments.new")}
+            onSending={() => setSent((n) => n + 1)}
+          />
+        )}
+        {!writable && (
+          <p className="text-fg-muted">
+            {project.archived_at !== undefined
+              ? t("comments.read_only_archived")
+              : t("comments.read_only")}
+          </p>
+        )}
+        {list.isPending ? (
+          <p className="text-fg-muted">{t("comments.reading")}</p>
+        ) : (
+          <>
+            {list.isError && (
+              <ReadFailed
+                error={list.error}
+                onRetry={() => void list.refetch()}
+              />
+            )}
+            {list.data !== undefined && (
+              <ThreadList
+                doc={doc}
+                threads={threads}
+                writable={writable}
+                reread={() => list.refetch()}
+                heading={heading}
+                empty={t("comments.none")}
+                sent={sent}
+              />
+            )}
+          </>
+        )}
+      </div>
+      {!reachable && <p className="text-fg-muted">{t("comments.offline")}</p>}
     </section>
   );
 }
